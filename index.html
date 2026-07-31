@@ -899,13 +899,14 @@ function kalemFiyatTuruDegistir(i, yeniTuru) {
 function kalemKgTutar(k) {
   const m = data.mamul[parseInt(k.stokIdx)];
   const adet = parseTL(k.adet);
-  if (!m || isNaN(adet) || adet <= 0) return { kg: 0, tutar: 0, adet: 0 };
+  if (!m || isNaN(adet) || adet <= 0) return { kg: 0, tutar: 0, adet: 0, kgGercekMi: false };
   const kgGirilen = parseTL(k.kg);
-  const kg = (!isNaN(kgGirilen) && kgGirilen > 0) ? kgGirilen : adet * (m.kgBobin||0);
+  const kgGercekMi = !isNaN(kgGirilen) && kgGirilen > 0;
+  const kg = kgGercekMi ? kgGirilen : adet * (m.kgBobin||0);
   const fiyat = parseTL(k.fiyat);
   let tutar = 0;
   if (!isNaN(fiyat) && fiyat > 0) tutar = (k.fiyatTuru === "adet") ? (adet * fiyat * 1.2) : (kg * fiyat * 1.2);
-  return { kg, tutar, adet };
+  return { kg, tutar, adet, kgGercekMi };
 }
 
 function fiyatBul(kalite) {
@@ -964,7 +965,7 @@ function kaydet() {
   const kalemDusum = gecerliKalemler.map(k => {
     const m = data.mamul[parseInt(k.stokIdx)];
     const hesap = kalemKgTutar(k);
-    return {m, kg: hesap.kg, dusulecekAdet: hesap.adet};
+    return {m, kg: hesap.kg, dusulecekAdet: hesap.adet, kgGercekMi: hesap.kgGercekMi};
   });
 
   // Stok yetersizliği uyarısı
@@ -975,10 +976,14 @@ function kaydet() {
   }
 
   const kalemKayit = [];
-  kalemDusum.forEach(({m, kg, dusulecekAdet}) => {
+  kalemDusum.forEach(({m, kg, dusulecekAdet, kgGercekMi}) => {
     if (m && dusulecekAdet > 0) {
       m.adet -= dusulecekAdet;
-      kalemKayit.push({key: m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj, adet: dusulecekAdet, ad: m.kalite+" "+m.tip+" "+m.genislik});
+      const satir = {key: m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj, adet: dusulecekAdet, ad: m.kalite+" "+m.tip+" "+m.genislik};
+      // Sadece GERÇEKTEN tartılıp girilen net kg saklanır — ileride "ortalama kg/bobin" hesaplarında
+      // katalog tahmini yerine senin girdiğin gerçek değerler kullanılabilsin diye.
+      if (kgGercekMi) satir.kg = kg;
+      kalemKayit.push(satir);
     }
   });
 
@@ -1039,11 +1044,12 @@ function tartimYukle() {
     tartim = {
       firma: "", tarih: yerelTarihStr(),
       urun: "2. Kalite Bal Köpüğü 120cm",
-      kapasite: "120 cm", fiyatKg: "55",
+      kapasite: "120 cm", fiyatKg: "55", stokIdx: "",
       satirlar: [], aktifAlan: "brut"
     };
   }
   if (!tartim.satirlar) tartim.satirlar = [];
+  if (tartim.stokIdx === undefined) tartim.stokIdx = ""; // eski kayıtlarla uyumluluk
 }
 
 function tartimKaydet() {
@@ -1162,20 +1168,31 @@ function tartimYazdir() {
 function tartimSatisaAktar() {
   const oz = tartimOzetHesapla();
   if (!oz.adet) { toast("Önce tartım girin"); return; }
+  if (tartim.stokIdx === "" || tartim.stokIdx == null) { toast("Önce Stok Ürünü seçin — stok düşümü ve masura raporu için zorunlu"); return; }
+  const m = data.mamul[parseInt(tartim.stokIdx)];
+  if (!m) { toast("Seçilen stok ürünü bulunamadı, tekrar seçin"); return; }
   resetForm();
   form.tur = "GELİR";
   form.kategori = "Satış-Fatura";
   form.aciklama = tartim.firma || "";
   form.tutar = "";
   form.satisKg = oz.brutT.toFixed(2).replace(".",",");
-  form.not = tartim.urun + " — " + oz.adet + " bobin (tartımdan)";
+  form.not = (tartim.urun ? tartim.urun+" — " : "") + oz.adet + " bobin (tartımdan)";
   form.tarih = tartim.tarih || form.tarih;
-  ["1. Kalite","2. Kalite","ECO-1"].forEach(u => {
-    if ((tartim.urun||"").indexOf(u) >= 0) form.urunTipi = u;
-  });
+  form.urunTipi = m.kalite;
+  // Stok ürünü seçildiği için kalem olarak ekleniyor — böylece kaydet() hem stoktan doğru adedi düşer
+  // hem de masura/ürün raporları bu satışı görebilir (serbest metinden değil, gerçek ürün seçiminden).
+  const onerilenFiyat = fiyatBul(m.kalite);
+  form.kalemler = [{
+    stokIdx: String(tartim.stokIdx),
+    adet: String(oz.adet),
+    kg: oz.brutT.toFixed(2).replace(".",","),
+    fiyatTuru: "kg",
+    fiyat: onerilenFiyat > 0 ? String(onerilenFiyat).replace(".",",") : ""
+  }];
   tab = "yeni";
   render();
-  toast("Tartım satış formuna aktarıldı");
+  toast("Tartım satış formuna aktarıldı — stok ürünü, adet ve kg otomatik dolduruldu");
 }
 
 function rTartim() {
@@ -1185,8 +1202,11 @@ function rTartim() {
   html += '<div style="position:relative"><div class="mini" style="margin-bottom:5px">Firma</div><input type="text" id="t-firma" placeholder="ör. Gözükırmızı" value="'+esc(tartim.firma)+'" oninput="tartimFirmaDegisti(this.value)" autocomplete="off"><div id="t-firma-oneri" style="position:absolute;left:0;right:0;top:100%;z-index:20"></div></div>';
   html += '<div class="row2">';
   html += '<div><div class="mini" style="margin-bottom:5px">Tarih</div><input type="date" value="'+tartim.tarih+'" onchange="tartimSet(\'tarih\',this.value)"></div>';
-  html += '<div><div class="mini" style="margin-bottom:5px">Ürün</div><input type="text" value="'+esc(tartim.urun)+'" oninput="tartimSet(\'urun\',this.value)" placeholder="ör. 2. Kalite Bal Köpüğü 120cm"></div>';
+  html += '<div><div class="mini" style="margin-bottom:5px">Ürün (not için serbest yazı)</div><input type="text" value="'+esc(tartim.urun)+'" oninput="tartimSet(\'urun\',this.value)" placeholder="ör. 2. Kalite Bal Köpüğü 120cm"></div>';
   html += '</div>';
+  html += '<div><div class="mini" style="margin-bottom:5px">Stok Ürünü <span style="color:var(--red)">*</span> — stok düşümü ve masura raporu için zorunlu</div><select onchange="tartimSet(\'stokIdx\',this.value)"><option value="">— ürün seç —</option>'
+    + data.mamul.map((m,mi) => '<option value="'+mi+'"'+(String(tartim.stokIdx)===String(mi)?" selected":"")+'>'+esc(m.kalite+" · "+m.tip+" · "+m.genislik+(m.gramaj!=="-"?" · "+m.gramaj:""))+' (stok: '+m.adet+')</option>').join("")
+    + '</select></div>';
   html += '<div><div class="mini" style="margin-bottom:5px">Kg gir → Enter</div><div style="display:flex;gap:8px"><input type="text" id="t-brut" inputmode="decimal" placeholder="ör. 12,4" onkeydown="if(event.key===\'Enter\')tartimGir(this.value)"><button class="chip" style="flex-shrink:0" onclick="tartimGir(document.getElementById(\'t-brut\').value)">Ekle</button></div></div>';
   html += '</div></div>';
 
@@ -1393,8 +1413,14 @@ function uretimAyOzeti(ayKey) {
 // 2. Kalite bobinlerin satışında faturaya yansıyan ama hammadde maliyeti ödenmeyen masura (karton/plastik göbek)
 // ağırlığını hesaplar. Sadece stoktan ürün seçilerek yapılan satışlar (kalemler dolu) hesaba katılabilir,
 // çünkü genişlik (ve dolayısıyla masura kg'si) sadece o kayıtlardan bilinir.
+// Yalnızca SATIŞ (üretim değil) kayıtlarına bakar — Hasan'ın önceliği ürettiği değil sattığı miktardır.
+//
+// Hesap tamamen BOBİN SAYISI üzerinden: her genişliğin sabit masura kilosu (MASURALAR) bobin adediyle
+// çarpılır. Tartımda tek tek girilen brüt kilolar (12,4 / 12,5 / 12,7 / 11,8 gibi) burada ortalamaya
+// katılmaz — önemli olan kaç bobin satıldığı ve o genişliğin sabit masura kilosu.
 function masuraAnaliziAy(ayKey) {
   const satislar = data.hareketler.filter(h => h.tarih.slice(0,7) === ayKey && h.gelir && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış") && h.kalemler && h.kalemler.length);
+
   let toplamBobin = 0, toplamBobinKg = 0, toplamMasuraKg = 0, tanimsizBobin = 0;
   const genislikKirilim = {};
   satislar.forEach(h => {
@@ -1405,8 +1431,8 @@ function masuraAnaliziAy(ayKey) {
       const mas = MASURALAR[genislik];
       if (!mas) { tanimsizBobin += (k.adet||0); return; }
       const adet = k.adet||0;
-      const masuraKg = adet * mas.masura;
-      const bobinKg = adet * mas.bobin;
+      const masuraKg = adet * mas.masura;   // bobin sayısı × sabit masura kilosu
+      const bobinKg = adet * mas.bobin;     // bobin sayısı × sabit standart bobin kilosu
       toplamBobin += adet;
       toplamMasuraKg += masuraKg;
       toplamBobinKg += bobinKg;
@@ -1774,8 +1800,8 @@ function xlsxSayfaXml(opts) {
     s += '<cols>' + kolonGenislikleri.map((w,i) => '<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('') + '</cols>';
   }
   s += '<sheetData>' + satirlar.join('') + '</sheetData>';
-  if (birlesmeler && birlesmeler.length) s += '<mergeCells count="'+birlesmeler.length+'">' + birlesmeler.map(r => '<mergeCell ref="'+r+'"/>').join('') + '</mergeCells>';
   if (filtreAraligi) s += '<autoFilter ref="'+filtreAraligi+'"/>';
+  if (birlesmeler && birlesmeler.length) s += '<mergeCells count="'+birlesmeler.length+'">' + birlesmeler.map(r => '<mergeCell ref="'+r+'"/>').join('') + '</mergeCells>';
   s += '</worksheet>';
   return s;
 }
@@ -1784,15 +1810,17 @@ const XS = {
   varsayilan:0, kalin:1, baslikNavy:2, altbilgi:3, tabloBaslik:4,
   para:5, paraYesil:6, paraKirmizi:7, kg:8, tarih:9, ortaBorder:10,
   etiket:11, toplamEtiket:12, toplamPara:13, toplamParaYesil:14, toplamParaKirmizi:15, toplamKg:16,
-  yuzde:17, baslikYesil:18, baslikKirmizi:19, metinBorder:20, adetBorder:21, notu:22
+  yuzde:17, baslikYesil:18, baslikKirmizi:19, metinBorder:20, adetBorder:21, notu:22, saat:23, toplamSaat:24
 };
 const XLSX_STYLES = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-+ '<numFmts count="4">'
++ '<numFmts count="6">'
 + '<numFmt numFmtId="164" formatCode="#,##0.00&quot; \u20BA&quot;"/>'
 + '<numFmt numFmtId="165" formatCode="#,##0.00&quot; kg&quot;"/>'
 + '<numFmt numFmtId="166" formatCode="dd.mm.yyyy"/>'
 + '<numFmt numFmtId="167" formatCode="0.0&quot;%&quot;"/>'
++ '<numFmt numFmtId="168" formatCode="#,##0"/>'
++ '<numFmt numFmtId="169" formatCode="#,##0.0"/>'
 + '</numFmts>'
 + '<fonts count="8">'
 + '<font><sz val="11"/><name val="Calibri"/></font>'
@@ -1820,7 +1848,7 @@ const XLSX_STYLES = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 + '<border><left style="thin"><color rgb="FFB8BCC8"/></left><right style="thin"><color rgb="FFB8BCC8"/></right><top style="medium"><color rgb="FF241141"/></top><bottom style="thin"><color rgb="FFB8BCC8"/></bottom><diagonal/></border>'
 + '</borders>'
 + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-+ '<cellXfs count="23">'
++ '<cellXfs count="25">'
 + '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
 + '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0"/>'
 + '<xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0"><alignment horizontal="center" vertical="center"/></xf>'
@@ -1842,8 +1870,10 @@ const XLSX_STYLES = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 + '<xf numFmtId="0" fontId="2" fillId="6" borderId="0" xfId="0"><alignment horizontal="center" vertical="center"/></xf>'
 + '<xf numFmtId="0" fontId="2" fillId="7" borderId="0" xfId="0"><alignment horizontal="center" vertical="center"/></xf>'
 + '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>'
-+ '<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0"><alignment horizontal="right"/></xf>'
++ '<xf numFmtId="168" fontId="1" fillId="0" borderId="1" xfId="0"><alignment horizontal="right"/></xf>'
 + '<xf numFmtId="0" fontId="7" fillId="4" borderId="0" xfId="0"><alignment horizontal="left" vertical="center"/></xf>'
++ '<xf numFmtId="169" fontId="0" fillId="0" borderId="1" xfId="0"><alignment horizontal="right"/></xf>'
++ '<xf numFmtId="169" fontId="1" fillId="5" borderId="2" xfId="0"><alignment horizontal="right"/></xf>'
 + '</cellXfs>'
 + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
 + '</styleSheet>';
@@ -2122,14 +2152,14 @@ function aylikRaporIndir(secilenAyKey) {
   r++;
   bb = xlsxBaslikSatiri(r, "MAKİNE ÇALIŞMA SAATLERİ", 2, XS.baslikNavy); s1.push(bb.xml); m1.push(bb.merge); r++;
   s1.push(xlsxSatir(r, [xT("Makine",XS.tabloBaslik), xT("Toplam Saat",XS.tabloBaslik)])); r++;
-  MAKINELER.forEach(mk => { s1.push(xlsxSatir(r, [xT(mk,XS.metinBorder), xM(oz.makineSaat[mk]||0, XS.kg)])); r++; });
-  s1.push(xlsxSatir(r, [xT("TOPLAM",XS.toplamEtiket), xM(oz.toplamSaat, XS.toplamKg)])); r++;
+  MAKINELER.forEach(mk => { s1.push(xlsxSatir(r, [xT(mk,XS.metinBorder), xM(oz.makineSaat[mk]||0, XS.saat)])); r++; });
+  s1.push(xlsxSatir(r, [xT("TOPLAM",XS.toplamEtiket), xM(oz.toplamSaat, XS.toplamSaat)])); r++;
   r++;
   bb = xlsxBaslikSatiri(r, "VARDİYA KARŞILAŞTIRMASI", 4, XS.baslikNavy); s1.push(bb.xml); m1.push(bb.merge); r++;
   s1.push(xlsxSatir(r, [xT("Vardiya",XS.tabloBaslik), xT("Vardiya Sayısı",XS.tabloBaslik), xT("Toplam Saat",XS.tabloBaslik), xT("Toplam Bobin",XS.tabloBaslik)])); r++;
   VARDIYALAR.forEach(v => {
     const vv = oz.vardiyaSaat[v] || {saat:0,bobin:0,vardiyaSayisi:0};
-    s1.push(xlsxSatir(r, [xT(v,XS.metinBorder), xM(vv.vardiyaSayisi, XS.adetBorder), xM(vv.saat, XS.kg), xM(vv.bobin, XS.adetBorder)])); r++;
+    s1.push(xlsxSatir(r, [xT(v,XS.metinBorder), xM(vv.vardiyaSayisi, XS.adetBorder), xM(vv.saat, XS.saat), xM(vv.bobin, XS.adetBorder)])); r++;
   });
   r++;
   bb = xlsxBaslikSatiri(r, "USTA BAZLI ÜRETKENLİK", 4, XS.baslikNavy); s1.push(bb.xml); m1.push(bb.merge); r++;
@@ -2137,7 +2167,7 @@ function aylikRaporIndir(secilenAyKey) {
   const ustaGirdiler = Object.entries(oz.ustaOzet).sort((a,b) => b[1].bobin - a[1].bobin);
   if (ustaGirdiler.length) {
     ustaGirdiler.forEach(([usta,st]) => {
-      s1.push(xlsxSatir(r, [xT(usta,XS.metinBorder), xM(st.vardiyaSayisi,XS.adetBorder), xM(st.saat,XS.kg), xM(st.bobin,XS.adetBorder)])); r++;
+      s1.push(xlsxSatir(r, [xT(usta,XS.metinBorder), xM(st.vardiyaSayisi,XS.adetBorder), xM(st.saat,XS.saat), xM(st.bobin,XS.adetBorder)])); r++;
     });
   } else {
     s1.push(xlsxSatir(r, [xT("Bu ay üretim kaydı girilmemiş",XS.metinBorder), xT("",XS.metinBorder), xT("",XS.metinBorder), xT("",XS.metinBorder)])); r++;
@@ -2174,7 +2204,7 @@ function aylikRaporIndir(secilenAyKey) {
     const hamOzet = (u.hammaddeler||[]).map(x => x.ad+" "+x.kg.toFixed(1)+"kg").join(", ");
     s3.push(xlsxSatir(r, [
       xD(u.tarih,XS.tarih), xT(u.vardiya,XS.ortaBorder), xT(u.makine,XS.metinBorder), xT(u.usta,XS.metinBorder),
-      xM(u.saat,XS.kg), xT(urunOzet,XS.metinBorder), xT(hamOzet,XS.metinBorder),
+      xM(u.saat,XS.saat), xT(urunOzet,XS.metinBorder), xT(hamOzet,XS.metinBorder),
       xM(u.verimlilik||0,XS.yuzde)
     ])); r++;
   });
