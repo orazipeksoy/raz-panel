@@ -1447,6 +1447,32 @@ function masuraAnaliziAy(ayKey) {
   return { toplamBobin, toplamBobinKg, toplamMasuraKg, netPlastikKg, masuraOrani, genislikKirilim, tanimsizBobin };
 }
 
+// Bu ay hangi üründen kaç adet satıldığını hesaplar (adet birincil metrik).
+// Sadece stoktan ürün seçilerek yapılan satışlar (kalemler dolu) sayılabilir —
+// tanimliOlmayanSatisSayisi, ürün seçilmeden yapılmış satış adedini gösterir (bilgi amaçlı).
+function urunSatisAyOzeti(ayKey) {
+  const tumSatislar = data.hareketler.filter(h => h.tarih.slice(0,7) === ayKey && h.gelir && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış"));
+  const satislar = tumSatislar.filter(h => h.kalemler && h.kalemler.length);
+  const tanimliOlmayanSatisSayisi = tumSatislar.length - satislar.length;
+
+  const urunler = {};
+  satislar.forEach(h => {
+    (h.kalemler||[]).forEach(k => {
+      if (!urunler[k.key]) urunler[k.key] = { ad: k.ad, adet: 0, kg: 0, islemSayisi: 0 };
+      const adet = k.adet||0;
+      urunler[k.key].adet += adet;
+      if (k.kg != null) {
+        urunler[k.key].kg += k.kg;
+      } else {
+        const m = data.mamul.find(mm => mm.kalite+"|"+mm.tip+"|"+mm.genislik+"|"+mm.gramaj === k.key);
+        urunler[k.key].kg += adet * (m ? (m.kgBobin||0) : 0);
+      }
+      urunler[k.key].islemSayisi += 1;
+    });
+  });
+  return { urunler, tanimliOlmayanSatisSayisi };
+}
+
 function rUretim() {
   const oz = uretimAyOzeti(buAyKey());
   const masAn = masuraAnaliziAy(buAyKey());
@@ -2211,10 +2237,36 @@ function aylikRaporIndir(secilenAyKey) {
   const uretimLastData = r-1;
   const s3Xml = xlsxSayfaXml({ satirlar: s3, kolonGenislikleri: [12,10,18,16,8,30,30,11], donmusSatir: uretimHeaderRow, filtreAraligi: oz.kayitlar.length ? ("A"+uretimHeaderRow+":H"+uretimLastData) : null, birlesmeler: m3, sonSutun: 8, sonSatir: r-1 });
 
+  // ---- SAYFA 4: ÜRÜN BAZLI SATIŞ (BU AY) ----
+  // Hangi üründen kaç adet satıldığı — sadece stoktan ürün seçilerek yapılan satışlar (kalemler dolu) sayılabilir.
+  const urunOz = urunSatisAyOzeti(ayKey);
+  const s4 = []; const m4 = [];
+  r = 1;
+  bb = xlsxBaslikSatiri(r, "ÜRÜN BAZLI SATIŞ — "+ayAdi.toUpperCase(), 4, XS.baslikYesil); s4.push(bb.xml); m4.push(bb.merge); r++;
+  const urunHeaderRow = r;
+  s4.push(xlsxSatir(r, [xT("Ürün",XS.tabloBaslik), xT("Satılan Adet",XS.tabloBaslik), xT("Toplam Kg",XS.tabloBaslik), xT("İşlem Sayısı",XS.tabloBaslik)])); r++;
+  const urunGirdiler = Object.values(urunOz.urunler).sort((a,b) => b.adet - a.adet);
+  urunGirdiler.forEach(u => {
+    s4.push(xlsxSatir(r, [xT(u.ad,XS.metinBorder), xM(u.adet,XS.adetBorder), xM(u.kg,XS.kg), xM(u.islemSayisi,XS.adetBorder)])); r++;
+  });
+  const urunLastData = r-1;
+  if (urunGirdiler.length) {
+    const topAdet = urunGirdiler.reduce((s,u) => s+u.adet, 0);
+    const topKg = urunGirdiler.reduce((s,u) => s+u.kg, 0);
+    const topIslem = urunGirdiler.reduce((s,u) => s+u.islemSayisi, 0);
+    s4.push(xlsxSatir(r, [xT("TOPLAM",XS.toplamEtiket), xM(topAdet,XS.toplamKg), xM(topKg,XS.toplamKg), xM(topIslem,XS.toplamKg)])); r++;
+  }
+  if (urunOz.tanimliOlmayanSatisSayisi > 0) {
+    r++;
+    s4.push(xlsxSatir(r, [xT("⚠ Stok ürünü seçilmeden yapılmış satış (bu tabloya dahil değil)",XS.metinBorder), xM(urunOz.tanimliOlmayanSatisSayisi,XS.adetBorder)])); r++;
+  }
+  const s4Xml = xlsxSayfaXml({ satirlar: s4, kolonGenislikleri: [34,14,14,14], donmusSatir: urunHeaderRow, filtreAraligi: urunGirdiler.length ? ("A"+urunHeaderRow+":D"+urunLastData) : null, birlesmeler: m4, sonSutun: 4, sonSatir: r-1 });
+
   const sayfalar = [
     { ad: "Aylık Rapor", xml: s1Xml },
     { ad: "Müşteri Detay", xml: s2Xml },
-    { ad: "Üretim Detay", xml: s3Xml }
+    { ad: "Üretim Detay", xml: s3Xml },
+    { ad: "Ürün Bazlı Satış", xml: s4Xml }
   ];
   const xlsxBytes = xlsxOlustur(sayfalar);
   const blob = new Blob([xlsxBytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
