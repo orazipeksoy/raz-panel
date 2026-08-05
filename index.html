@@ -301,8 +301,8 @@ const AYLAR = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağus
 const AYLAR_KISA = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"];
 const GELIR_KAT = ["Satış-Fatura","Perakende Satış","Nakliye","Hammadde Satışı","Kredi Kullanımı","Sermaye","Diğer Gelir"];
 const GIDER_KAT = ["Hammadde","Hammadde-Satılan","Personel","Araç/Yakıt","Kredi Ödemesi","Genel Gider","Nakliye","Vergi/SGK","Ekipman/Malzeme"];
-const ISCILIK = 15;
-const MASURA_FIYAT = 30;
+const ISCILIK_VARSAYILAN = 15;
+const MASURA_FIYAT_VARSAYILAN = 30;
 const MASURALAR = { "120 cm": {masura: 1.74, bobin: 12.4}, "145 cm": {masura: 2.12, bobin: 16}, "160 cm": {masura: 2.30, bobin: 16} };
 const STOK_ESIK = 30; // bu adetin altı uyarı
 const MAKINELER = ["1. Kalite Makinası", "2. Kalite Makinası"];
@@ -354,6 +354,10 @@ function saglaId(d) {
   if (!d.fiyatlar) d.fiyatlar = [];
   if (!d.gizliUyarilar) d.gizliUyarilar = [];
   if (!d.uretimler) d.uretimler = [];
+  if (!d.sayimlar) d.sayimlar = [];
+  if (!d.ayarlar) d.ayarlar = { iscilik: ISCILIK_VARSAYILAN, masuraFiyat: MASURA_FIYAT_VARSAYILAN };
+  if (d.ayarlar.iscilik == null) d.ayarlar.iscilik = ISCILIK_VARSAYILAN;
+  if (d.ayarlar.masuraFiyat == null) d.ayarlar.masuraFiyat = MASURA_FIYAT_VARSAYILAN;
   d.uretimler.forEach(u => { if (!u.__id) u.__id = "u" + (ctr++) + "_" + Math.random().toString(36).slice(2,7); });
   return d;
 }
@@ -593,12 +597,15 @@ function rOzet(H) {
   const uc3gunSonra = new Date(); uc3gunSonra.setDate(uc3gunSonra.getDate()+3);
   const uc3IsoSonra = yerelTarihStr(uc3gunSonra);
   data.hareketler.forEach(h => {
-    if (h.tur === "GELİR" && h.vade && !h.odendi) {
+    if (h.tur === "GELİR" && h.vade) {
+      const durum = tahsilatDurumu(h);
+      if (durum.tamamlandiMi) return;
       const key = "vade_"+h.__id;
+      const kalanEtiket = durum.toplamTahsil > 0.01 ? " (kalan: "+fmt(durum.kalan)+")" : " — "+fmt(durum.kalan);
       if (h.vade < bugunIso) {
-        uyarilar += uyariKutu(key, "⏰", '<b>'+esc(h.aciklama)+'</b> ödemesi <b>'+fmtTarih(h.vade)+'</b> tarihinde gecikti — '+fmt(h.gelir), true);
+        uyarilar += uyariKutu(key, "⏰", '<b>'+esc(h.aciklama)+'</b> ödemesi <b>'+fmtTarih(h.vade)+'</b> tarihinde gecikti'+kalanEtiket, true);
       } else if (h.vade <= uc3IsoSonra) {
-        uyarilar += uyariKutu(key, "📅", '<b>'+esc(h.aciklama)+'</b> ödeme vadesi yaklaşıyor: <b>'+fmtTarih(h.vade)+'</b> — '+fmt(h.gelir), false);
+        uyarilar += uyariKutu(key, "📅", '<b>'+esc(h.aciklama)+'</b> ödeme vadesi yaklaşıyor: <b>'+fmtTarih(h.vade)+'</b>'+kalanEtiket, false);
       }
     }
   });
@@ -681,11 +688,14 @@ function rOzet(H) {
       + '</div><span class="chart-lbl">'+AYLAR_KISA[parseInt(p[1])-1]+'</span></div>';
   }).join("");
 
+  const buAyKarOz = karlilikAyOzeti(buAyKey());
+
   return '<div class="kpi-grid">'
     + '<div class="kpi"><div class="lbl">Bu Ay Satış</div><div class="v yesil">'+fmtK(ba.satis)+'</div>'+trendHtml(ba.satis, ga.satis)+'<span class="mini">'+(ba.kg>0?fmtKg(ba.kg)+' kg'+(ba.kgBilinen?'':'+'):'kg bilgisi yok')+'</span></div>'
     + '<div class="kpi"><div class="lbl">Bu Ay Gider</div><div class="v kirmizi">'+fmtK(ba.gider)+'</div>'+trendHtml(ba.gider, ga.gider)+'</div>'
     + '<div class="kpi"><div class="lbl">Bu Ay Net</div><div class="v" style="color:'+(baNet>=0?"var(--green)":"var(--red)")+'">'+(baNet>=0?"+":"")+fmtK(baNet)+'</div><span class="mini">'+AYLAR[new Date().getMonth()]+'</span></div>'
     + '<div class="kpi"><div class="lbl">Stok</div><div class="v">'+fmtKg(mamulKg+hamKg)+' kg</div><span class="mini">'+fmtKg(mamulKg)+' mamul · '+fmtKg(hamKg)+' ham</span></div>'
+    + '<div class="kpi"><div class="lbl">Bu Ay Tahmini Kâr</div><div class="v" style="color:'+(buAyKarOz.karMarji==null?"var(--mut)":(buAyKarOz.toplamKar>=0?"var(--green)":"var(--red)"))+'">'+(buAyKarOz.satisSayisi?fmtK(buAyKarOz.toplamKar):"—")+'</div><span class="mini">'+(buAyKarOz.karMarji!=null?"marj %"+buAyKarOz.karMarji.toFixed(1):"satış yok")+' · tahmini</span></div>'
     + '</div>'
     + (uyarilar ? '<div style="margin-bottom:14px">'+uyarilar+'</div>' : '')
     + pastaHtml
@@ -1021,6 +1031,14 @@ function kaydet() {
     const nihaiUrunTipi = otomatikUrunTipi || form.urunTipi || null;
     if (nihaiUrunTipi) kayit.urunTipi = nihaiUrunTipi;
     if (kalemKayit.length) kayit.kalemler = kalemKayit;
+    // Kâr hesabında kullanılan maliyet varsayımlarını BU ANDAKİ değerleriyle satışa damgalar —
+    // böylece ileride işçilik/masura/hammadde fiyatı değişse bile bu satışın kârı geçmişte
+    // kaldığı gibi hesaplanmaya devam eder (geriye dönük değişmez).
+    kayit.maliyetSnapshot = {
+      iscilik: data.ayarlar.iscilik,
+      masuraFiyat: data.ayarlar.masuraFiyat,
+      hammaddeFiyat: ortalamaHammaddeFiyati()
+    };
   }
   data.hareketler.push(kayit);
   save();
@@ -1130,11 +1148,12 @@ function tartimYazdir() {
     }
     hucreler += "</tr>";
   }
-  const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><title>Tartım Fişi</title><style>'
+  const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Tartım Fişi</title><style>'
     + '@page { size: A4 portrait; margin: 10mm; }'
-    + '* { box-sizing: border-box; margin: 0; padding: 0; }'
-    + 'body { font-family: Arial, sans-serif; color: #000; background: #fff; width: 190mm; margin: 0 auto; }'
-    + '.baslik { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2.5px solid #000; padding-bottom: 5mm; margin-bottom: 4mm; }'
+    + '* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: rgba(0,0,0,.1); }'
+    + 'body { font-family: Arial, sans-serif; color: #000; background: #fff; width: 100%; max-width: 190mm; margin: 0 auto; padding: 10px; }'
+    + '.yazdir-btn { display: block; width: 100%; margin-bottom: 14px; padding: 16px; font-size: 17px; font-weight: bold; cursor: pointer; background: #4A3670; color: #fff; border: none; border-radius: 10px; -webkit-appearance: none; }'
+    + '.baslik { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2.5px solid #000; padding-bottom: 5mm; margin-bottom: 4mm; flex-wrap: wrap; }'
     + '.baslik h1 { font-size: 17pt; letter-spacing: .5px; }'
     + '.baslik .alt { font-size: 9pt; color: #444; }'
     + '.bilgi { display: flex; gap: 8mm; font-size: 10.5pt; margin-bottom: 4mm; flex-wrap: wrap; }'
@@ -1145,10 +1164,11 @@ function tartimYazdir() {
     + 'td.kg { font-variant-numeric: tabular-nums; font-size: 11pt; }'
     + '.toplam { display: flex; justify-content: flex-end; gap: 10mm; margin-top: 4mm; font-size: 13pt; border-top: 2.5px solid #000; padding-top: 3mm; }'
     + '.toplam b { font-size: 15pt; }'
-    + '@media print { .yazdir-btn { display: none; } }'
-    + '.yazdir-btn { position: fixed; top: 10px; right: 10px; padding: 10px 18px; font-size: 14px; cursor: pointer; }'
+    + '.yazdir-not { font-size: 12px; color: #666; text-align: center; margin-bottom: 14px; }'
+    + '@media print { .yazdir-btn, .yazdir-not { display: none; } body { padding: 0; max-width: none; } }'
     + '</style></head><body>'
-    + '<button class="yazdir-btn" onclick="window.print()">🖨 Yazdır</button>'
+    + '<button class="yazdir-btn" onclick="window.print()">🖨 Yazdır / PDF Olarak Kaydet</button>'
+    + '<div class="yazdir-not">Buton çalışmazsa tarayıcının kendi menüsünden (⋮ veya Paylaş) "Yazdır" seçeneğini kullanabilirsin.</div>'
     + '<div class="baslik"><h1>RAZ PLASTİK</h1><span class="alt">Poliwood — Tartım Fişi</span></div>'
     + '<div class="bilgi">'
     + '<span>Firma: <b>' + esc(tartim.firma || "") + '</b></span>'
@@ -1162,7 +1182,7 @@ function tartimYazdir() {
   if (!w) { toast("Tarayıcı yeni pencereyi engelledi — izin verin"); return; }
   w.document.write(sayfa);
   w.document.close();
-  setTimeout(() => { try { w.print(); } catch(e) {} }, 400);
+  toast("Fiş yeni sekmede açıldı — Yazdır butonuna dokun");
 }
 
 function tartimSatisaAktar() {
@@ -1473,6 +1493,80 @@ function urunSatisAyOzeti(ayKey) {
   return { urunler, tanimliOlmayanSatisSayisi };
 }
 
+// ============ KÂRLILIK HESAPLAMA (TAHMİNİ) ============
+// Satışlarda hangi hammaddeden üretildiği izlenmediği için gerçek/kesin maliyet hesaplanamaz.
+// Bunun yerine tüm hammadde stok kalemlerinin AĞIRLIKLI ORTALAMA fiyatını kullanarak
+// makul bir tahmini maliyet/kâr hesabı yapılır. Muhasebenin verdiği kesin rakamların
+// yerine geçmez — sadece hızlı bir sağlama/karşılaştırma aracıdır.
+function ortalamaHammaddeFiyati() {
+  let toplamDeger = 0, toplamKg = 0;
+  data.hammadde.forEach(h => {
+    const fiyat = hamFiyatBul(h);
+    const agirlik = (h.alinan != null && h.alinan > 0) ? h.alinan : (h.kalan||0);
+    if (fiyat > 0 && agirlik > 0) { toplamDeger += fiyat * agirlik; toplamKg += agirlik; }
+  });
+  return toplamKg > 0 ? (toplamDeger / toplamKg) : 0;
+}
+
+// Bir satış kaydının tahmini kârını hesaplar (KDV hariç gelir üzerinden).
+function satisKarHesapla(h) {
+  if (!h.gelir) return null;
+  const gelirKdvHaric = h.gelir / 1.2;
+  let toplamKg = 0, masuraKg = 0;
+  if (h.kalemler && h.kalemler.length) {
+    h.kalemler.forEach(k => {
+      const parcalar = String(k.key||"").split("|");
+      const kalite = parcalar[0], genislik = parcalar[2];
+      let kg = k.kg;
+      if (kg == null) {
+        const m = data.mamul.find(mm => mm.kalite+"|"+mm.tip+"|"+mm.genislik+"|"+mm.gramaj === k.key);
+        kg = (k.adet||0) * (m ? (m.kgBobin||0) : 0);
+      }
+      toplamKg += kg;
+      const mas = MASURALAR[genislik];
+      if (kalite === "2. Kalite" && mas) masuraKg += (k.adet||0) * mas.masura;
+    });
+  } else {
+    toplamKg = h.kg || 0; // kalemleri yoksa elde ne varsa (masura ayrımı yapılamaz)
+  }
+  const netPlastikKg = Math.max(0, toplamKg - masuraKg);
+  // Satışta damgalanmış maliyet anlık görüntüsü varsa ONU kullan (o satışın gerçek zamanındaki
+  // fiyatlarla hesaplanmaya devam etmesi için) — yoksa (eski kayıt) şu anki ayarlara düşer.
+  const snap = h.maliyetSnapshot;
+  const hamFiyat = snap ? snap.hammaddeFiyat : ortalamaHammaddeFiyati();
+  const iscilikOrani = snap ? snap.iscilik : data.ayarlar.iscilik;
+  const masuraOrani = snap ? snap.masuraFiyat : data.ayarlar.masuraFiyat;
+  const hammaddeMaliyeti = netPlastikKg * hamFiyat;
+  const iscilikMaliyeti = netPlastikKg * iscilikOrani;
+  const masuraMaliyeti = masuraKg * masuraOrani;
+  const toplamMaliyet = hammaddeMaliyeti + iscilikMaliyeti + masuraMaliyeti;
+  const kar = gelirKdvHaric - toplamMaliyet;
+  const karMarji = gelirKdvHaric > 0 ? (kar / gelirKdvHaric * 100) : null;
+  return { gelirKdvHaric, toplamKg, netPlastikKg, masuraKg, hammaddeMaliyeti, iscilikMaliyeti, masuraMaliyeti, toplamMaliyet, kar, karMarji };
+}
+
+// Belirli bir ay için toplam kârlılık özeti (ürün tipine göre kırılımlı).
+function karlilikAyOzeti(ayKey) {
+  const satislar = data.hareketler.filter(h => h.tarih.slice(0,7) === ayKey && h.gelir && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış"));
+  let toplamGelir = 0, toplamMaliyet = 0, toplamKar = 0, toplamKg = 0;
+  const urunTipiKirilim = {};
+  satislar.forEach(h => {
+    const k = satisKarHesapla(h);
+    if (!k) return;
+    toplamGelir += k.gelirKdvHaric;
+    toplamMaliyet += k.toplamMaliyet;
+    toplamKar += k.kar;
+    toplamKg += k.toplamKg;
+    const tip = h.urunTipi || "Bilinmeyen";
+    if (!urunTipiKirilim[tip]) urunTipiKirilim[tip] = {gelir:0, maliyet:0, kar:0};
+    urunTipiKirilim[tip].gelir += k.gelirKdvHaric;
+    urunTipiKirilim[tip].maliyet += k.toplamMaliyet;
+    urunTipiKirilim[tip].kar += k.kar;
+  });
+  const karMarji = toplamGelir > 0 ? (toplamKar / toplamGelir * 100) : null;
+  return { toplamGelir, toplamMaliyet, toplamKar, karMarji, toplamKg, urunTipiKirilim, satisSayisi: satislar.length };
+}
+
 function rUretim() {
   const oz = uretimAyOzeti(buAyKey());
   const masAn = masuraAnaliziAy(buAyKey());
@@ -1583,7 +1677,7 @@ function rHareketler(H) {
   let liste = H.satirlar.slice().reverse();
   if (hFiltre === "gelir") liste = liste.filter(h => h.tur === "GELİR");
   else if (hFiltre === "gider") liste = liste.filter(h => h.tur === "GİDER");
-  else if (hFiltre === "bekleyen") liste = liste.filter(h => h.tur === "GELİR" && !h.odendi && h.kategori !== "Sermaye" && h.kategori !== "Kredi Kullanımı" && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış" || h.vade));
+  else if (hFiltre === "bekleyen") liste = liste.filter(h => h.tur === "GELİR" && !tahsilatDurumu(h).tamamlandiMi && h.kategori !== "Sermaye" && h.kategori !== "Kredi Kullanımı" && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış" || h.vade));
   else if (hFiltre === "buay") liste = liste.filter(h => h.tarih.slice(0,7) === buAyKey());
   const q = arama.trim().toLocaleLowerCase("tr");
   if (q) liste = liste.filter(h => (h.aciklama||"").toLocaleLowerCase("tr").indexOf(q) >= 0 || (h.not||"").toLocaleLowerCase("tr").indexOf(q) >= 0 || (h.kategori||"").toLocaleLowerCase("tr").indexOf(q) >= 0);
@@ -1593,8 +1687,8 @@ function rHareketler(H) {
   html += '<div class="chips">'+filtreler.map(f => '<button class="chip'+(hFiltre===f[0]?" on":"")+'" onclick="hFiltre=\''+f[0]+'\';render()">'+f[1]+'</button>').join("")+'</div>';
 
   if (hFiltre === "bekleyen" && liste.length) {
-    const beklToplam = liste.reduce((s,h) => s + (h.gelir||0), 0);
-    html += '<div class="uyari"><span class="uyari-ikon">💰</span><span>Bekleyen toplam: <b>'+fmt(beklToplam)+'</b></span><button class="chip" onclick="tumunuTahsilYap()">Tümünü Tahsil Et</button></div>';
+    const beklToplam = liste.reduce((s,h) => s + tahsilatDurumu(h).kalan, 0);
+    html += '<div class="uyari"><span class="uyari-ikon">💰</span><span>Bekleyen toplam (kalan bakiye): <b>'+fmt(beklToplam)+'</b></span><button class="chip" onclick="tumunuTahsilYap()">Tümünü Tahsil Et</button></div>';
   }
 
   // Filtrelenmiş listenin toplamları (üstte özet şerit)
@@ -1625,11 +1719,10 @@ function rHareketler(H) {
         + '</div></td></tr>';
       return;
     }
-    const tahsil = (h.tur === "GELİR" && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış" || h.vade))
-      ? '<input type="checkbox" '+(h.odendi?"checked":"")+' onchange="odendiToggle(\''+h.__id+'\')" style="width:18px;height:18px">'
-      : "";
+    const tahsil = tahsilDurumHucre(h);
+    const durumSuAn = tahsilatDurumu(h);
     html += '<tr>'
-      + '<td style="white-space:nowrap">'+fmtTarih(h.tarih)+(h.vade&&!h.odendi?'<div class="notrow">vade: '+fmtTarih(h.vade)+'</div>':"")+'</td>'
+      + '<td style="white-space:nowrap">'+fmtTarih(h.tarih)+(h.vade&&!durumSuAn.tamamlandiMi?'<div class="notrow">vade: '+fmtTarih(h.vade)+'</div>':"")+'</td>'
       + '<td><span class="adet-edit" onclick="duzenleBaslat(\''+h.__id+'\')">'+esc(h.aciklama)+'</span>'+(h.not?'<div class="notrow">'+esc(h.not)+'</div>':"")+'</td>'
       + '<td><span class="pill">'+esc(h.kategori)+'</span></td>'
       + '<td class="num yesil">'+(h.gelir?fmt(h.gelir):"")+'</td>'
@@ -1681,23 +1774,128 @@ function duzenleKaydet(id) {
   toast("✓ Güncellendi");
 }
 
-function odendiToggle(id) {
-  const h = data.hareketler.find(x => x.__id === id);
+// ============ TAHSİLAT (KISMİ ÖDEME DESTEKLİ) ============
+// Bir satışın tahsilat durumunu hesaplar. h.tahsilatlar varsa (yeni sistem) onu kullanır;
+// yoksa eski h.odendi boolean'ından (geriye dönük uyumluluk) türetir.
+function tahsilatDurumu(h) {
+  const gelir = h.gelir || 0;
+  if (h.tahsilatlar && h.tahsilatlar.length) {
+    const toplamTahsil = h.tahsilatlar.reduce((s,t) => s + (t.tutar||0), 0);
+    const kalan = Math.max(0, gelir - toplamTahsil);
+    return { toplamTahsil, kalan, tamamlandiMi: kalan < 0.01 };
+  }
+  if (h.odendi) return { toplamTahsil: gelir, kalan: 0, tamamlandiMi: true };
+  return { toplamTahsil: 0, kalan: gelir, tamamlandiMi: false };
+}
+
+function tahsilatModal(hId) {
+  const h = data.hareketler.find(x => x.__id === hId);
   if (!h) return;
-  h.odendi = !h.odendi;
-  save(); render();
+  window.__tahsilatHedefId = hId;
+  const overlay = document.createElement("div");
+  overlay.id = "tahsilat-modal";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto";
+  overlay.innerHTML = tahsilatModalIcerik(h);
+  document.body.appendChild(overlay);
+}
+
+function tahsilatModalIcerik(h) {
+  const durum = tahsilatDurumu(h);
+  let html = '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:420px;max-height:88vh;overflow:auto">';
+  html += '<div class="mtitle">💰 Tahsilat — '+esc(h.aciklama)+'</div>';
+  html += '<div class="hesap-satir"><span>Toplam Tutar</span><b>'+fmt(h.gelir)+'</b></div>';
+  html += '<div class="hesap-satir"><span>Tahsil Edilen</span><b class="yesil">'+fmt(durum.toplamTahsil)+'</b></div>';
+  html += '<div class="hesap-satir"><span>Kalan</span><b class="'+(durum.kalan>0.01?"kirmizi":"yesil")+'">'+fmt(durum.kalan)+'</b></div>';
+  if (h.tahsilatlar && h.tahsilatlar.length) {
+    html += '<div class="mini" style="font-weight:800;margin:12px 0 6px">Tahsilat Geçmişi</div>';
+    h.tahsilatlar.forEach((t,i) => {
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #262837;font-size:13px">'
+        + '<span>'+fmtTarih(t.tarih)+'</span><span class="yesil" style="font-weight:700">'+fmt(t.tutar)+'</span>'
+        + '<button class="sil-x" onclick="tahsilatSil('+i+')">×</button></div>';
+    });
+  }
+  if (durum.kalan > 0.01) {
+    html += '<div style="margin-top:14px"><div class="mini" style="margin-bottom:5px">Yeni Tahsilat Tutarı (kısmi girebilirsin)</div>'
+      + '<input type="text" id="tahsilat-tutar" inputmode="decimal" value="'+String(durum.kalan.toFixed(2)).replace(".",",")+'"></div>';
+    html += '<button class="btn" style="background:var(--green);margin-top:10px" onclick="tahsilatEkle()">✓ Tahsilatı Kaydet</button>';
+  } else {
+    html += '<div class="mini" style="margin-top:10px;color:var(--green);font-weight:700">✓ Tamamı tahsil edildi</div>';
+  }
+  html += '<button class="btn" style="background:#2A2C3A;margin-top:8px" onclick="tahsilatModalKapat()">Kapat</button>';
+  html += '</div>';
+  return html;
+}
+
+function tahsilatEkle() {
+  const h = data.hareketler.find(x => x.__id === window.__tahsilatHedefId);
+  if (!h) return;
+  const el = document.getElementById("tahsilat-tutar");
+  const n = parseTL(el ? el.value : "");
+  if (isNaN(n) || n <= 0) { toast("Geçerli bir tutar girin"); return; }
+  const durum = tahsilatDurumu(h);
+  if (n > durum.kalan + 0.01) {
+    if (!confirm("Girilen tutar ("+fmt(n)+") kalan bakiyeden ("+fmt(durum.kalan)+") fazla. Yine de kaydedilsin mi?")) return;
+  }
+  if (!h.tahsilatlar) h.tahsilatlar = [];
+  h.tahsilatlar.push({ tarih: yerelTarihStr(), tutar: n });
+  h.odendi = tahsilatDurumu(h).tamamlandiMi;
+  save();
+  const modalEl = document.getElementById("tahsilat-modal");
+  if (modalEl) modalEl.innerHTML = tahsilatModalIcerik(h);
+  render();
+  toast("✓ Tahsilat kaydedildi");
+}
+
+function tahsilatSil(i) {
+  const h = data.hareketler.find(x => x.__id === window.__tahsilatHedefId);
+  if (!h || !h.tahsilatlar) return;
+  if (!confirm("Bu tahsilat kaydı silinsin mi?")) return;
+  h.tahsilatlar.splice(i,1);
+  h.odendi = tahsilatDurumu(h).tamamlandiMi;
+  save();
+  const modalEl = document.getElementById("tahsilat-modal");
+  if (modalEl) modalEl.innerHTML = tahsilatModalIcerik(h);
+  render();
+  toast("Tahsilat kaydı silindi");
+}
+
+function tahsilatModalKapat() {
+  const el = document.getElementById("tahsilat-modal");
+  if (el) el.remove();
+  window.__tahsilatHedefId = null;
+}
+
+// Hareketler tablosunda tahsilat sütununu (durum + tıklanabilir) üretir
+function tahsilDurumHucre(h) {
+  const tahsilVar = (h.tur === "GELİR" && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış" || h.vade));
+  if (!tahsilVar) return "";
+  const durum = tahsilatDurumu(h);
+  if (durum.tamamlandiMi) {
+    return '<span class="yesil" style="font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap" onclick="tahsilatModal(\''+h.__id+'\')">✓ Tahsil</span>';
+  }
+  if (durum.toplamTahsil > 0.01) {
+    return '<span style="cursor:pointer;font-size:11px;color:var(--amber);font-weight:700;white-space:nowrap" onclick="tahsilatModal(\''+h.__id+'\')">Kalan '+fmtK(durum.kalan)+'</span>';
+  }
+  return '<span style="cursor:pointer;font-size:12px;color:var(--red);font-weight:700;white-space:nowrap" onclick="tahsilatModal(\''+h.__id+'\')">Bekliyor</span>';
 }
 
 function tumunuTahsilYap() {
-  if (!confirm("Filtredeki bekleyen tüm satış tahsilatları 'tahsil edildi' olarak işaretlensin mi?")) return;
+  if (!confirm("Filtredeki bekleyen tüm satış tahsilatları (kalan bakiyeleri) tamamen tahsil edildi olarak işaretlensin mi?")) return;
   let n = 0;
+  const bugun = yerelTarihStr();
   data.hareketler.forEach(h => {
-    if (h.tur === "GELİR" && !h.odendi && h.kategori !== "Sermaye" && h.kategori !== "Kredi Kullanımı" && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış" || h.vade)) {
-      h.odendi = true; n++;
+    if (h.tur === "GELİR" && h.kategori !== "Sermaye" && h.kategori !== "Kredi Kullanımı" && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış" || h.vade)) {
+      const durum = tahsilatDurumu(h);
+      if (!durum.tamamlandiMi) {
+        if (!h.tahsilatlar) h.tahsilatlar = [];
+        if (durum.kalan > 0.01) h.tahsilatlar.push({ tarih: bugun, tutar: durum.kalan });
+        h.odendi = true;
+        n++;
+      }
     }
   });
   save(); render();
-  toast("✓ "+n+" kayıt tahsil edildi işaretlendi");
+  toast("✓ "+n+" kayıt tamamen tahsil edildi");
 }
 
 function silOnay(idx) {
@@ -1982,26 +2180,31 @@ function disaAktar() {
   // ---- SAYFA 2: GELİRLER ----
   const gelirSatirlar = []; const gelirMerge = [];
   r = 1;
-  bb = xlsxBaslikSatiri(r, "GELİRLER", 8, XS.baslikYesil); gelirSatirlar.push(bb.xml); gelirMerge.push(bb.merge); r++;
+  bb = xlsxBaslikSatiri(r, "GELİRLER", 9, XS.baslikYesil); gelirSatirlar.push(bb.xml); gelirMerge.push(bb.merge); r++;
   const gelirHeaderRow = r;
-  gelirSatirlar.push(xlsxSatir(r, [xT("Tarih",XS.tabloBaslik),xT("Açıklama",XS.tabloBaslik),xT("Kategori",XS.tabloBaslik),xT("Tutar",XS.tabloBaslik),xT("Kg",XS.tabloBaslik),xT("Tahsil",XS.tabloBaslik),xT("Vade",XS.tabloBaslik),xT("Not",XS.tabloBaslik)])); r++;
-  let topGelirKg = 0;
+  gelirSatirlar.push(xlsxSatir(r, [xT("Tarih",XS.tabloBaslik),xT("Açıklama",XS.tabloBaslik),xT("Kategori",XS.tabloBaslik),xT("Tutar",XS.tabloBaslik),xT("Kg",XS.tabloBaslik),xT("Tahsil",XS.tabloBaslik),xT("Kalan",XS.tabloBaslik),xT("Vade",XS.tabloBaslik),xT("Not",XS.tabloBaslik)])); r++;
+  let topGelirKg = 0, topKalan = 0;
   gelirler.forEach(x => {
     const tahsilVar = (x.kategori === "Satış-Fatura" || x.kategori === "Perakende Satış" || x.vade);
+    const durum = tahsilatDurumu(x);
+    let tahsilMetin = "";
+    if (tahsilVar) tahsilMetin = durum.tamamlandiMi ? "Evet" : (durum.toplamTahsil > 0.01 ? "Kısmi" : "Hayır");
     gelirSatirlar.push(xlsxSatir(r, [
       xD(x.tarih, XS.tarih), xT(x.aciklama, XS.metinBorder), xT(x.kategori, XS.metinBorder),
       xM(x.gelir, XS.paraYesil), xM(x.kg||0, XS.kg),
-      xT(tahsilVar ? (x.odendi?"Evet":"Hayır") : "", XS.ortaBorder),
+      xT(tahsilMetin, XS.ortaBorder),
+      tahsilVar && !durum.tamamlandiMi ? xM(durum.kalan, XS.paraKirmizi) : xT("", XS.ortaBorder),
       x.vade ? xD(x.vade, XS.tarih) : xT("", XS.ortaBorder),
       xT(x.not||"", XS.metinBorder)
     ]));
     topGelirKg += (x.kg||0);
+    if (tahsilVar) topKalan += durum.kalan;
     r++;
   });
   const gelirLastData = r-1;
-  gelirSatirlar.push(xlsxSatir(r, [xT("TOPLAM ("+gelirler.length+" kayıt)",XS.toplamEtiket),xT("",XS.toplamEtiket),xT("",XS.toplamEtiket),xM(topGelir,XS.toplamParaYesil),xM(topGelirKg,XS.toplamKg),xT("",XS.toplamEtiket),xT("",XS.toplamEtiket),xT("",XS.toplamEtiket)]));
+  gelirSatirlar.push(xlsxSatir(r, [xT("TOPLAM ("+gelirler.length+" kayıt)",XS.toplamEtiket),xT("",XS.toplamEtiket),xT("",XS.toplamEtiket),xM(topGelir,XS.toplamParaYesil),xM(topGelirKg,XS.toplamKg),xT("",XS.toplamEtiket),xM(topKalan,XS.toplamParaKirmizi),xT("",XS.toplamEtiket),xT("",XS.toplamEtiket)]));
   gelirMerge.push("A"+r+":C"+r);
-  const gelirXml = xlsxSayfaXml({ satirlar: gelirSatirlar, kolonGenislikleri: [12,26,16,14,11,10,12,26], donmusSatir: gelirHeaderRow, filtreAraligi: "A"+gelirHeaderRow+":H"+gelirLastData, birlesmeler: gelirMerge, sonSutun: 8, sonSatir: r });
+  const gelirXml = xlsxSayfaXml({ satirlar: gelirSatirlar, kolonGenislikleri: [12,26,16,14,11,10,12,12,26], donmusSatir: gelirHeaderRow, filtreAraligi: "A"+gelirHeaderRow+":I"+gelirLastData, birlesmeler: gelirMerge, sonSutun: 9, sonSatir: r });
 
   // ---- SAYFA 3: GİDERLER ----
   const giderSatirlar = []; const giderMerge = [];
@@ -2262,11 +2465,38 @@ function aylikRaporIndir(secilenAyKey) {
   }
   const s4Xml = xlsxSayfaXml({ satirlar: s4, kolonGenislikleri: [34,14,14,14], donmusSatir: urunHeaderRow, filtreAraligi: urunGirdiler.length ? ("A"+urunHeaderRow+":D"+urunLastData) : null, birlesmeler: m4, sonSutun: 4, sonSatir: r-1 });
 
+  // ---- SAYFA 5: KÂRLILIK ÖZETİ (TAHMİNİ) ----
+  const karOz = karlilikAyOzeti(ayKey);
+  const s5 = []; const m5 = [];
+  r = 1;
+  bb = xlsxBaslikSatiri(r, "KÂRLILIK ÖZETİ (TAHMİNİ) — "+ayAdi.toUpperCase(), 4, XS.baslikNavy); s5.push(bb.xml); m5.push(bb.merge); r++;
+  bb = xlsxBaslikSatiri(r, "Ortalama hammadde fiyatı ve sabit işçilik/masura maliyetiyle hesaplanır — muhasebe rakamlarının yerine geçmez, sağlama amaçlıdır.", 4, XS.altbilgi, 26); s5.push(bb.xml); m5.push(bb.merge); r++;
+  r++;
+  s5.push(xlsxSatir(r, [xT("Toplam Satış Geliri (KDV hariç)",XS.etiket), xM(karOz.toplamGelir, XS.paraYesil)])); r++;
+  s5.push(xlsxSatir(r, [xT("Tahmini Toplam Maliyet",XS.etiket), xM(karOz.toplamMaliyet, XS.paraKirmizi)])); r++;
+  s5.push(xlsxSatir(r, [xT("Tahmini Brüt Kâr",XS.etiket), xM(karOz.toplamKar, karOz.toplamKar>=0?XS.paraYesil:XS.paraKirmizi)])); r++;
+  s5.push(xlsxSatir(r, [xT("Kâr Marjı",XS.etiket), xM(karOz.karMarji||0, XS.yuzde)])); r++;
+  s5.push(xlsxSatir(r, [xT("Ortalama Hammadde Fiyatı (₺/kg)",XS.etiket), xM(ortalamaHammaddeFiyati(), XS.para)])); r++;
+  r++;
+  let karFiltre = null;
+  if (Object.keys(karOz.urunTipiKirilim).length) {
+    bb = xlsxBaslikSatiri(r, "ÜRÜN TİPİNE GÖRE KÂRLILIK", 4, XS.baslikYesil); s5.push(bb.xml); m5.push(bb.merge); r++;
+    const karHeaderRow = r;
+    s5.push(xlsxSatir(r, [xT("Ürün Tipi",XS.tabloBaslik), xT("Gelir",XS.tabloBaslik), xT("Maliyet",XS.tabloBaslik), xT("Kâr",XS.tabloBaslik)])); r++;
+    Object.entries(karOz.urunTipiKirilim).sort((a,b) => b[1].kar - a[1].kar).forEach(([tip,v]) => {
+      s5.push(xlsxSatir(r, [xT(tip,XS.metinBorder), xM(v.gelir,XS.para), xM(v.maliyet,XS.para), xM(v.kar, v.kar>=0?XS.paraYesil:XS.paraKirmizi)])); r++;
+    });
+    const karLastData = r-1;
+    karFiltre = "A"+karHeaderRow+":D"+karLastData;
+  }
+  const s5Xml = xlsxSayfaXml({ satirlar: s5, kolonGenislikleri: [30,18,16,16], donmusSatir: 0, filtreAraligi: karFiltre, birlesmeler: m5, sonSutun: 4, sonSatir: r-1 });
+
   const sayfalar = [
     { ad: "Aylık Rapor", xml: s1Xml },
     { ad: "Müşteri Detay", xml: s2Xml },
     { ad: "Üretim Detay", xml: s3Xml },
-    { ad: "Ürün Bazlı Satış", xml: s4Xml }
+    { ad: "Ürün Bazlı Satış", xml: s4Xml },
+    { ad: "Kârlılık Özeti", xml: s5Xml }
   ];
   const xlsxBytes = xlsxOlustur(sayfalar);
   const blob = new Blob([xlsxBytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
@@ -2299,6 +2529,7 @@ function rStok() {
     + '<div class="kpi"><div class="lbl">Hammadde Stok Değeri</div><div class="v">'+fmtK(hamDeger)+'</div><span class="mini">KDV dahil, tanımlı fiyatla</span></div>'
     + '<div class="kpi"><div class="lbl">Toplam Stok Değeri</div><div class="v" style="color:var(--amber)">'+fmtK(mamulDeger+hamDeger)+'</div></div>'
     + '</div>';
+  html += '<div class="card"><button class="chip" style="color:var(--blue);border-color:var(--blue)" onclick="sayimKarsilastirModal()">📋 Stok Sayım Karşılaştır</button><div class="mini" style="margin-top:6px">Muhasebe/depo ay sonunda sayım verdiğinde, panelin izlediği rakamla karşılaştır.</div></div>';
 
   html += '<div class="card"><div class="mtitle">Mamul Stok <span class="pill">bobin</span></div><div class="scroll"><table><tr><th>Ürün</th><th class="num">Adet</th><th class="num">Kg/Bobin</th><th class="num">Toplam Kg</th><th class="num">Değer</th><th></th></tr>';
   let topKg = 0;
@@ -2342,7 +2573,106 @@ function rStok() {
   });
   html += '</table></div><div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="fiyatEkle()">+ Yeni Fiyat Kalemi</button></div>'
     + '<div class="mini" style="margin-top:8px">Ürün adına veya fiyata dokunarak düzenle. Bu fiyatlar satış ekranındaki tahmini tutar ve maliyet hesabında kullanılır.</div></div>';
+
+  if (data.sayimlar && data.sayimlar.length) {
+    html += '<div class="card"><div class="mtitle">Geçmiş Sayım Karşılaştırmaları</div>';
+    data.sayimlar.slice(0,10).forEach(s => {
+      const tumFarklar = [...(s.mamul||[]), ...(s.hammadde||[])].filter(x => Math.abs(x.fark) > 0.01);
+      html += '<div style="border-bottom:1px solid #262837;padding:9px 0;display:flex;justify-content:space-between;align-items:center;gap:8px">'
+        + '<span>'+fmtTarih(s.tarih)+' <span class="mini">('+((s.mamul||[]).length+(s.hammadde||[]).length)+' kalem sayıldı, '+tumFarklar.length+' farklı)</span></span>'
+        + '<button class="sil-x" onclick="sayimSil(\''+s.__id+'\')">×</button></div>';
+    });
+    html += '</div>';
+  }
   return html;
+}
+
+// ============ STOK SAYIM KARŞILAŞTIRMA ============
+let sayimGecici = null;
+
+function sayimKarsilastirModal() {
+  sayimGecici = { mamul: {}, hammadde: {} };
+  const overlay = document.createElement("div");
+  overlay.id = "sayim-modal";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto";
+  overlay.innerHTML = sayimModalIcerik();
+  document.body.appendChild(overlay);
+}
+
+function sayimModalIcerik() {
+  let html = '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:480px;max-height:88vh;overflow:auto">';
+  html += '<div class="mtitle">📋 Stok Sayım Karşılaştırma</div>';
+  html += '<div class="mini" style="margin-bottom:12px">Muhasebe/depo sayımından gelen rakamı gir, panelin izlediği sayıyla farkını gör. Boş bıraktığın kalemler karşılaştırmaya girmez.</div>';
+  html += '<div class="mini" style="font-weight:800;margin-bottom:6px">Mamul (bobin adedi)</div>';
+  data.mamul.forEach((m,i) => {
+    const girilenStr = sayimGecici.mamul[i] != null ? sayimGecici.mamul[i] : "";
+    const girilen = parseTL(girilenStr);
+    const farkVar = girilenStr !== "" && !isNaN(girilen);
+    const fark = farkVar ? (girilen - m.adet) : null;
+    html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">'
+      + '<span style="flex:1;font-size:12.5px">'+esc(m.kalite+" "+m.tip+" "+m.genislik)+'<div class="mini">panel: '+m.adet+'</div></span>'
+      + '<input type="text" inputmode="decimal" style="width:64px;flex-shrink:0" placeholder="sayım" value="'+esc(girilenStr)+'" oninput="sayimSet(\'mamul\','+i+',this.value)">'
+      + '<span style="flex-shrink:0;width:44px;text-align:right;font-weight:800;color:'+(farkVar?(Math.abs(fark)<0.01?"var(--green)":"var(--red)"):"var(--mut)")+'">'+(farkVar?((fark>0?"+":"")+fark):"—")+'</span>'
+      + '</div>';
+  });
+  html += '<div class="mini" style="font-weight:800;margin:12px 0 6px">Hammadde (kg)</div>';
+  data.hammadde.forEach((h,i) => {
+    const girilenStr = sayimGecici.hammadde[i] != null ? sayimGecici.hammadde[i] : "";
+    const girilen = parseTL(girilenStr);
+    const farkVar = girilenStr !== "" && !isNaN(girilen);
+    const fark = farkVar ? (girilen - (h.kalan||0)) : null;
+    html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">'
+      + '<span style="flex:1;font-size:12.5px">'+esc(h.tedarikci+(h.aciklama!=="-"?" ("+h.aciklama+")":""))+'<div class="mini">panel: '+fmtKg(h.kalan)+' kg</div></span>'
+      + '<input type="text" inputmode="decimal" style="width:64px;flex-shrink:0" placeholder="sayım" value="'+esc(girilenStr)+'" oninput="sayimSet(\'hammadde\','+i+',this.value)">'
+      + '<span style="flex-shrink:0;width:56px;text-align:right;font-weight:800;color:'+(farkVar?(Math.abs(fark)<0.01?"var(--green)":"var(--red)"):"var(--mut)")+'">'+(farkVar?((fark>0?"+":"")+fark.toFixed(1)):"—")+'</span>'
+      + '</div>';
+  });
+  html += '<div style="display:flex;gap:8px;margin-top:14px"><button class="btn" style="background:var(--green)" onclick="sayimKaydet()">Bu Sayımı Kaydet</button><button class="btn" style="background:#2A2C3A" onclick="sayimModalKapat()">Kapat</button></div>';
+  html += '</div>';
+  return html;
+}
+
+function sayimSet(tur, i, v) {
+  sayimGecici[tur][i] = v;
+  const el = document.getElementById("sayim-modal");
+  if (el) el.innerHTML = sayimModalIcerik();
+}
+
+function sayimModalKapat() {
+  const el = document.getElementById("sayim-modal");
+  if (el) el.remove();
+  sayimGecici = null;
+}
+
+function sayimKaydet() {
+  const farklar = { mamul: [], hammadde: [] };
+  data.mamul.forEach((m,i) => {
+    const girilenStr = sayimGecici.mamul[i];
+    if (girilenStr == null || girilenStr === "") return;
+    const girilen = parseTL(girilenStr);
+    if (isNaN(girilen)) return;
+    farklar.mamul.push({ ad: m.kalite+" "+m.tip+" "+m.genislik, panel: m.adet, sayim: girilen, fark: girilen-m.adet });
+  });
+  data.hammadde.forEach((h,i) => {
+    const girilenStr = sayimGecici.hammadde[i];
+    if (girilenStr == null || girilenStr === "") return;
+    const girilen = parseTL(girilenStr);
+    if (isNaN(girilen)) return;
+    farklar.hammadde.push({ ad: h.tedarikci+(h.aciklama!=="-"?" ("+h.aciklama+")":""), panel: h.kalan, sayim: girilen, fark: girilen-(h.kalan||0) });
+  });
+  if (!farklar.mamul.length && !farklar.hammadde.length) { toast("Hiç sayım değeri girilmedi"); return; }
+  if (!data.sayimlar) data.sayimlar = [];
+  data.sayimlar.unshift({ tarih: yerelTarihStr(), __id: "sayim_"+Date.now(), mamul: farklar.mamul, hammadde: farklar.hammadde });
+  save();
+  sayimModalKapat();
+  render();
+  toast("✓ Sayım kaydedildi");
+}
+
+function sayimSil(id) {
+  if (!confirm("Bu sayım kaydı silinsin mi?")) return;
+  data.sayimlar = data.sayimlar.filter(s => s.__id !== id);
+  save(); render();
 }
 
 function adetDuzenle(i) {
@@ -2555,6 +2885,20 @@ function fiyatDuzenle(i) {
   f.kdvHaric = n;
   save(); render();
   toast("Fiyat güncellendi");
+}
+
+// Maliyet hesaplarında kullanılan sabitleri (işçilik, masura fiyatı) düzenler.
+// Bu değerler data.ayarlar içinde saklanır — Maliyet ve Kârlılık hesaplarının her ikisi de buradan okur.
+function ayarDuzenle(anahtar) {
+  const etiketler = { iscilik: "İşçilik (₺/kg net plastik)", masuraFiyat: "Masura Fiyatı (₺/kg)" };
+  const mevcut = data.ayarlar[anahtar];
+  const v = prompt(etiketler[anahtar]+":", String(mevcut).replace(".",","));
+  if (v === null) return;
+  const n = parseTL(v);
+  if (isNaN(n) || n < 0) { toast("Geçerli bir sayı girin"); return; }
+  data.ayarlar[anahtar] = n;
+  save(); render();
+  toast("✓ Güncellendi — Maliyet ve Kârlılık hesaplarında geçerli");
 }
 
 function fiyatAdiDuzenle(i) {
@@ -2777,8 +3121,8 @@ function rMaliyet() {
   if (!isNaN(hamF) && hamF > 0 && !isNaN(bobinKg) && bobinKg > 0 && !isNaN(masuraKg)) {
     const netPlastik = Math.max(0, bobinKg - masuraKg);
     const hamMaliyet = netPlastik * hamF;
-    const iscilik = netPlastik * ISCILIK;
-    const masuraMaliyet = masuraKg * MASURA_FIYAT;
+    const iscilik = netPlastik * data.ayarlar.iscilik;
+    const masuraMaliyet = masuraKg * data.ayarlar.masuraFiyat;
     const toplamMaliyet = hamMaliyet + iscilik + masuraMaliyet;
     const birimMaliyet = bobinKg > 0 ? toplamMaliyet / bobinKg : 0;
     const gelirBobin = satisF * bobinKg;
@@ -2787,8 +3131,8 @@ function rMaliyet() {
     sonucHtml = '<div class="card"><div class="mtitle">Sonuç <span class="pill">1 bobin</span></div>'
       + '<div class="hesap-satir"><span>Net plastik ('+fmtKg(bobinKg)+' − '+fmtKg(masuraKg)+' masura)</span><b>'+fmtKg(netPlastik)+' kg</b></div>'
       + '<div class="hesap-satir"><span>Hammadde ('+fmtKg(netPlastik)+' × '+String(hamF).replace(".",",")+'₺)</span><b>'+fmt(hamMaliyet)+'</b></div>'
-      + '<div class="hesap-satir"><span>İşçilik ('+fmtKg(netPlastik)+' × '+ISCILIK+'₺)</span><b>'+fmt(iscilik)+'</b></div>'
-      + '<div class="hesap-satir"><span>Masura ('+fmtKg(masuraKg)+' × '+MASURA_FIYAT+'₺)</span><b>'+fmt(masuraMaliyet)+'</b></div>'
+      + '<div class="hesap-satir"><span>İşçilik ('+fmtKg(netPlastik)+' × <span class="adet-edit" onclick="event.stopPropagation();ayarDuzenle(\'iscilik\')">'+data.ayarlar.iscilik+'₺</span>)</span><b>'+fmt(iscilik)+'</b></div>'
+      + '<div class="hesap-satir"><span>Masura ('+fmtKg(masuraKg)+' × <span class="adet-edit" onclick="event.stopPropagation();ayarDuzenle(\'masuraFiyat\')">'+data.ayarlar.masuraFiyat+'₺</span>)</span><b>'+fmt(masuraMaliyet)+'</b></div>'
       + '<div class="hesap-satir"><span><b>Toplam maliyet / bobin</b></span><b class="kirmizi">'+fmt(toplamMaliyet)+'</b></div>'
       + '<div class="hesap-satir"><span>Birim maliyet</span><b>'+fmt(birimMaliyet)+'/kg</b></div>'
       + '<div class="hesap-satir"><span>Satış geliri ('+fmtKg(bobinKg)+' × '+String(satisF).replace(".",",")+'₺ KDV hariç)</span><b class="yesil">'+fmt(gelirBobin)+'</b></div>'
@@ -2811,7 +3155,7 @@ function rMaliyet() {
     + '<div><div class="mini" style="margin-bottom:5px">Bobin kg (boş = varsayılan '+fmtKg(mas.bobin)+')</div><input type="text" id="m-bobin" inputmode="decimal" value="'+esc(maliyet.bobinKg)+'" oninput="mSet(\'bobinKg\',this.value);renderKorumali()"></div>'
     + '<div><div class="mini" style="margin-bottom:5px">Masura kg (boş = varsayılan '+String(mas.masura).replace(".",",")+')</div><input type="text" id="m-masura" inputmode="decimal" value="'+esc(maliyet.masuraKg)+'" oninput="mSet(\'masuraKg\',this.value);renderKorumali()"></div>'
     + '</div>'
-    + '<div class="mini">Sabitler: işçilik '+ISCILIK+'₺/kg (net plastik), masura '+MASURA_FIYAT+'₺/kg.</div>'
+    + '<div class="mini">Sabitler (dokunarak değiştir): işçilik <span class="adet-edit" onclick="ayarDuzenle(\'iscilik\')">'+data.ayarlar.iscilik+'₺/kg</span> (net plastik), masura <span class="adet-edit" onclick="ayarDuzenle(\'masuraFiyat\')">'+data.ayarlar.masuraFiyat+'₺/kg</span>.</div>'
     + '</div></div>' + sonucHtml;
 }
 
