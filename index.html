@@ -1865,6 +1865,114 @@ function tahsilatModalKapat() {
   window.__tahsilatHedefId = null;
 }
 
+// ============ MÜŞTERİ BAZLI TOPLU TAHSİLAT ============
+// Bir müşteriden tek seferde alınan toplu bir ödemeyi, o müşterinin birden fazla açık
+// faturasına otomatik dağıtır (en eski fatura önce kapanır — standart yaşlandırma mantığı).
+function musteriBekleyenFaturalar(musteriAdi) {
+  const normalized = normMusteri(musteriAdi);
+  return data.hareketler
+    .filter(h => h.tur === "GELİR" && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış") && normMusteri(h.aciklama) === normalized)
+    .map(h => ({ h, durum: tahsilatDurumu(h) }))
+    .filter(x => x.durum.kalan > 0.01)
+    .sort((a,b) => a.h.tarih.localeCompare(b.h.tarih));
+}
+
+function musteriBekleyenToplam(musteriAdi) {
+  return musteriBekleyenFaturalar(musteriAdi).reduce((s,x) => s + x.durum.kalan, 0);
+}
+
+function musteriTahsilatDagitimHesapla(musteriAdi, tutar) {
+  const faturalar = musteriBekleyenFaturalar(musteriAdi);
+  let kalanTutar = tutar;
+  const dagitim = [];
+  for (const x of faturalar) {
+    if (kalanTutar <= 0.01) break;
+    const uygulanan = Math.min(kalanTutar, x.durum.kalan);
+    dagitim.push({ h: x.h, uygulanan, kalanSonra: x.durum.kalan - uygulanan });
+    kalanTutar -= uygulanan;
+  }
+  return { dagitim, kullanilmayanTutar: Math.max(0, kalanTutar) };
+}
+
+function musteriTahsilatModal(musteriAdi) {
+  window.__musteriTahsilatHedef = musteriAdi;
+  const overlay = document.createElement("div");
+  overlay.id = "musteri-tahsilat-modal";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto";
+  overlay.innerHTML = musteriTahsilatIcerik();
+  document.body.appendChild(overlay);
+}
+
+function musteriTahsilatIcerik() {
+  const musteriAdi = window.__musteriTahsilatHedef;
+  const faturalar = musteriBekleyenFaturalar(musteriAdi);
+  const toplamBekleyen = faturalar.reduce((s,x) => s + x.durum.kalan, 0);
+  let html = '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:440px;max-height:88vh;overflow:auto">';
+  html += '<div class="mtitle">💰 '+esc(musteriAdi)+' — Toplu Tahsilat</div>';
+  html += '<div class="hesap-satir"><span>Toplam Bekleyen ('+faturalar.length+' fatura)</span><b class="kirmizi">'+fmt(toplamBekleyen)+'</b></div>';
+  if (faturalar.length) {
+    html += '<div class="mini" style="font-weight:800;margin:10px 0 6px">Bekleyen Faturalar (eskiden yeniye — dağıtım bu sırayla yapılır)</div>';
+    faturalar.forEach(x => {
+      html += '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #262837;font-size:12.5px">'
+        + '<span>'+fmtTarih(x.h.tarih)+' · '+esc(x.h.kategori)+(x.durum.toplamTahsil>0.01?' <span class="mini">(kısmi ödenmiş)</span>':'')+'</span>'
+        + '<span class="kirmizi" style="font-weight:700">'+fmt(x.durum.kalan)+'</span></div>';
+    });
+    html += '<div style="margin-top:14px"><div class="mini" style="margin-bottom:5px">Alınan Toplu Ödeme Tutarı</div>'
+      + '<input type="text" id="musteri-tahsilat-tutar" inputmode="decimal" placeholder="ör. 40000" oninput="musteriTahsilatOnizle()"></div>';
+    html += '<div id="musteri-tahsilat-onizleme"></div>';
+    html += '<button class="btn" style="background:var(--green);margin-top:10px" onclick="musteriTahsilatUygula()">✓ Dağıt ve Kaydet</button>';
+  } else {
+    html += '<div class="mini" style="margin-top:10px">Bu müşteride bekleyen fatura yok.</div>';
+  }
+  html += '<button class="btn" style="background:#2A2C3A;margin-top:8px" onclick="musteriTahsilatModalKapat()">Kapat</button>';
+  html += '</div>';
+  return html;
+}
+
+function musteriTahsilatOnizle() {
+  const el = document.getElementById("musteri-tahsilat-tutar");
+  const onizEl = document.getElementById("musteri-tahsilat-onizleme");
+  if (!el || !onizEl) return;
+  const n = parseTL(el.value);
+  if (isNaN(n) || n <= 0) { onizEl.innerHTML = ""; return; }
+  const { dagitim, kullanilmayanTutar } = musteriTahsilatDagitimHesapla(window.__musteriTahsilatHedef, n);
+  let html = '<div class="mini" style="font-weight:800;margin:10px 0 6px">Dağıtım Önizlemesi</div>';
+  dagitim.forEach(d => {
+    html += '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px">'
+      + '<span>'+fmtTarih(d.h.tarih)+' · '+esc(d.h.kategori)+'</span>'
+      + '<span class="yesil" style="font-weight:700">-'+fmt(d.uygulanan)+'</span>'
+      + '<span class="mini">'+(d.kalanSonra<0.01?"✓ kapanıyor":"kalan "+fmt(d.kalanSonra))+'</span></div>';
+  });
+  if (kullanilmayanTutar > 0.01) {
+    html += '<div class="mini" style="color:var(--amber);margin-top:6px">⚠ Girilen tutardan '+fmt(kullanilmayanTutar)+' fazlası kullanılmayacak — tüm bekleyen faturalar zaten kapanıyor.</div>';
+  }
+  onizEl.innerHTML = html;
+}
+
+function musteriTahsilatUygula() {
+  const el = document.getElementById("musteri-tahsilat-tutar");
+  const n = parseTL(el ? el.value : "");
+  if (isNaN(n) || n <= 0) { toast("Geçerli bir tutar girin"); return; }
+  const { dagitim } = musteriTahsilatDagitimHesapla(window.__musteriTahsilatHedef, n);
+  if (!dagitim.length) { toast("Bu müşteride bekleyen fatura yok"); return; }
+  const bugun = yerelTarihStr();
+  dagitim.forEach(d => {
+    if (!d.h.tahsilatlar) d.h.tahsilatlar = [];
+    d.h.tahsilatlar.push({ tarih: bugun, tutar: d.uygulanan });
+    d.h.odendi = tahsilatDurumu(d.h).tamamlandiMi;
+  });
+  save();
+  musteriTahsilatModalKapat();
+  render();
+  toast("✓ Tahsilat "+dagitim.length+" faturaya dağıtıldı");
+}
+
+function musteriTahsilatModalKapat() {
+  const el = document.getElementById("musteri-tahsilat-modal");
+  if (el) el.remove();
+  window.__musteriTahsilatHedef = null;
+}
+
 // Hareketler tablosunda tahsilat sütununu (durum + tıklanabilir) üretir
 function tahsilDurumHucre(h) {
   const tahsilVar = (h.tur === "GELİR" && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış" || h.vade));
@@ -2933,17 +3041,22 @@ function fiyatSil(i) {
 function rMusteriler(H) {
   const girdiler = Object.entries(H.musteriler).sort((a,b) => b[1].toplam - a[1].toplam);
   const genelToplam = girdiler.reduce((s,g) => s + g[1].toplam, 0);
+  const genelBekleyen = girdiler.reduce((s,[ad]) => s + musteriBekleyenToplam(ad), 0);
   let html = '<div class="kpi-grid">'
     + '<div class="kpi"><div class="lbl">Müşteri</div><div class="v">'+girdiler.length+'</div></div>'
     + '<div class="kpi"><div class="lbl">Toplam Satış</div><div class="v yesil">'+fmtK(genelToplam)+'</div></div>'
+    + '<div class="kpi"><div class="lbl">Toplam Bekleyen</div><div class="v" style="color:'+(genelBekleyen>0?"var(--red)":"var(--green)")+'">'+fmtK(genelBekleyen)+'</div></div>'
     + '</div>';
-  html += '<div class="card"><div class="mtitle">Müşteri Analizi <span class="pill">satış gelirleri</span></div><div class="scroll"><table><tr><th>Müşteri</th><th class="num">Toplam</th><th class="num">İşlem</th><th>Son Satış</th><th class="num">Pay</th></tr>';
+  html += '<div class="card"><div class="mtitle">Müşteri Analizi <span class="pill">satış gelirleri</span></div><div class="scroll"><table><tr><th>Müşteri</th><th class="num">Toplam</th><th class="num">İşlem</th><th>Son Satış</th><th class="num">Bekleyen</th><th></th></tr>';
   girdiler.forEach(([ad, m]) => {
+    const bekleyen = musteriBekleyenToplam(ad);
     html += '<tr><td><b>'+esc(ad)+'</b></td>'
       + '<td class="num yesil">'+fmt(m.toplam)+'</td>'
       + '<td class="num">'+m.sayi+'</td>'
       + '<td style="white-space:nowrap">'+fmtTarih(m.son)+'</td>'
-      + '<td class="num">%'+(genelToplam?(m.toplam/genelToplam*100).toFixed(1):"0")+'</td></tr>';
+      + '<td class="num" style="color:'+(bekleyen>0.01?"var(--red)":"var(--mut)")+';font-weight:'+(bekleyen>0.01?"800":"400")+'">'+(bekleyen>0.01?fmt(bekleyen):"—")+'</td>'
+      + '<td style="text-align:right">'+(bekleyen>0.01?'<button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap" onclick="musteriTahsilatModal(\''+jsStr(ad)+'\')">💰 Tahsilat</button>':'')+'</td>'
+      + '</tr>';
   });
   html += '</table></div></div>';
   return html;
