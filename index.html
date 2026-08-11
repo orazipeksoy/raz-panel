@@ -30,7 +30,7 @@ header .sub { color: #A79ECF; font-size: 11px; display: block; margin-top: 1px; 
 #sync-badge { font-size: 11px; color: #A79ECF; }
 .rst { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.18); color: #C9BEEA; font-size: 11px; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
 nav { background: var(--card); border-bottom: 1px solid var(--line); display: flex; overflow-x: auto; padding: 0 8px; position: sticky; top: 0; z-index: 10; -webkit-overflow-scrolling: touch; box-shadow: 0 1px 4px rgba(14,42,71,.05); }
-.tab { border: none; background: transparent; padding: 13px 14px; font-size: 13.5px; cursor: pointer; color: var(--mut); border-bottom: 3px solid transparent; font-weight: 600; white-space: nowrap; }
+.tab { border: none; background: transparent; padding: 15px 15px; font-size: 14px; cursor: pointer; color: var(--mut); border-bottom: 3px solid transparent; font-weight: 700; white-space: nowrap; min-height: 46px; }
 .tab.on { color: var(--gold); border-bottom-color: var(--gold); }
 main { padding: 16px; max-width: 1150px; margin: 0 auto; padding-bottom: max(28px, env(safe-area-inset-bottom)); }
 .card { background: var(--card); border-radius: 14px; padding: 16px; box-shadow: 0 1px 4px rgba(14,42,71,.07); margin-bottom: 14px; }
@@ -48,6 +48,15 @@ th { text-align: left; padding: 8px 9px; font-size: 10px; text-transform: upperc
 td { padding: 8px 9px; border-bottom: 1px solid #262837; font-variant-numeric: tabular-nums; }
 tr:last-child td { border-bottom: none; }
 .num { text-align: right; }
+.hareket-kart { background: #1B1D28; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; }
+.hareket-kart-ust { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.hareket-kart-sol { flex: 1; min-width: 0; }
+.hareket-kart-aciklama { font-weight: 800; font-size: 14.5px; cursor: pointer; word-break: break-word; }
+.hareket-kart-meta { font-size: 11.5px; color: var(--mut); margin-top: 3px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.hareket-kart-sag { text-align: right; flex-shrink: 0; }
+.hareket-kart-tutar { font-size: 16.5px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hareket-kart-alt { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px solid #262837; gap: 8px; }
+.hareket-kart-not { font-size: 12px; color: var(--mut); margin-top: 4px; word-break: break-word; }
 .yesil { color: var(--green); font-weight: 600; }
 .kirmizi { color: var(--red); font-weight: 600; }
 input, select { border: 1.5px solid #333648; border-radius: 10px; padding: 11px 12px; font-size: 16px; width: 100%; background: #1B1D28; color: var(--ink); -webkit-appearance: none; }
@@ -70,7 +79,7 @@ input:focus, select:focus { outline: 3px solid rgba(33,121,196,.15); border-colo
 .uyari > span:nth-child(2) { flex: 1; }
 .uyari.krit { background: var(--red-bg); border-color: #4A2328; }
 .uyari-ikon { font-size: 16px; }
-.chip { border: 1.5px solid var(--line); background: #1B1D28; color: var(--mut); font-size: 12.5px; font-weight: 700; padding: 7px 14px; border-radius: 20px; cursor: pointer; white-space: nowrap; }
+.chip { border: 1.5px solid var(--line); background: #1B1D28; color: var(--mut); font-size: 13px; font-weight: 700; padding: 10px 16px; border-radius: 20px; cursor: pointer; white-space: nowrap; min-height: 40px; }
 .chip.on { background: var(--navy); border-color: var(--navy); color: #fff; }
 .chips { display: flex; gap: 7px; overflow-x: auto; margin-bottom: 12px; padding-bottom: 2px; }
 .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; font-size: 12px; }
@@ -91,7 +100,7 @@ input:focus, select:focus { outline: 3px solid rgba(33,121,196,.15); border-colo
 .mini { font-size: 11.5px; color: var(--mut); }
 .hesap-satir { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #262837; font-size: 13.5px; }
 .hesap-satir:last-child { border-bottom: none; }
-.sil-x { background: none; border: none; color: var(--red); font-size: 17px; cursor: pointer; padding: 2px 8px; font-weight: 800; }
+.sil-x { background: none; border: none; color: var(--red); font-size: 20px; cursor: pointer; padding: 8px 12px; font-weight: 800; min-width: 40px; min-height: 40px; }
 .sil-x:active { transform: scale(.9); }
 
 /* Hafif görsel iyileştirmeler — ek JS/timer gerektirmez */
@@ -157,7 +166,7 @@ tr { transition: background-color .1s ease; }
     <img src="data:image/png;base64,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" alt="RAZ Plastik" style="height:38px;width:auto;border-radius:6px">
     <div><h1>RAZ Plastik</h1><span class="sub">Poliwood — Mali Yönetim Paneli</span></div>
     <div class="hdr-right">
-      <div class="hdr-kasa-lbl">Kasa</div>
+      <div class="hdr-kasa-lbl">Kasa <span id="gizli-toggle" onclick="gizliModDegistir()" style="cursor:pointer;opacity:.9;font-size:14px;padding:6px 7px;display:inline-block">👁️</span></div>
       <div class="hdr-kasa" id="hdr-kasa"></div>
     </div>
   </div>
@@ -310,6 +319,7 @@ const VARDIYALAR = ["Gündüz", "Gece"];
 
 let data = null;
 let tab = "ozet";
+let gizliMod = false; // görünürken parasal rakamları gizleme modu — sadece bu cihazda hatırlanır
 let digerAcik = false;
 let form = null;
 let duzenleIdx = null;
@@ -321,6 +331,14 @@ let uFiltre = "buay";
 
 function fmt(v) { return (v == null || v === 0) ? "—" : "₺" + Number(v).toLocaleString("tr-TR", {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function fmtK(v) { if (v == null || v === 0) return "—"; const neg = v < 0 ? "−" : ""; const a = Math.abs(v); if (a >= 1000000) return neg + "₺" + (a/1000000).toLocaleString("tr-TR",{maximumFractionDigits:2}) + "M"; if (a >= 1000) return neg + "₺" + (a/1000).toLocaleString("tr-TR",{maximumFractionDigits:0}) + "K"; return fmt(v); }
+// Gizli mod açıkken parasal metinleri (zaten fmt/fmtK ile biçimlendirilmiş) yıldızla maskeler.
+// Sayı olmayan kısımları (₺ işareti, sonek gibi) korumaya çalışmadan sabit uzunlukta basit bir maske döner.
+function pg(formatliMetin) { return gizliMod ? "₺••••••" : formatliMetin; }
+function gizliModDegistir() {
+  gizliMod = !gizliMod;
+  try { localStorage.setItem("raz-gizli-mod", gizliMod ? "1" : "0"); } catch(e) {}
+  render();
+}
 function fmtKg(v) { return v == null ? "—" : Number(v).toLocaleString("tr-TR", {maximumFractionDigits:2}); }
 function fmtTarih(iso) { const p = iso.split("-"); return p[2]+"."+p[1]+"."+p[0]; }
 function esc(s) { return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
@@ -351,12 +369,18 @@ function saglaId(d) {
   }
   if (!d.mamul) d.mamul = [];
   if (!d.hammadde) d.hammadde = [];
+  d.hammadde.forEach(h => { if (!h.kalite) h.kalite = "Genel"; });
   if (!d.fiyatlar) d.fiyatlar = [];
   if (!d.gizliUyarilar) d.gizliUyarilar = [];
   if (!d.uretimler) d.uretimler = [];
   if (!d.sayimlar) d.sayimlar = [];
-  if (!d.ayarlar) d.ayarlar = { iscilik: ISCILIK_VARSAYILAN, masuraFiyat: MASURA_FIYAT_VARSAYILAN };
-  if (d.ayarlar.iscilik == null) d.ayarlar.iscilik = ISCILIK_VARSAYILAN;
+  if (!d.ayarlar) d.ayarlar = {};
+  // İşçilik artık ürün tipine göre ayrı ayrı: 1.Kalite 25₺, 2.Kalite 15₺, ECO-1 20₺ (net plastik kg başına, masura hariç).
+  // Eski tek-sayı formatındaysa (bu güncellemeden önce kaydedilmişse) yeni doğru değerlerle değiştirilir.
+  if (!d.ayarlar.iscilik || typeof d.ayarlar.iscilik === "number") {
+    d.ayarlar.iscilik = { "1. Kalite": 25, "2. Kalite": 15, "ECO-1": 20 };
+  }
+  ["1. Kalite","2. Kalite","ECO-1"].forEach(k => { if (d.ayarlar.iscilik[k] == null) d.ayarlar.iscilik[k] = ISCILIK_VARSAYILAN; });
   if (d.ayarlar.masuraFiyat == null) d.ayarlar.masuraFiyat = MASURA_FIYAT_VARSAYILAN;
   d.uretimler.forEach(u => { if (!u.__id) u.__id = "u" + (ctr++) + "_" + Math.random().toString(36).slice(2,7); });
   return d;
@@ -498,8 +522,10 @@ function gecenAyKey() { const d = new Date(); const onceki = new Date(d.getFullY
 
 function render() {
   const H = hesapla();
-  document.getElementById("hdr-kasa").textContent = fmt(H.bakiye);
+  document.getElementById("hdr-kasa").textContent = pg(fmt(H.bakiye));
   document.getElementById("hdr-kasa").style.color = H.bakiye >= 0 ? "#4ADE80" : "#F87171";
+  const gizliIkon = document.getElementById("gizli-toggle");
+  if (gizliIkon) gizliIkon.textContent = gizliMod ? "🙈" : "👁️";
   const anaTabs = [["ozet","Özet"],["yeni","+ Kayıt"],["tartim","Tartım"],["uretim","Üretim"],["hareketler","Hareketler"],["stok","Stok"]];
   const digerTabs = [["musteriler","Müşteriler"],["krediler","Krediler"],["notlar","Notlar"],["maliyet","Maliyet"],["aylik","Aylık"]];
   const digerAktif = digerTabs.some(t => t[0] === tab);
@@ -553,6 +579,23 @@ function uyariGizle(key) {
   if (!data.gizliUyarilar.includes(key)) data.gizliUyarilar.push(key);
   save();
   render();
+}
+
+// Sana sunulan rakamların doğruluğunu takip edebilmen için otomatik tutarsızlık taraması.
+// Aciliyet uyarısı değil, "bunlara bir bak" listesi — bulunmazsa hiç görünmez.
+function tutarsizlikKontrolleri() {
+  const sorunlar = [];
+  data.hammadde.forEach(h => {
+    if ((h.kalan||0) < -0.01) sorunlar.push({ ikon: "⚠️", metin: '<b>'+esc(h.tedarikci+(h.aciklama!=="-"?" ("+h.aciklama+")":""))+'</b> stoğu eksiye düşmüş: '+fmtKg(h.kalan)+' kg' });
+  });
+  data.mamul.forEach(m => {
+    if ((m.adet||0) < 0) sorunlar.push({ ikon: "⚠️", metin: '<b>'+esc(m.kalite+" "+m.tip+" "+m.genislik)+'</b> stoğu eksiye düşmüş: '+m.adet+' bobin' });
+  });
+  const buAy = buAyKey();
+  const tumSatislarBuAy = data.hareketler.filter(h => h.tarih.slice(0,7)===buAy && h.gelir && (h.kategori==="Satış-Fatura"||h.kategori==="Perakende Satış"));
+  const tanimsizSayisi = tumSatislarBuAy.filter(h => !h.kalemler || !h.kalemler.length).length;
+  if (tanimsizSayisi > 0) sorunlar.push({ ikon: "ℹ️", metin: "Bu ay <b>"+tanimsizSayisi+"</b> satış stoktan ürün seçilmeden girilmiş — masura/ürün raporlarında bu satışlar görünmüyor" });
+  return sorunlar;
 }
 
 function rOzet(H) {
@@ -609,6 +652,29 @@ function rOzet(H) {
       }
     }
   });
+
+  // Kredi taksit vadesi uyarıları — aynı 3 gün penceresi, ödeme vadesi uyarılarıyla aynı mantık
+  data.krediler.forEach(k => {
+    const c = krediHesapla(k);
+    if (!c.sonrakiTarih) return; // tamamen ödenmiş
+    const key = "kredi_"+k.id;
+    if (c.sonrakiTarih < bugunIso) {
+      uyarilar += uyariKutu(key, "⏰", '<b>'+esc(k.ad)+'</b> kredi taksiti <b>'+fmtTarih(c.sonrakiTarih)+'</b> tarihinde gecikti — '+fmt(k.taksitTutari), true);
+    } else if (c.sonrakiTarih <= uc3IsoSonra) {
+      uyarilar += uyariKutu(key, "📅", '<b>'+esc(k.ad)+'</b> kredi taksiti yaklaşıyor: <b>'+fmtTarih(c.sonrakiTarih)+'</b> — '+fmt(k.taksitTutari), false);
+    }
+  });
+
+  // Kontrol listesi (tutarsızlık taraması) — sadece bulgu varsa görünür
+  const kontroller = tutarsizlikKontrolleri();
+  let kontrolHtml = "";
+  if (kontroller.length) {
+    kontrolHtml = '<div class="card" style="margin-bottom:14px"><div class="mtitle">🔍 Kontrol Listesi <span class="pill">'+kontroller.length+'</span></div>';
+    kontroller.forEach(s => {
+      kontrolHtml += '<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #262837;font-size:13px"><span>'+s.ikon+'</span><span>'+s.metin+'</span></div>';
+    });
+    kontrolHtml += '</div>';
+  }
 
   // Son 7 ay grafik
   const keys = Object.keys(H.aylik).sort().slice(-7);
@@ -691,13 +757,14 @@ function rOzet(H) {
   const buAyKarOz = karlilikAyOzeti(buAyKey());
 
   return '<div class="kpi-grid">'
-    + '<div class="kpi"><div class="lbl">Bu Ay Satış</div><div class="v yesil">'+fmtK(ba.satis)+'</div>'+trendHtml(ba.satis, ga.satis)+'<span class="mini">'+(ba.kg>0?fmtKg(ba.kg)+' kg'+(ba.kgBilinen?'':'+'):'kg bilgisi yok')+'</span></div>'
-    + '<div class="kpi"><div class="lbl">Bu Ay Gider</div><div class="v kirmizi">'+fmtK(ba.gider)+'</div>'+trendHtml(ba.gider, ga.gider)+'</div>'
-    + '<div class="kpi"><div class="lbl">Bu Ay Net</div><div class="v" style="color:'+(baNet>=0?"var(--green)":"var(--red)")+'">'+(baNet>=0?"+":"")+fmtK(baNet)+'</div><span class="mini">'+AYLAR[new Date().getMonth()]+'</span></div>'
+    + '<div class="kpi"><div class="lbl">Bu Ay Satış</div><div class="v yesil">'+pg(fmtK(ba.satis))+'</div>'+trendHtml(ba.satis, ga.satis)+'<span class="mini">'+(ba.kg>0?fmtKg(ba.kg)+' kg'+(ba.kgBilinen?'':'+'):'kg bilgisi yok')+'</span></div>'
+    + '<div class="kpi"><div class="lbl">Bu Ay Gider</div><div class="v kirmizi">'+pg(fmtK(ba.gider))+'</div>'+trendHtml(ba.gider, ga.gider)+'</div>'
+    + '<div class="kpi"><div class="lbl">Bu Ay Net</div><div class="v" style="color:'+(baNet>=0?"var(--green)":"var(--red)")+'">'+pg((baNet>=0?"+":"")+fmtK(baNet))+'</div><span class="mini">'+AYLAR[new Date().getMonth()]+'</span></div>'
     + '<div class="kpi"><div class="lbl">Stok</div><div class="v">'+fmtKg(mamulKg+hamKg)+' kg</div><span class="mini">'+fmtKg(mamulKg)+' mamul · '+fmtKg(hamKg)+' ham</span></div>'
-    + '<div class="kpi"><div class="lbl">Bu Ay Tahmini Kâr</div><div class="v" style="color:'+(buAyKarOz.karMarji==null?"var(--mut)":(buAyKarOz.toplamKar>=0?"var(--green)":"var(--red)"))+'">'+(buAyKarOz.satisSayisi?fmtK(buAyKarOz.toplamKar):"—")+'</div><span class="mini">'+(buAyKarOz.karMarji!=null?"marj %"+buAyKarOz.karMarji.toFixed(1):"satış yok")+' · tahmini</span></div>'
+    + '<div class="kpi"><div class="lbl">Bu Ay Tahmini Kâr</div><div class="v" style="color:'+(buAyKarOz.karMarji==null?"var(--mut)":(buAyKarOz.toplamKar>=0?"var(--green)":"var(--red)"))+'">'+(buAyKarOz.satisSayisi?pg(fmtK(buAyKarOz.toplamKar)):"—")+'</div><span class="mini">'+(buAyKarOz.karMarji!=null?"marj %"+buAyKarOz.karMarji.toFixed(1):"satış yok")+' · tahmini</span></div>'
     + '</div>'
     + (uyarilar ? '<div style="margin-bottom:14px">'+uyarilar+'</div>' : '')
+    + (kontrolHtml)
     + pastaHtml
     + '<div class="card"><div class="mtitle">Aylık Gelir / Gider <span class="pill">son 7 ay</span></div>'
     + '<div class="chart-wrap">'+chart+'</div>'
@@ -756,8 +823,8 @@ function rYeni() {
         + '</div>'
         + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
         + '<div class="seg" style="display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex-shrink:0">'
-        + '<button type="button" style="padding:7px 12px;font-size:12px;border:none;cursor:pointer;background:'+(fiyatAdetMi?"var(--navy2)":"#22232F")+';color:'+(fiyatAdetMi?"#fff":"var(--mut)")+'" onclick="kalemFiyatTuruDegistir('+ki+',\'adet\')">Adet Fiyatı</button>'
-        + '<button type="button" style="padding:7px 12px;font-size:12px;border:none;cursor:pointer;background:'+(!fiyatAdetMi?"var(--navy2)":"#22232F")+';color:'+(!fiyatAdetMi?"#fff":"var(--mut)")+'" onclick="kalemFiyatTuruDegistir('+ki+',\'kg\')">Kg Fiyatı</button>'
+        + '<button type="button" style="padding:12px 16px;font-size:13.5px;min-height:44px;border:none;cursor:pointer;background:'+(fiyatAdetMi?"var(--navy2)":"#22232F")+';color:'+(fiyatAdetMi?"#fff":"var(--mut)")+'" onclick="kalemFiyatTuruDegistir('+ki+',\'adet\')">Adet Fiyatı</button>'
+        + '<button type="button" style="padding:12px 16px;font-size:13.5px;min-height:44px;border:none;cursor:pointer;background:'+(!fiyatAdetMi?"var(--navy2)":"#22232F")+';color:'+(!fiyatAdetMi?"#fff":"var(--mut)")+'" onclick="kalemFiyatTuruDegistir('+ki+',\'kg\')">Kg Fiyatı</button>'
         + '</div>'
         + '<input type="text" inputmode="decimal" style="flex:1;min-width:90px" placeholder="'+(fiyatAdetMi?"₺/adet KDV hariç":"₺/kg KDV hariç")+'" value="'+esc(kal.fiyat)+'" onchange="kalemSet('+ki+',\'fiyat\',this.value);render()">'
         + '</div>'
@@ -1035,9 +1102,9 @@ function kaydet() {
     // böylece ileride işçilik/masura/hammadde fiyatı değişse bile bu satışın kârı geçmişte
     // kaldığı gibi hesaplanmaya devam eder (geriye dönük değişmez).
     kayit.maliyetSnapshot = {
-      iscilik: data.ayarlar.iscilik,
+      iscilik: Object.assign({}, data.ayarlar.iscilik),
       masuraFiyat: data.ayarlar.masuraFiyat,
-      hammaddeFiyat: ortalamaHammaddeFiyati()
+      hammaddeFiyat: { "1. Kalite": ortalamaHammaddeFiyati("1. Kalite"), "2. Kalite": ortalamaHammaddeFiyati("2. Kalite"), "ECO-1": ortalamaHammaddeFiyati("ECO-1") }
     };
   }
   data.hareketler.push(kayit);
@@ -1149,26 +1216,37 @@ function tartimYazdir() {
     hucreler += "</tr>";
   }
   const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Tartım Fişi</title><style>'
-    + '@page { size: A4 portrait; margin: 10mm; }'
+    // Not: Safari (özellikle iOS) @page margin ayarını her zaman dikkate almıyor ve URL/tarih
+    // üst-altbilgisini kendi yazdırma motorundan (sayfa koduyla ilgisi yok) ekliyor — bu yüzden
+    // içeriği son derece kompakt tutup büyük bir güvenlik payı bırakıyoruz, tek sayfaya sığması
+    // tarayıcının kendi kenar boşluğu ne olursa olsun garantili olsun diye.
+    + '@page { size: A4 portrait; margin: 6mm; }'
     + '* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: rgba(0,0,0,.1); }'
-    + 'body { font-family: Arial, sans-serif; color: #000; background: #fff; width: 100%; max-width: 190mm; margin: 0 auto; padding: 10px; }'
-    + '.yazdir-btn { display: block; width: 100%; margin-bottom: 14px; padding: 16px; font-size: 17px; font-weight: bold; cursor: pointer; background: #4A3670; color: #fff; border: none; border-radius: 10px; -webkit-appearance: none; }'
-    + '.baslik { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2.5px solid #000; padding-bottom: 5mm; margin-bottom: 4mm; flex-wrap: wrap; }'
-    + '.baslik h1 { font-size: 17pt; letter-spacing: .5px; }'
-    + '.baslik .alt { font-size: 9pt; color: #444; }'
-    + '.bilgi { display: flex; gap: 8mm; font-size: 10.5pt; margin-bottom: 4mm; flex-wrap: wrap; }'
-    + '.bilgi b { border-bottom: 1px solid #000; padding: 0 2mm 1px; min-width: 30mm; display: inline-block; }'
+    + 'html, body { width: 100%; height: auto; }'
+    + 'body { font-family: Arial, sans-serif; color: #000; background: #fff; }'
+    + '.ekran-sarma { width: 100%; max-width: 190mm; margin: 0 auto; padding: 10px; }'
+    + '.yazdir-btn { display: block; width: 100%; margin-bottom: 10px; padding: 16px; font-size: 17px; font-weight: bold; cursor: pointer; background: #4A3670; color: #fff; border: none; border-radius: 10px; -webkit-appearance: none; }'
+    + '.yazdir-not { font-size: 12px; color: #666; text-align: center; margin-bottom: 14px; line-height: 1.5; }'
+    + '.yazdir-not b { color: #333; }'
+    + '.fis-icerik { page-break-inside: avoid; }'
+    + '.baslik { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #000; padding-bottom: 2mm; margin-bottom: 2mm; flex-wrap: wrap; }'
+    + '.baslik h1 { font-size: 13pt; letter-spacing: .5px; line-height: 1.1; }'
+    + '.baslik .alt { font-size: 8pt; color: #444; }'
+    + '.bilgi { display: flex; gap: 7mm; font-size: 9pt; margin-bottom: 2mm; flex-wrap: wrap; line-height: 1.1; }'
+    + '.bilgi b { border-bottom: 1px solid #000; padding: 0 2mm 1px; min-width: 26mm; display: inline-block; }'
     + 'table { width: 100%; border-collapse: collapse; table-layout: fixed; }'
-    + 'td { border: 1px solid #000; height: 9.2mm; font-size: 10pt; text-align: center; vertical-align: middle; }'
-    + 'td.no { width: 8mm; background: #E8E8E8; font-weight: bold; font-size: 8pt; }'
-    + 'td.kg { font-variant-numeric: tabular-nums; font-size: 11pt; }'
-    + '.toplam { display: flex; justify-content: flex-end; gap: 10mm; margin-top: 4mm; font-size: 13pt; border-top: 2.5px solid #000; padding-top: 3mm; }'
-    + '.toplam b { font-size: 15pt; }'
-    + '.yazdir-not { font-size: 12px; color: #666; text-align: center; margin-bottom: 14px; }'
-    + '@media print { .yazdir-btn, .yazdir-not { display: none; } body { padding: 0; max-width: none; } }'
+    + 'tr { page-break-inside: avoid; }'
+    + 'td { border: 1px solid #000; height: 7mm; font-size: 8.5pt; text-align: center; vertical-align: middle; }'
+    + 'td.no { width: 7.5mm; background: #E8E8E8; font-weight: bold; font-size: 6.5pt; }'
+    + 'td.kg { font-variant-numeric: tabular-nums; font-size: 9.5pt; }'
+    + '.toplam { display: flex; justify-content: flex-end; gap: 10mm; margin-top: 2mm; font-size: 11pt; border-top: 2px solid #000; padding-top: 2mm; line-height: 1.1; }'
+    + '.toplam b { font-size: 13pt; }'
+    + '@media print { .yazdir-btn, .yazdir-not { display: none; } .ekran-sarma { max-width: none; padding: 0; } }'
     + '</style></head><body>'
+    + '<div class="ekran-sarma">'
     + '<button class="yazdir-btn" onclick="window.print()">🖨 Yazdır / PDF Olarak Kaydet</button>'
-    + '<div class="yazdir-not">Buton çalışmazsa tarayıcının kendi menüsünden (⋮ veya Paylaş) "Yazdır" seçeneğini kullanabilirsin.</div>'
+    + '<div class="yazdir-not">Alttaki adres/tarih yazısı çıkarsa bu sayfadan değil, tarayıcının kendi ayarından geliyor: yazdırma ekranında <b>"Üstbilgiler ve Altbilgiler"</b> (Safari) veya <b>"Headers and footers"</b> seçeneğini kapatabilirsin.</div>'
+    + '<div class="fis-icerik">'
     + '<div class="baslik"><h1>RAZ PLASTİK</h1><span class="alt">Poliwood — Tartım Fişi</span></div>'
     + '<div class="bilgi">'
     + '<span>Firma: <b>' + esc(tartim.firma || "") + '</b></span>'
@@ -1177,6 +1255,7 @@ function tartimYazdir() {
     + '</div>'
     + '<table>' + hucreler + '</table>'
     + '<div class="toplam"><span>Toplam Bobin: <b>' + oz.adet + '</b></span><span>Toplam Kg: <b>' + fmtKg(oz.brutT) + '</b></span></div>'
+    + '</div></div>'
     + '</body></html>';
   const w = window.open("", "_blank");
   if (!w) { toast("Tarayıcı yeni pencereyi engelledi — izin verin"); return; }
@@ -1495,25 +1574,46 @@ function urunSatisAyOzeti(ayKey) {
 
 // ============ KÂRLILIK HESAPLAMA (TAHMİNİ) ============
 // Satışlarda hangi hammaddeden üretildiği izlenmediği için gerçek/kesin maliyet hesaplanamaz.
-// Bunun yerine tüm hammadde stok kalemlerinin AĞIRLIKLI ORTALAMA fiyatını kullanarak
-// makul bir tahmini maliyet/kâr hesabı yapılır. Muhasebenin verdiği kesin rakamların
-// yerine geçmez — sadece hızlı bir sağlama/karşılaştırma aracıdır.
-function ortalamaHammaddeFiyati() {
+// Bunun yerine, o KALİTE için etiketlenmiş hammaddelerin AĞIRLIKLI ORTALAMA fiyatını kullanarak
+// makul bir tahmini maliyet/kâr hesabı yapılır (hammadde stok kalemlerine "hangi kalite için"
+// etiketi eklenmiş olması gerekir — eklenmemişse "Genel" sayılır ve tüm hesaplarda kullanılır).
+// Muhasebenin verdiği kesin rakamların yerine geçmez — sadece hızlı bir sağlama/karşılaştırma aracıdır.
+function ortalamaHammaddeFiyati(kaliteFiltre) {
   let toplamDeger = 0, toplamKg = 0;
   data.hammadde.forEach(h => {
+    if (kaliteFiltre && h.kalite && h.kalite !== "Genel" && h.kalite !== kaliteFiltre) return;
     const fiyat = hamFiyatBul(h);
     const agirlik = (h.alinan != null && h.alinan > 0) ? h.alinan : (h.kalan||0);
     if (fiyat > 0 && agirlik > 0) { toplamDeger += fiyat * agirlik; toplamKg += agirlik; }
   });
-  return toplamKg > 0 ? (toplamDeger / toplamKg) : 0;
+  if (toplamKg > 0) return toplamDeger / toplamKg;
+  if (!kaliteFiltre) return 0;
+  // Bu kalite için etiketli hiç hammadde yoksa (henüz etiketlenmemiş) — son çare olarak genel ortalamaya düş
+  let g = 0, k = 0;
+  data.hammadde.forEach(h => {
+    const fiyat = hamFiyatBul(h);
+    const agirlik = (h.alinan != null && h.alinan > 0) ? h.alinan : (h.kalan||0);
+    if (fiyat > 0 && agirlik > 0) { g += fiyat * agirlik; k += agirlik; }
+  });
+  return k > 0 ? (g / k) : 0;
 }
 
 // Bir satış kaydının tahmini kârını hesaplar (KDV hariç gelir üzerinden).
 function satisKarHesapla(h) {
   if (!h.gelir) return null;
   const gelirKdvHaric = h.gelir / 1.2;
-  let toplamKg = 0, masuraKg = 0;
+  // Satışta damgalanmış maliyet anlık görüntüsü varsa ONU kullan (o satışın gerçek zamanındaki
+  // fiyatlarla hesaplanmaya devam etmesi için) — yoksa (eski kayıt) şu anki ayarlara düşer.
+  const snap = h.maliyetSnapshot;
+  // hammaddeFiyat artık kalite bazlı bir sözlük (yeni format) — eski kayıtlarda tek sayıydı, ikisini de destekler.
+  const hamFiyatSozluk = (snap && snap.hammaddeFiyat && typeof snap.hammaddeFiyat === "object") ? snap.hammaddeFiyat : null;
+  const hamFiyatEskiTekil = (snap && typeof snap.hammaddeFiyat === "number") ? snap.hammaddeFiyat : null;
+  const iscilikSozluk = (snap && snap.iscilik && typeof snap.iscilik === "object") ? snap.iscilik : data.ayarlar.iscilik;
+  const masuraOrani = snap ? snap.masuraFiyat : data.ayarlar.masuraFiyat;
+
+  let toplamKg = 0, masuraKg = 0, iscilikMaliyeti = 0, hammaddeMaliyeti = 0;
   if (h.kalemler && h.kalemler.length) {
+    // Her kalem KENDİ ürün tipine göre hesaplanır — karışık faturalarda bile doğru sonuç verir.
     h.kalemler.forEach(k => {
       const parcalar = String(k.key||"").split("|");
       const kalite = parcalar[0], genislik = parcalar[2];
@@ -1524,20 +1624,38 @@ function satisKarHesapla(h) {
       }
       toplamKg += kg;
       const mas = MASURALAR[genislik];
-      if (kalite === "2. Kalite" && mas) masuraKg += (k.adet||0) * mas.masura;
+      // Masura SADECE 2. Kalite'de var — 1. Kalite ve ECO-1 masurasız.
+      const buKalemMasuraKg = (kalite === "2. Kalite" && mas) ? (k.adet||0) * mas.masura : 0;
+      masuraKg += buKalemMasuraKg;
+      const netPlastikBuKalem = Math.max(0, kg - buKalemMasuraKg);
+      // İşçilik masura kilosuna VERİLMEZ — sadece net plastik kg üzerinden, o kalemin kendi kalitesinin oranıyla.
+      const oran = (iscilikSozluk && iscilikSozluk[kalite] != null) ? iscilikSozluk[kalite] : 0;
+      iscilikMaliyeti += netPlastikBuKalem * oran;
+      // Hammadde fiyatı da kaliteye özel — 2. Kalite genelde daha ucuz/farklı hammaddeden üretildiği için
+      // TÜM hammaddelerin genel ortalamasını değil, o kaliteye ETİKETLENMİŞ hammaddelerin ortalamasını kullanır.
+      const hamFiyat = hamFiyatSozluk ? (hamFiyatSozluk[kalite] != null ? hamFiyatSozluk[kalite] : ortalamaHammaddeFiyati(kalite))
+                      : (hamFiyatEskiTekil != null ? hamFiyatEskiTekil : ortalamaHammaddeFiyati(kalite));
+      hammaddeMaliyeti += netPlastikBuKalem * hamFiyat;
     });
   } else {
-    toplamKg = h.kg || 0; // kalemleri yoksa elde ne varsa (masura ayrımı yapılamaz)
+    // Kalemleri yoksa (stok seçilmeden girilmiş satış) kalite tekil olarak bilinmez.
+    // h.urunTipi belirliyse (otomatik ya da elle atanmış) o tipin oranını kullanır; "Karışık"/bilinmiyorsa
+    // üç oranın ortalaması kullanılır — bu satırlar zaten tahminidir, masura ayrımı da yapılamaz.
+    toplamKg = h.kg || 0;
+    let oran, hamFiyat;
+    if (h.urunTipi && iscilikSozluk && iscilikSozluk[h.urunTipi] != null) {
+      oran = iscilikSozluk[h.urunTipi];
+      hamFiyat = hamFiyatSozluk ? (hamFiyatSozluk[h.urunTipi] != null ? hamFiyatSozluk[h.urunTipi] : ortalamaHammaddeFiyati(h.urunTipi))
+               : (hamFiyatEskiTekil != null ? hamFiyatEskiTekil : ortalamaHammaddeFiyati(h.urunTipi));
+    } else {
+      const degerler = Object.values(iscilikSozluk||{});
+      oran = degerler.length ? degerler.reduce((s,v)=>s+v,0)/degerler.length : 0;
+      hamFiyat = hamFiyatEskiTekil != null ? hamFiyatEskiTekil : ortalamaHammaddeFiyati();
+    }
+    iscilikMaliyeti = toplamKg * oran;
+    hammaddeMaliyeti = toplamKg * hamFiyat; // masura ayrımı yapılamıyor bu durumda
   }
   const netPlastikKg = Math.max(0, toplamKg - masuraKg);
-  // Satışta damgalanmış maliyet anlık görüntüsü varsa ONU kullan (o satışın gerçek zamanındaki
-  // fiyatlarla hesaplanmaya devam etmesi için) — yoksa (eski kayıt) şu anki ayarlara düşer.
-  const snap = h.maliyetSnapshot;
-  const hamFiyat = snap ? snap.hammaddeFiyat : ortalamaHammaddeFiyati();
-  const iscilikOrani = snap ? snap.iscilik : data.ayarlar.iscilik;
-  const masuraOrani = snap ? snap.masuraFiyat : data.ayarlar.masuraFiyat;
-  const hammaddeMaliyeti = netPlastikKg * hamFiyat;
-  const iscilikMaliyeti = netPlastikKg * iscilikOrani;
   const masuraMaliyeti = masuraKg * masuraOrani;
   const toplamMaliyet = hammaddeMaliyeti + iscilikMaliyeti + masuraMaliyeti;
   const kar = gelirKdvHaric - toplamMaliyet;
@@ -1585,7 +1703,7 @@ function rUretim() {
   html += '<div><div class="mini" style="margin-bottom:5px">Makine</div><select onchange="uSet(\'makine\',this.value)">'+MAKINELER.map(m => '<option'+(uForm.makine===m?" selected":"")+'>'+m+'</option>').join("")+'</select></div>';
   html += '</div>';
   html += '<div><div class="mini" style="margin-bottom:5px">Vardiya</div><div class="seg" style="display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;width:fit-content">'
-    + VARDIYALAR.map(v => '<button type="button" style="padding:8px 16px;font-size:13px;border:none;cursor:pointer;background:'+(uForm.vardiya===v?"var(--navy2)":"#22232F")+';color:'+(uForm.vardiya===v?"#fff":"var(--mut)")+'" onclick="uSet(\'vardiya\',\''+v+'\');render()">'+(v==="Gündüz"?"☀️ ":"🌙 ")+v+'</button>').join("")
+    + VARDIYALAR.map(v => '<button type="button" style="padding:12px 18px;font-size:14px;min-height:44px;border:none;cursor:pointer;background:'+(uForm.vardiya===v?"var(--navy2)":"#22232F")+';color:'+(uForm.vardiya===v?"#fff":"var(--mut)")+'" onclick="uSet(\'vardiya\',\''+v+'\');render()">'+(v==="Gündüz"?"☀️ ":"🌙 ")+v+'</button>').join("")
     + '</div></div>';
   html += '<div class="row2">';
   html += '<div style="position:relative"><div class="mini" style="margin-bottom:5px">Usta</div><input type="text" id="u-usta" placeholder="ör. Ahmet Yılmaz" value="'+esc(uForm.usta)+'" oninput="ustaInputDegisti(this.value)" autocomplete="off"><div id="usta-oneri" style="position:absolute;left:0;right:0;top:100%;z-index:20"></div></div>';
@@ -1696,18 +1814,17 @@ function rHareketler(H) {
   const fGider = liste.reduce((s,h) => s + (h.gider||0), 0);
   const fNet = fGelir - fGider;
   html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">'
-    + '<div style="background:var(--green-bg);border:1px solid #1E4535;border-radius:10px;padding:9px 11px"><div class="lbl" style="margin-bottom:2px">Gelir</div><div class="yesil" style="font-size:15px;font-weight:800;font-variant-numeric:tabular-nums">'+fmt(fGelir)+'</div></div>'
-    + '<div style="background:var(--red-bg);border:1px solid #4A2328;border-radius:10px;padding:9px 11px"><div class="lbl" style="margin-bottom:2px">Gider</div><div class="kirmizi" style="font-size:15px;font-weight:800;font-variant-numeric:tabular-nums">'+fmt(fGider)+'</div></div>'
-    + '<div style="background:#1B1D28;border:1px solid var(--line);border-radius:10px;padding:9px 11px"><div class="lbl" style="margin-bottom:2px">Net</div><div style="font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;color:'+(fNet>=0?"var(--green)":"var(--red)")+'">'+(fNet>=0?"+":"")+fmt(fNet)+'</div></div>'
+    + '<div style="background:var(--green-bg);border:1px solid #1E4535;border-radius:10px;padding:9px 11px"><div class="lbl" style="margin-bottom:2px">Gelir</div><div class="yesil" style="font-size:15px;font-weight:800;font-variant-numeric:tabular-nums">'+pg(fmt(fGelir))+'</div></div>'
+    + '<div style="background:var(--red-bg);border:1px solid #4A2328;border-radius:10px;padding:9px 11px"><div class="lbl" style="margin-bottom:2px">Gider</div><div class="kirmizi" style="font-size:15px;font-weight:800;font-variant-numeric:tabular-nums">'+pg(fmt(fGider))+'</div></div>'
+    + '<div style="background:#1B1D28;border:1px solid var(--line);border-radius:10px;padding:9px 11px"><div class="lbl" style="margin-bottom:2px">Net</div><div style="font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;color:'+(fNet>=0?"var(--green)":"var(--red)")+'">'+pg((fNet>=0?"+":"")+fmt(fNet))+'</div></div>'
     + '</div>';
 
-  html += '<div class="scroll"><table><tr><th>Tarih</th><th>Açıklama</th><th>Kategori</th><th class="num">Gelir</th><th class="num">Gider</th><th class="num">Kg</th><th>Tahsil</th><th></th></tr>';
+  html += '<div id="hareketler-liste">';
   liste.forEach(h => {
     const idx = data.hareketler.findIndex(x => x.__id === h.__id);
     if (duzenleIdx === h.__id) {
       const e = window.__editForm || {};
-      html += '<tr><td colspan="8" style="background:#1B1D28;border-radius:10px">'
-        + '<div class="formgrid" style="padding:10px">'
+      html += '<div class="hareket-kart"><div class="formgrid">'
         + '<div class="row2"><input type="date" value="'+(e.tarih||h.tarih)+'" onchange="editSet(\'tarih\',this.value)">'
         + '<select onchange="editSet(\'kategori\',this.value)">'+(h.tur==="GELİR"?GELIR_KAT:GIDER_KAT).map(k => '<option'+((e.kategori||h.kategori)===k?" selected":"")+'>'+k+'</option>').join("")+'</select></div>'
         + '<input type="text" value="'+esc(e.aciklama!=null?e.aciklama:h.aciklama)+'" oninput="editSet(\'aciklama\',this.value)" placeholder="Açıklama">'
@@ -1716,28 +1833,27 @@ function rHareketler(H) {
         + '<div class="row2"><input type="date" value="'+(e.vade!=null?e.vade:(h.vade||""))+'" onchange="editSet(\'vade\',this.value)">'
         + '<input type="text" value="'+esc(e.not!=null?e.not:(h.not||""))+'" oninput="editSet(\'not\',this.value)" placeholder="Not"></div>'
         + '<div style="display:flex;gap:8px"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="duzenleKaydet(\''+h.__id+'\')">✓ Kaydet</button><button class="chip" onclick="duzenleIptal()">İptal</button></div>'
-        + '</div></td></tr>';
+        + '</div></div>';
       return;
     }
     const tahsil = tahsilDurumHucre(h);
     const durumSuAn = tahsilatDurumu(h);
-    html += '<tr>'
-      + '<td style="white-space:nowrap">'+fmtTarih(h.tarih)+(h.vade&&!durumSuAn.tamamlandiMi?'<div class="notrow">vade: '+fmtTarih(h.vade)+'</div>':"")+'</td>'
-      + '<td><span class="adet-edit" onclick="duzenleBaslat(\''+h.__id+'\')">'+esc(h.aciklama)+'</span>'+(h.not?'<div class="notrow">'+esc(h.not)+'</div>':"")+'</td>'
-      + '<td><span class="pill">'+esc(h.kategori)+'</span></td>'
-      + '<td class="num yesil">'+(h.gelir?fmt(h.gelir):"")+'</td>'
-      + '<td class="num kirmizi">'+(h.gider?fmt(h.gider):"")+'</td>'
-      + '<td class="num">'+(h.kg?fmtKg(h.kg):"")+'</td>'
-      + '<td style="text-align:center">'+tahsil+'</td>'
-      + '<td style="text-align:right"><button class="sil-x" onclick="silOnay('+idx+')">×</button></td>'
-      + '</tr>';
+    const tutarRenk = h.gelir ? "yesil" : (h.gider ? "kirmizi" : "");
+    const tutarDeger = h.gelir ? pg("+"+fmt(h.gelir)) : (h.gider ? pg("−"+fmt(h.gider)) : "—");
+    html += '<div class="hareket-kart">'
+      + '<div class="hareket-kart-ust">'
+      + '<div class="hareket-kart-sol">'
+      + '<div class="hareket-kart-aciklama" onclick="duzenleBaslat(\''+h.__id+'\')">'+esc(h.aciklama)+'</div>'
+      + '<div class="hareket-kart-meta"><span>'+fmtTarih(h.tarih)+'</span><span class="pill">'+esc(h.kategori)+'</span>'+(h.kg?'<span>· '+fmtKg(h.kg)+' kg</span>':"")+'</div>'
+      + (h.not ? '<div class="hareket-kart-not">'+esc(h.not)+'</div>' : "")
+      + (h.vade && !durumSuAn.tamamlandiMi ? '<div class="hareket-kart-not">📅 vade: '+fmtTarih(h.vade)+'</div>' : "")
+      + '</div>'
+      + '<div class="hareket-kart-sag"><div class="hareket-kart-tutar '+tutarRenk+'">'+tutarDeger+'</div></div>'
+      + '</div>'
+      + '<div class="hareket-kart-alt">'+(tahsil?('<span>'+tahsil+'</span>'):'<span></span>')+'<button class="sil-x" onclick="silOnay('+idx+')">×</button></div>'
+      + '</div>';
   });
-  // Tablo altı toplam satırı (filtrelenmiş listeye göre)
-  html += '<tr style="border-top:2px solid var(--line)"><td colspan="3" style="font-weight:800">TOPLAM ('+liste.length+' kayıt)</td>'
-    + '<td class="num yesil" style="font-weight:800">'+(fGelir?fmt(fGelir):"—")+'</td>'
-    + '<td class="num kirmizi" style="font-weight:800">'+(fGider?fmt(fGider):"—")+'</td>'
-    + '<td colspan="3"></td></tr>';
-  html += '</table></div></div>';
+  html += '</div></div>';
   return html;
 }
 
@@ -2584,7 +2700,13 @@ function aylikRaporIndir(secilenAyKey) {
   s5.push(xlsxSatir(r, [xT("Tahmini Toplam Maliyet",XS.etiket), xM(karOz.toplamMaliyet, XS.paraKirmizi)])); r++;
   s5.push(xlsxSatir(r, [xT("Tahmini Brüt Kâr",XS.etiket), xM(karOz.toplamKar, karOz.toplamKar>=0?XS.paraYesil:XS.paraKirmizi)])); r++;
   s5.push(xlsxSatir(r, [xT("Kâr Marjı",XS.etiket), xM(karOz.karMarji||0, XS.yuzde)])); r++;
-  s5.push(xlsxSatir(r, [xT("Ortalama Hammadde Fiyatı (₺/kg)",XS.etiket), xM(ortalamaHammaddeFiyati(), XS.para)])); r++;
+  s5.push(xlsxSatir(r, [xT("Ortalama Hammadde Fiyatı — 1. Kalite (₺/kg)",XS.etiket), xM(ortalamaHammaddeFiyati("1. Kalite"), XS.para)])); r++;
+  s5.push(xlsxSatir(r, [xT("Ortalama Hammadde Fiyatı — 2. Kalite (₺/kg)",XS.etiket), xM(ortalamaHammaddeFiyati("2. Kalite"), XS.para)])); r++;
+  s5.push(xlsxSatir(r, [xT("Ortalama Hammadde Fiyatı — ECO-1 (₺/kg)",XS.etiket), xM(ortalamaHammaddeFiyati("ECO-1"), XS.para)])); r++;
+  s5.push(xlsxSatir(r, [xT("İşçilik — 1. Kalite (₺/kg net plastik)",XS.etiket), xM(data.ayarlar.iscilik["1. Kalite"], XS.para)])); r++;
+  s5.push(xlsxSatir(r, [xT("İşçilik — 2. Kalite (₺/kg net plastik)",XS.etiket), xM(data.ayarlar.iscilik["2. Kalite"], XS.para)])); r++;
+  s5.push(xlsxSatir(r, [xT("İşçilik — ECO-1 (₺/kg net plastik)",XS.etiket), xM(data.ayarlar.iscilik["ECO-1"], XS.para)])); r++;
+  s5.push(xlsxSatir(r, [xT("Masura Fiyatı (₺/kg)",XS.etiket), xM(data.ayarlar.masuraFiyat, XS.para)])); r++;
   r++;
   let karFiltre = null;
   if (Object.keys(karOz.urunTipiKirilim).length) {
@@ -2663,7 +2785,7 @@ function rStok() {
     hamTop += h.kalan||0;
     const hf = hamFiyatBul(h);
     const deger = (h.kalan||0) * hf * 1.2;
-    html += '<tr><td><b>'+esc(h.tedarikci)+'</b>'+(h.aciklama&&h.aciklama!=="-"?' · '+esc(h.aciklama):"")+(h.not?'<div class="notrow">📄 '+esc(h.not)+'</div>':"")+'<div class="notrow"><span class="adet-edit" onclick="hamDuzenleTam('+i+')">✎ düzenle</span></div></td>'
+    html += '<tr><td><b>'+esc(h.tedarikci)+'</b>'+(h.aciklama&&h.aciklama!=="-"?' · '+esc(h.aciklama):"")+' <span class="pill" style="font-size:9.5px;padding:1px 6px">'+esc(h.kalite||"Genel")+'</span>'+(h.not?'<div class="notrow">📄 '+esc(h.not)+'</div>':"")+'<div class="notrow"><span class="adet-edit" onclick="hamDuzenleTam('+i+')">✎ düzenle</span></div></td>'
       + '<td class="num">'+(h.alinan!=null?fmtKg(h.alinan):"—")+'</td>'
       + '<td class="num"><span class="adet-edit" onclick="hamDuzenle('+i+')">'+fmtKg(h.kalan)+'</span></td>'
       + '<td class="num">'+(deger>0?fmtK(deger):"—")+'</td>'
@@ -2934,9 +3056,10 @@ function hamDuzenle(i) {
   save(); render();
 }
 
-// Hammadde tam düzenleme modalı (ad, açıklama, alınan, kalan, not)
+// Hammadde tam düzenleme modalı (ad, açıklama, alınan, kalan, not, kalite)
 function hamModal(idx) {
-  const d = idx != null ? data.hammadde[idx] : {tedarikci:"", aciklama:"-", alinan:"", kalan:"", not:""};
+  const d = idx != null ? data.hammadde[idx] : {tedarikci:"", aciklama:"-", alinan:"", kalan:"", not:"", kalite:"Genel"};
+  const kaliteSecenekleri = ["Genel","1. Kalite","2. Kalite","ECO-1"];
   const overlay = document.createElement("div");
   overlay.id = "urun-modal";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px";
@@ -2946,6 +3069,7 @@ function hamModal(idx) {
     + '<div class="formgrid">'
     + '<div><div class="mini" style="margin-bottom:5px">Tedarikçi</div><input type="text" id="hm-ted" value="'+esc(d.tedarikci)+'" placeholder="ör. Ertas Plastik"></div>'
     + '<div><div class="mini" style="margin-bottom:5px">Açıklama / Cins (yoksa −)</div><input type="text" id="hm-acik" value="'+esc(d.aciklama)+'" placeholder="ör. Mavi, Bal Köpüğü"></div>'
+    + '<div><div class="mini" style="margin-bottom:5px">Hangi Kalite İçin Kullanılıyor</div><select id="hm-kalite">'+kaliteSecenekleri.map(k => '<option'+((d.kalite||"Genel")===k?" selected":"")+'>'+k+'</option>').join("")+'</select><div class="mini" style="margin-top:4px">Kâr hesabında bu hammaddenin fiyatı sadece seçtiğin kalitede kullanılır. "Genel" = hepsinde/karışık kullanılır.</div></div>'
     + '<div class="row2">'
     + '<div><div class="mini" style="margin-bottom:5px">Alınan Kg (opsiyonel)</div><input type="text" id="hm-alinan" inputmode="decimal" value="'+esc(d.alinan!=null?String(d.alinan).replace(".",","):"")+'" placeholder="boş bırakılabilir"></div>'
     + '<div><div class="mini" style="margin-bottom:5px">Kalan Kg</div><input type="text" id="hm-kalan" inputmode="decimal" value="'+esc(d.kalan!=null?String(d.kalan).replace(".",","):"")+'" placeholder="ör. 3000"></div>'
@@ -2959,13 +3083,14 @@ function hamModal(idx) {
 function hamKaydet(idx) {
   const ted = (gv("hm-ted")||"").trim();
   const aciklama = (gv("hm-acik")||"").trim() || "-";
+  const kalite = gv("hm-kalite") || "Genel";
   const alinanRaw = gv("hm-alinan");
   const alinan = alinanRaw.trim() === "" ? null : parseTL(alinanRaw);
   const kalan = parseTL(gv("hm-kalan"));
   const not = (gv("hm-not")||"").trim() || null;
   if (!ted) { toast("Tedarikçi adı gerekli"); return; }
   if (isNaN(kalan) || kalan < 0) { toast("Geçerli kalan kg girin"); return; }
-  const kayit = {tedarikci: ted, aciklama, alinan: (alinan!=null && !isNaN(alinan)) ? alinan : null, kalan, not};
+  const kayit = {tedarikci: ted, aciklama, kalite, alinan: (alinan!=null && !isNaN(alinan)) ? alinan : null, kalan, not};
   if (idx != null && idx >= 0) { data.hammadde[idx] = kayit; toast("✓ Hammadde güncellendi"); }
   else { data.hammadde.push(kayit); toast("✓ Yeni hammadde eklendi"); }
   urunModalKapat();
@@ -2998,13 +3123,26 @@ function fiyatDuzenle(i) {
 // Maliyet hesaplarında kullanılan sabitleri (işçilik, masura fiyatı) düzenler.
 // Bu değerler data.ayarlar içinde saklanır — Maliyet ve Kârlılık hesaplarının her ikisi de buradan okur.
 function ayarDuzenle(anahtar) {
-  const etiketler = { iscilik: "İşçilik (₺/kg net plastik)", masuraFiyat: "Masura Fiyatı (₺/kg)" };
-  const mevcut = data.ayarlar[anahtar];
+  const etiketler = {
+    "iscilik_1. Kalite": "1. Kalite İşçilik (₺/kg net plastik)",
+    "iscilik_2. Kalite": "2. Kalite İşçilik (₺/kg net plastik)",
+    "iscilik_ECO-1": "ECO-1 İşçilik (₺/kg net plastik)",
+    masuraFiyat: "Masura Fiyatı (₺/kg)"
+  };
+  let mevcut, uygula;
+  if (anahtar.indexOf("iscilik_") === 0) {
+    const kalite = anahtar.slice(8);
+    mevcut = data.ayarlar.iscilik[kalite];
+    uygula = (n) => { data.ayarlar.iscilik[kalite] = n; };
+  } else {
+    mevcut = data.ayarlar[anahtar];
+    uygula = (n) => { data.ayarlar[anahtar] = n; };
+  }
   const v = prompt(etiketler[anahtar]+":", String(mevcut).replace(".",","));
   if (v === null) return;
   const n = parseTL(v);
   if (isNaN(n) || n < 0) { toast("Geçerli bir sayı girin"); return; }
-  data.ayarlar[anahtar] = n;
+  uygula(n);
   save(); render();
   toast("✓ Güncellendi — Maliyet ve Kârlılık hesaplarında geçerli");
 }
@@ -3044,17 +3182,17 @@ function rMusteriler(H) {
   const genelBekleyen = girdiler.reduce((s,[ad]) => s + musteriBekleyenToplam(ad), 0);
   let html = '<div class="kpi-grid">'
     + '<div class="kpi"><div class="lbl">Müşteri</div><div class="v">'+girdiler.length+'</div></div>'
-    + '<div class="kpi"><div class="lbl">Toplam Satış</div><div class="v yesil">'+fmtK(genelToplam)+'</div></div>'
-    + '<div class="kpi"><div class="lbl">Toplam Bekleyen</div><div class="v" style="color:'+(genelBekleyen>0?"var(--red)":"var(--green)")+'">'+fmtK(genelBekleyen)+'</div></div>'
+    + '<div class="kpi"><div class="lbl">Toplam Satış</div><div class="v yesil">'+pg(fmtK(genelToplam))+'</div></div>'
+    + '<div class="kpi"><div class="lbl">Toplam Bekleyen</div><div class="v" style="color:'+(genelBekleyen>0?"var(--red)":"var(--green)")+'">'+pg(fmtK(genelBekleyen))+'</div></div>'
     + '</div>';
   html += '<div class="card"><div class="mtitle">Müşteri Analizi <span class="pill">satış gelirleri</span></div><div class="scroll"><table><tr><th>Müşteri</th><th class="num">Toplam</th><th class="num">İşlem</th><th>Son Satış</th><th class="num">Bekleyen</th><th></th></tr>';
   girdiler.forEach(([ad, m]) => {
     const bekleyen = musteriBekleyenToplam(ad);
     html += '<tr><td><b>'+esc(ad)+'</b></td>'
-      + '<td class="num yesil">'+fmt(m.toplam)+'</td>'
+      + '<td class="num yesil">'+pg(fmt(m.toplam))+'</td>'
       + '<td class="num">'+m.sayi+'</td>'
       + '<td style="white-space:nowrap">'+fmtTarih(m.son)+'</td>'
-      + '<td class="num" style="color:'+(bekleyen>0.01?"var(--red)":"var(--mut)")+';font-weight:'+(bekleyen>0.01?"800":"400")+'">'+(bekleyen>0.01?fmt(bekleyen):"—")+'</td>'
+      + '<td class="num" style="color:'+(bekleyen>0.01?"var(--red)":"var(--mut)")+';font-weight:'+(bekleyen>0.01?"800":"400")+'">'+(bekleyen>0.01?pg(fmt(bekleyen)):"—")+'</td>'
       + '<td style="text-align:right">'+(bekleyen>0.01?'<button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap" onclick="musteriTahsilatModal(\''+jsStr(ad)+'\')">💰 Tahsilat</button>':'')+'</td>'
       + '</tr>';
   });
@@ -3222,10 +3360,12 @@ async function yedekGeriYukle(gunKey) {
 function mSet(k,v) { maliyet[k] = v; }
 
 function rMaliyet() {
-  const mas = MASURALAR[maliyet.genislik] || {masura:0, bobin:0};
+  const kaliteMasuraKullanir = maliyet.urun === "2. Kalite"; // sadece 2. Kalite'de masura var
+  const mas = kaliteMasuraKullanir ? (MASURALAR[maliyet.genislik] || {masura:0, bobin:0}) : {masura:0, bobin:0};
   const bobinKg = maliyet.bobinKg !== "" ? parseTL(maliyet.bobinKg) : mas.bobin;
-  const masuraKg = maliyet.masuraKg !== "" ? parseTL(maliyet.masuraKg) : mas.masura;
+  const masuraKg = kaliteMasuraKullanir ? (maliyet.masuraKg !== "" ? parseTL(maliyet.masuraKg) : mas.masura) : 0;
   const hamF = parseTL(maliyet.hamFiyat);
+  const iscilikOrani = (data.ayarlar.iscilik && data.ayarlar.iscilik[maliyet.urun] != null) ? data.ayarlar.iscilik[maliyet.urun] : 0;
   // Satış fiyatı boşsa üründen liste fiyatını al
   let satisF = parseTL(maliyet.satisFiyat);
   if (isNaN(satisF)) satisF = fiyatBul(maliyet.urun);
@@ -3234,7 +3374,7 @@ function rMaliyet() {
   if (!isNaN(hamF) && hamF > 0 && !isNaN(bobinKg) && bobinKg > 0 && !isNaN(masuraKg)) {
     const netPlastik = Math.max(0, bobinKg - masuraKg);
     const hamMaliyet = netPlastik * hamF;
-    const iscilik = netPlastik * data.ayarlar.iscilik;
+    const iscilik = netPlastik * iscilikOrani; // masura kilosuna işçilik verilmez
     const masuraMaliyet = masuraKg * data.ayarlar.masuraFiyat;
     const toplamMaliyet = hamMaliyet + iscilik + masuraMaliyet;
     const birimMaliyet = bobinKg > 0 ? toplamMaliyet / bobinKg : 0;
@@ -3242,10 +3382,12 @@ function rMaliyet() {
     const kar = gelirBobin - toplamMaliyet;
     const marj = gelirBobin > 0 ? (kar / gelirBobin * 100) : 0;
     sonucHtml = '<div class="card"><div class="mtitle">Sonuç <span class="pill">1 bobin</span></div>'
-      + '<div class="hesap-satir"><span>Net plastik ('+fmtKg(bobinKg)+' − '+fmtKg(masuraKg)+' masura)</span><b>'+fmtKg(netPlastik)+' kg</b></div>'
+      + (kaliteMasuraKullanir
+        ? '<div class="hesap-satir"><span>Net plastik ('+fmtKg(bobinKg)+' − '+fmtKg(masuraKg)+' masura)</span><b>'+fmtKg(netPlastik)+' kg</b></div>'
+        : '<div class="hesap-satir"><span>Net plastik ('+esc(maliyet.urun)+' — masurasız)</span><b>'+fmtKg(netPlastik)+' kg</b></div>')
       + '<div class="hesap-satir"><span>Hammadde ('+fmtKg(netPlastik)+' × '+String(hamF).replace(".",",")+'₺)</span><b>'+fmt(hamMaliyet)+'</b></div>'
-      + '<div class="hesap-satir"><span>İşçilik ('+fmtKg(netPlastik)+' × <span class="adet-edit" onclick="event.stopPropagation();ayarDuzenle(\'iscilik\')">'+data.ayarlar.iscilik+'₺</span>)</span><b>'+fmt(iscilik)+'</b></div>'
-      + '<div class="hesap-satir"><span>Masura ('+fmtKg(masuraKg)+' × <span class="adet-edit" onclick="event.stopPropagation();ayarDuzenle(\'masuraFiyat\')">'+data.ayarlar.masuraFiyat+'₺</span>)</span><b>'+fmt(masuraMaliyet)+'</b></div>'
+      + '<div class="hesap-satir"><span>İşçilik ('+esc(maliyet.urun)+', '+fmtKg(netPlastik)+' × <span class="adet-edit" onclick="event.stopPropagation();ayarDuzenle(\'iscilik_'+maliyet.urun+'\')">'+iscilikOrani+'₺</span>)</span><b>'+fmt(iscilik)+'</b></div>'
+      + (kaliteMasuraKullanir ? '<div class="hesap-satir"><span>Masura ('+fmtKg(masuraKg)+' × <span class="adet-edit" onclick="event.stopPropagation();ayarDuzenle(\'masuraFiyat\')">'+data.ayarlar.masuraFiyat+'₺</span>)</span><b>'+fmt(masuraMaliyet)+'</b></div>' : '')
       + '<div class="hesap-satir"><span><b>Toplam maliyet / bobin</b></span><b class="kirmizi">'+fmt(toplamMaliyet)+'</b></div>'
       + '<div class="hesap-satir"><span>Birim maliyet</span><b>'+fmt(birimMaliyet)+'/kg</b></div>'
       + '<div class="hesap-satir"><span>Satış geliri ('+fmtKg(bobinKg)+' × '+String(satisF).replace(".",",")+'₺ KDV hariç)</span><b class="yesil">'+fmt(gelirBobin)+'</b></div>'
@@ -3258,17 +3400,24 @@ function rMaliyet() {
   return '<div class="card"><div class="mtitle">Maliyet Hesaplayıcı <span class="pill">bobin başına</span></div><div class="formgrid">'
     + '<div class="row2">'
     + '<div><div class="mini" style="margin-bottom:5px">Ürün</div><select onchange="mSet(\'urun\',this.value);render()">'+["1. Kalite","2. Kalite","ECO-1"].map(u => '<option'+(maliyet.urun===u?" selected":"")+'>'+u+'</option>').join("")+'</select></div>'
-    + '<div><div class="mini" style="margin-bottom:5px">Genişlik</div><select onchange="mSet(\'genislik\',this.value);render()">'+Object.keys(MASURALAR).map(g => '<option'+(maliyet.genislik===g?" selected":"")+'>'+g+'</option>').join("")+'</select></div>'
+    + (kaliteMasuraKullanir
+      ? '<div><div class="mini" style="margin-bottom:5px">Genişlik</div><select onchange="mSet(\'genislik\',this.value);render()">'+Object.keys(MASURALAR).map(g => '<option'+(maliyet.genislik===g?" selected":"")+'>'+g+'</option>').join("")+'</select></div>'
+      : '<div><div class="mini" style="margin-bottom:5px">&nbsp;</div><div class="mini" style="padding-top:12px">Masurasız (genişlik gerekmiyor)</div></div>')
     + '</div>'
     + '<div class="row2">'
     + '<div><div class="mini" style="margin-bottom:5px">Hammadde ₺/kg (KDV hariç)</div><input type="text" id="m-ham" inputmode="decimal" value="'+esc(maliyet.hamFiyat)+'" oninput="mSet(\'hamFiyat\',this.value);renderKorumali()" placeholder="ör. 43"></div>'
     + '<div><div class="mini" style="margin-bottom:5px">Satış ₺/kg (boş = liste)</div><input type="text" id="m-satis" inputmode="decimal" value="'+esc(maliyet.satisFiyat)+'" oninput="mSet(\'satisFiyat\',this.value);renderKorumali()" placeholder="'+String(fiyatBul(maliyet.urun)).replace(".",",")+'"></div>'
     + '</div>'
     + '<div class="row2">'
-    + '<div><div class="mini" style="margin-bottom:5px">Bobin kg (boş = varsayılan '+fmtKg(mas.bobin)+')</div><input type="text" id="m-bobin" inputmode="decimal" value="'+esc(maliyet.bobinKg)+'" oninput="mSet(\'bobinKg\',this.value);renderKorumali()"></div>'
-    + '<div><div class="mini" style="margin-bottom:5px">Masura kg (boş = varsayılan '+String(mas.masura).replace(".",",")+')</div><input type="text" id="m-masura" inputmode="decimal" value="'+esc(maliyet.masuraKg)+'" oninput="mSet(\'masuraKg\',this.value);renderKorumali()"></div>'
+    + '<div><div class="mini" style="margin-bottom:5px">Bobin kg'+(kaliteMasuraKullanir?' (boş = varsayılan '+fmtKg(mas.bobin)+')':'')+'</div><input type="text" id="m-bobin" inputmode="decimal" value="'+esc(maliyet.bobinKg)+'" oninput="mSet(\'bobinKg\',this.value);renderKorumali()" placeholder="'+(kaliteMasuraKullanir?"":"ör. 20")+'"></div>'
+    + (kaliteMasuraKullanir
+      ? '<div><div class="mini" style="margin-bottom:5px">Masura kg (boş = varsayılan '+String(mas.masura).replace(".",",")+')</div><input type="text" id="m-masura" inputmode="decimal" value="'+esc(maliyet.masuraKg)+'" oninput="mSet(\'masuraKg\',this.value);renderKorumali()"></div>'
+      : '<div></div>')
     + '</div>'
-    + '<div class="mini">Sabitler (dokunarak değiştir): işçilik <span class="adet-edit" onclick="ayarDuzenle(\'iscilik\')">'+data.ayarlar.iscilik+'₺/kg</span> (net plastik), masura <span class="adet-edit" onclick="ayarDuzenle(\'masuraFiyat\')">'+data.ayarlar.masuraFiyat+'₺/kg</span>.</div>'
+    + '<div class="mini">İşçilik (dokunarak değiştir, net plastik kg başına): '
+    + ["1. Kalite","2. Kalite","ECO-1"].map(u => '<span class="adet-edit" onclick="ayarDuzenle(\'iscilik_'+u+'\')" style="margin-right:8px">'+u+': '+data.ayarlar.iscilik[u]+'₺</span>').join("")
+    + '</div>'
+    + '<div class="mini" style="margin-top:4px">Masura fiyatı (sadece 2. Kalite): <span class="adet-edit" onclick="ayarDuzenle(\'masuraFiyat\')">'+data.ayarlar.masuraFiyat+'₺/kg</span></div>'
     + '</div></div>' + sonucHtml;
 }
 
@@ -3357,6 +3506,7 @@ function appBaslat() {
   if (kilit) kilit.style.display = "none";
   tarihGoster();
   tartimYukle();
+  try { gizliMod = localStorage.getItem("raz-gizli-mod") === "1"; } catch(e) {}
   // Firebase fonksiyonları henüz gelmediyse geçici güvenli sürümlerini kur —
   // böylece load() içindeki __fbLoad çağrısı asla patlamaz ve ekran anında çizilir.
   if (!window.__fbLoad) {
