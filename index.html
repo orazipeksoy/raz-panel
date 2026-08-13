@@ -324,6 +324,29 @@ const KATEGORI_IKON = {
   "Kredi Ödemesi": "🏦", "Genel Gider": "📋", "Vergi/SGK": "🏛️", "Ekipman/Malzeme": "🔧"
 };
 function kategoriIkon(kategori) { return KATEGORI_IKON[kategori] || "•"; }
+// Bir satışın kalemlerini kısa bir özet metnine çevirir — "ne satılmış" sorusuna hızlı cevap.
+function kalemlerOzet(kalemler) {
+  if (!kalemler || !kalemler.length) return "";
+  return kalemler.map(k => esc(k.ad||"?") + " ×" + k.adet + (k.kg!=null?" ("+fmtKg(k.kg)+" kg)":"")).join(", ");
+}
+// Düzenleme formunda "Satılan Ürünler" satırlarını üretir — stoğu doğru senkronize eden düzenleme için.
+function editKalemlerHtml() {
+  let h2 = '<div class="mini" style="font-weight:800;margin:8px 0 4px">Satılan Ürünler</div>';
+  (window.__editKalemler||[]).forEach((k,ki) => {
+    const mevcutIdx = k.key ? keyToMamulIdx(k.key) : -1;
+    h2 += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'
+      + '<select style="flex:2" onchange="editKalemUrunSec('+ki+',this.value);renderKorumali()"><option value="">— ürün seç —</option>'
+      + data.mamul.map((mm,mi) => '<option value="'+mi+'"'+(mevcutIdx===mi?" selected":"")+'>'+esc(mm.kalite+" · "+mm.tip+" · "+mm.genislik+(mm.gramaj!=="-"?" · "+mm.gramaj:""))+'</option>').join("")
+      + '</select>'
+      + '<input type="text" style="flex:1;min-width:50px" inputmode="decimal" placeholder="adet" value="'+esc(k.adet)+'" oninput="editKalemSet('+ki+',\'adet\',this.value)">'
+      + '<input type="text" style="flex:1;min-width:60px" inputmode="decimal" placeholder="net kg" value="'+esc(k.kg||"")+'" oninput="editKalemSet('+ki+',\'kg\',this.value)">'
+      + '<button class="sil-x" style="min-width:28px;min-height:28px;padding:4px" onclick="editKalemSil('+ki+');renderKorumali()">×</button>'
+      + '</div>';
+  });
+  h2 += '<button class="chip" style="font-size:11px;padding:5px 10px;min-height:auto" onclick="editKalemEkle()">+ Ürün Ekle</button>';
+  h2 += '<div class="mini" style="margin-top:5px">Adet değişikliği stoktan otomatik doğru şekilde eklenir/düşülür — ürünü kaldırırsan stoğu geri döner.</div>';
+  return h2;
+}
 const ISCILIK_VARSAYILAN = 15;
 const MASURA_FIYAT_VARSAYILAN = 30;
 const MASURALAR = { "120 cm": {masura: 1.74, bobin: 12.4}, "145 cm": {masura: 2.12, bobin: 16}, "160 cm": {masura: 2.30, bobin: 16} };
@@ -2038,6 +2061,7 @@ function rHareketler(H) {
         + '<input type="text" inputmode="decimal" value="'+esc(e.kg!=null?e.kg:(h.kg!=null?String(h.kg).replace(".",","):""))+'" oninput="editSet(\'kg\',this.value)" placeholder="Kg (opsiyonel)"></div>'
         + '<div class="row2"><input type="date" value="'+(e.vade!=null?e.vade:(h.vade||""))+'" onchange="editSet(\'vade\',this.value)">'
         + '<input type="text" value="'+esc(e.not!=null?e.not:(h.not||""))+'" oninput="editSet(\'not\',this.value)" placeholder="Not"></div>'
+        + (h.tur==="GELİR" ? editKalemlerHtml() : "")
         + '<div style="display:flex;gap:8px"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="duzenleKaydet(\''+h.__id+'\')">✓ Kaydet</button><button class="chip" onclick="duzenleIptal()">İptal</button></div>'
         + '</div></div>';
       return;
@@ -2054,6 +2078,7 @@ function rHareketler(H) {
       + '<div class="hareket-kart-aciklama" onclick="duzenleBaslat(\''+h.__id+'\')">'+esc(h.aciklama)+'</div>'
       + '<div class="hareket-kart-meta"><span>'+fmtTarih(h.tarih)+'</span><span class="pill">'+kategoriIkon(h.kategori)+' '+esc(h.kategori)+'</span>'+(h.kg?'<span>· '+fmtKg(h.kg)+' kg</span>':"")+'</div>'
       + (h.not ? '<div class="hareket-kart-not">'+esc(h.not)+'</div>' : "")
+      + (h.kalemler && h.kalemler.length ? '<div class="hareket-kart-not">🧾 '+kalemlerOzet(h.kalemler)+'</div>' : "")
       + (h.vade && !durumSuAn.tamamlandiMi ? '<div class="hareket-kart-not">📅 vade: '+fmtTarih(h.vade)+'</div>' : "")
       + '</div>'
       + '<div class="hareket-kart-sag" style="display:flex;align-items:center;gap:2px">'
@@ -2081,6 +2106,7 @@ function rHareketler(H) {
         + '<input type="text" inputmode="decimal" value="'+esc(e.kg!=null?e.kg:(h.kg!=null?String(h.kg).replace(".",","):""))+'" oninput="editSet(\'kg\',this.value)" placeholder="Kg (opsiyonel)"></div>'
         + '<div class="row2"><input type="date" value="'+(e.vade!=null?e.vade:(h.vade||""))+'" onchange="editSet(\'vade\',this.value)">'
         + '<input type="text" value="'+esc(e.not!=null?e.not:(h.not||""))+'" oninput="editSet(\'not\',this.value)" placeholder="Not"></div>'
+        + (h.tur==="GELİR" ? editKalemlerHtml() : "")
         + '<div style="display:flex;gap:8px"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="duzenleKaydet(\''+h.__id+'\')">✓ Kaydet</button><button class="chip" onclick="duzenleIptal()">İptal</button></div>'
         + '</div></td></tr>';
       return;
@@ -2090,7 +2116,7 @@ function rHareketler(H) {
     const eslesmeGerek = urunEslestirmeGerekiyorMu(h);
     html += '<tr>'
       + '<td style="white-space:nowrap">'+fmtTarih(h.tarih)+(h.vade&&!durumSuAn.tamamlandiMi?'<div class="notrow">vade: '+fmtTarih(h.vade)+'</div>':"")+'</td>'
-      + '<td><span class="adet-edit" onclick="duzenleBaslat(\''+h.__id+'\')">'+esc(h.aciklama)+'</span>'+(h.not?'<div class="notrow">'+esc(h.not)+'</div>':"")+'</td>'
+      + '<td><span class="adet-edit" onclick="duzenleBaslat(\''+h.__id+'\')">'+esc(h.aciklama)+'</span>'+(h.not?'<div class="notrow">'+esc(h.not)+'</div>':"")+(h.kalemler&&h.kalemler.length?'<div class="notrow">🧾 '+kalemlerOzet(h.kalemler)+'</div>':"")+'</td>'
       + '<td><span class="pill">'+kategoriIkon(h.kategori)+' '+esc(h.kategori)+'</span></td>'
       + '<td class="num yesil">'+(h.gelir?pg(fmt(h.gelir)):"")+'</td>'
       + '<td class="num kirmizi">'+(h.gider?pg(fmt(h.gider)):"")+'</td>'
@@ -2109,25 +2135,73 @@ function rHareketler(H) {
   return html;
 }
 
-function duzenleBaslat(id) { duzenleIdx = id; window.__editForm = {}; render(); }
+function duzenleBaslat(id) {
+  duzenleIdx = id;
+  window.__editForm = {};
+  const h = data.hareketler.find(x => x.__id === id);
+  window.__editKalemler = (h && h.kalemler) ? JSON.parse(JSON.stringify(h.kalemler)) : [];
+  render();
+}
 function editSet(k,v) { if (!window.__editForm) window.__editForm = {}; window.__editForm[k] = v; }
-function duzenleIptal() { duzenleIdx = null; window.__editForm = null; render(); }
+function duzenleIptal() { duzenleIdx = null; window.__editForm = null; window.__editKalemler = null; render(); }
+function editKalemEkle() { window.__editKalemler.push({key:"", adet:"", kg:"", ad:""}); render(); }
+function editKalemSil(i) { window.__editKalemler.splice(i,1); render(); }
+function editKalemSet(i,k,v) { window.__editKalemler[i][k] = v; }
+function editKalemUrunSec(i, stokIdx) {
+  const m = data.mamul[parseInt(stokIdx)];
+  if (!m) { window.__editKalemler[i].key = ""; window.__editKalemler[i].ad = ""; return; }
+  window.__editKalemler[i].key = m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj;
+  window.__editKalemler[i].ad = m.kalite+" "+m.tip+" "+m.genislik;
+}
+function keyToMamulIdx(key) { return data.mamul.findIndex(m => m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj === key); }
 
 function duzenleKaydet(id) {
   const h = data.hareketler.find(x => x.__id === id);
   if (!h) { duzenleIptal(); return; }
   const e = window.__editForm || {};
+
+  // 1) Doğrulamalar — henüz hiçbir şey uygulanmıyor
+  if (e.aciklama != null && !e.aciklama.trim()) { toast("Açıklama boş olamaz"); return; }
+  let yeniTutar = null;
+  if (e.tutar != null) {
+    yeniTutar = parseTL(e.tutar);
+    if (isNaN(yeniTutar) || yeniTutar <= 0) { toast("Geçerli tutar girin"); return; }
+  }
+
+  // 2) Kalemler değiştiyse stok farkını (delta) ÖNCEDEN hesapla — henüz stoğa dokunulmuyor
+  let yeniKalemler = null, stokDeltalari = null;
+  if (window.__editKalemler) {
+    yeniKalemler = window.__editKalemler.filter(k => k.key && parseTL(k.adet) > 0).map(k => {
+      const obj = { key: k.key, adet: parseTL(k.adet), ad: k.ad };
+      const kgVal = (k.kg != null && String(k.kg).trim() !== "") ? parseTL(k.kg) : null;
+      if (kgVal != null && !isNaN(kgVal) && kgVal > 0) obj.kg = kgVal;
+      return obj;
+    });
+    const eskiKalemler = h.kalemler || [];
+    const deltaMap = {}; // key -> stoğa net eklenecek adet (eski−yeni)
+    eskiKalemler.forEach(k => { deltaMap[k.key] = (deltaMap[k.key]||0) + k.adet; });
+    yeniKalemler.forEach(k => { deltaMap[k.key] = (deltaMap[k.key]||0) - k.adet; });
+    stokDeltalari = deltaMap;
+
+    const negatifUyari = [];
+    Object.entries(deltaMap).forEach(([key, delta]) => {
+      if (delta === 0) return;
+      const m = data.mamul[keyToMamulIdx(key)];
+      if (m) {
+        const sonuc = m.adet + delta;
+        if (sonuc < 0) negatifUyari.push((m.kalite+" "+m.tip+" "+m.genislik) + " → " + sonuc + " bobin olacak");
+      }
+    });
+    if (negatifUyari.length && !confirm("Bu değişiklik şu ürünleri eksiye düşürecek:\n" + negatifUyari.join("\n") + "\n\nYine de kaydedilsin mi?")) {
+      return; // hiçbir şey uygulanmadı, form açık kalır
+    }
+  }
+
+  // 3) Onaylandı (veya onay gerekmiyordu) — her şeyi birlikte uygula
   if (e.tarih) h.tarih = e.tarih;
   if (e.kategori) h.kategori = e.kategori;
-  if (e.aciklama != null) {
-    if (!e.aciklama.trim()) { toast("Açıklama boş olamaz"); return; }
-    h.aciklama = e.aciklama.trim();
-  }
-  if (e.tutar != null) {
-    const t = parseTL(e.tutar);
-    if (isNaN(t) || t <= 0) { toast("Geçerli tutar girin"); return; }
-    if (h.tur === "GELİR") h.gelir = t; else h.gider = t;
-  }
+  if (e.aciklama != null) h.aciklama = e.aciklama.trim();
+  if (yeniTutar != null) { if (h.tur === "GELİR") h.gelir = yeniTutar; else h.gider = yeniTutar; }
   if (e.kg != null) {
     const kg = parseTL(e.kg);
     h.kg = (!isNaN(kg) && kg > 0) ? kg : null;
@@ -2137,7 +2211,21 @@ function duzenleKaydet(id) {
     if (h.vade && h.odendi == null) h.odendi = false;
   }
   if (e.not != null) h.not = e.not.trim() || null;
-  duzenleIdx = null; window.__editForm = null;
+
+  if (stokDeltalari) {
+    Object.entries(stokDeltalari).forEach(([key, delta]) => {
+      if (delta === 0) return;
+      const m = data.mamul[keyToMamulIdx(key)];
+      if (m) m.adet += delta;
+    });
+    h.kalemler = yeniKalemler.length ? yeniKalemler : undefined;
+    if (yeniKalemler.length) {
+      const kaliteler = new Set(yeniKalemler.map(k => k.key.split("|")[0]));
+      h.urunTipi = kaliteler.size === 1 ? Array.from(kaliteler)[0] : "Karışık";
+    }
+  }
+
+  duzenleIdx = null; window.__editForm = null; window.__editKalemler = null;
   save(); render();
   toast("✓ Güncellendi");
 }
