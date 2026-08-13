@@ -327,6 +327,12 @@ function kategoriIkon(kategori) { return KATEGORI_IKON[kategori] || "•"; }
 const ISCILIK_VARSAYILAN = 15;
 const MASURA_FIYAT_VARSAYILAN = 30;
 const MASURALAR = { "120 cm": {masura: 1.74, bobin: 12.4}, "145 cm": {masura: 2.12, bobin: 16}, "160 cm": {masura: 2.30, bobin: 16} };
+// Genişlik yazımındaki küçük farkları (boşluksuz "160cm", fazla boşluk, büyük/küçük harf) tolere eder —
+// böylece bir yazım farkı yüzünden satışlar sessizce masura hesabından düşmez.
+function genislikNormalize(g) { return String(g||"").trim().toLowerCase().replace(/\s+/g," ").replace(/(\d)\s*cm/,"$1 cm"); }
+const MASURALAR_NORM = {};
+Object.keys(MASURALAR).forEach(k => { MASURALAR_NORM[genislikNormalize(k)] = MASURALAR[k]; });
+function masuraBul(genislik) { return MASURALAR_NORM[genislikNormalize(genislik)] || null; }
 const STOK_ESIK = 30; // bu adetin altı uyarı
 const MAKINELER = ["1. Kalite Makinası", "2. Kalite Makinası"];
 const VARDIYALAR = ["Gündüz", "Gece"];
@@ -1579,13 +1585,19 @@ function masuraAnaliziAy(ayKey) {
 
   let toplamBobin = 0, toplamBobinKg = 0, toplamMasuraKg = 0, tanimsizBobin = 0;
   const genislikKirilim = {};
+  const tanimsizKirilim = {}; // genişlik -> {adet, ad} — hangi ürün(ler) eşleşmedi, açıkça göstermek için
   satislar.forEach(h => {
     (h.kalemler||[]).forEach(k => {
       const parcalar = String(k.key||"").split("|");
       const kalite = parcalar[0], genislik = parcalar[2];
       if (kalite !== "2. Kalite") return;
-      const mas = MASURALAR[genislik];
-      if (!mas) { tanimsizBobin += (k.adet||0); return; }
+      const mas = masuraBul(genislik);
+      if (!mas) {
+        tanimsizBobin += (k.adet||0);
+        if (!tanimsizKirilim[genislik]) tanimsizKirilim[genislik] = {adet:0, ad:k.ad||("2. Kalite · "+genislik)};
+        tanimsizKirilim[genislik].adet += (k.adet||0);
+        return;
+      }
       const adet = k.adet||0;
       const masuraKg = adet * mas.masura;   // bobin sayısı × sabit masura kilosu
       const bobinKg = adet * mas.bobin;     // bobin sayısı × sabit standart bobin kilosu
@@ -1600,7 +1612,7 @@ function masuraAnaliziAy(ayKey) {
   });
   const netPlastikKg = toplamBobinKg - toplamMasuraKg;
   const masuraOrani = toplamBobinKg > 0 ? (toplamMasuraKg / toplamBobinKg * 100) : null;
-  return { toplamBobin, toplamBobinKg, toplamMasuraKg, netPlastikKg, masuraOrani, genislikKirilim, tanimsizBobin, eksikSatislar };
+  return { toplamBobin, toplamBobinKg, toplamMasuraKg, netPlastikKg, masuraOrani, genislikKirilim, tanimsizBobin, tanimsizKirilim, eksikSatislar };
 }
 
 // Bu ay hangi üründen kaç adet satıldığını hesaplar (adet birincil metrik).
@@ -1633,9 +1645,35 @@ function urunSatisAyOzeti(ayKey) {
 // Ürün seçilmeden yapılmış eski bir satışa, sadece RAPORLARDA (masura, ürün bazlı satış, kârlılık)
 // doğru sayılması için kalemler bilgisi ekler. Stoğa KASITLI OLARAK dokunmaz — çünkü satış zaten
 // geçmişte yapılmış, stok o zaman zaten düştüyse tekrar düşürmek çift düşüm hatasına yol açar.
+// Satışın notundan/açıklamasından genişlik ve adet tahmini yapar (Tartım aracının otomatik
+// oluşturduğu "X bobin (tartımdan)" ve "160cm" gibi ibareleri yakalar) — eşleştirmeyi hızlandırmak için.
+function metindenGenislikTahminEt(metin) {
+  const m = String(metin||"").match(/(120|145|160)\s*cm/i);
+  return m ? m[1]+" cm" : null;
+}
+function metindenAdetTahminEt(metin) {
+  const m = String(metin||"").match(/(\d+)\s*(bobin|adet)/i);
+  return m ? parseInt(m[1]) : null;
+}
+// Bir satışın masura/ürün raporlarına dahil olması için ürünle eşleştirilmesi gerekip gerekmediğini söyler.
+function urunEslestirmeGerekiyorMu(h) {
+  return h.tur === "GELİR" && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış") && (!h.kalemler || !h.kalemler.length);
+}
+
 function urunEslestirModal(hId) {
   window.__urunEslestirHedefId = hId;
-  window.__urunEslestirKalemler = [{stokIdx:"", adet:""}];
+  const h = data.hareketler.find(x => x.__id === hId);
+  const metin = (h ? (h.not||"")+" "+(h.aciklama||"") : "");
+  const tahminGenislik = metindenGenislikTahminEt(metin);
+  const tahminAdet = metindenAdetTahminEt(metin);
+  let baslangicStokIdx = "";
+  let tekEslesme = false;
+  if (tahminGenislik) {
+    const eslesenler = data.mamul.map((m,i) => ({m,i})).filter(x => x.m.kalite === "2. Kalite" && genislikNormalize(x.m.genislik) === genislikNormalize(tahminGenislik));
+    if (eslesenler.length === 1) { baslangicStokIdx = String(eslesenler[0].i); tekEslesme = true; }
+  }
+  window.__urunEslestirKalemler = [{stokIdx: baslangicStokIdx, adet: tahminAdet ? String(tahminAdet) : ""}];
+  window.__urunEslestirTahmin = { genislik: tahminGenislik, adet: tahminAdet, tekEslesme };
   const overlay = document.createElement("div");
   overlay.id = "urun-eslestir-modal";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto";
@@ -1646,9 +1684,13 @@ function urunEslestirModal(hId) {
 function urunEslestirIcerik() {
   const h = data.hareketler.find(x => x.__id === window.__urunEslestirHedefId);
   if (!h) return "";
+  const tahmin = window.__urunEslestirTahmin || {};
   let html = '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:440px;max-height:88vh;overflow:auto">';
   html += '<div class="mtitle">🔧 Ürünle Eşleştir</div>';
-  html += '<div class="mini" style="margin-bottom:10px">'+esc(h.aciklama)+' — '+fmtTarih(h.tarih)+' — '+fmt(h.gelir)+(h.kg?' · '+fmtKg(h.kg)+' kg':'')+'</div>';
+  html += '<div class="mini" style="margin-bottom:10px">'+esc(h.aciklama)+' — '+fmtTarih(h.tarih)+' — '+fmt(h.gelir)+(h.kg?' · '+fmtKg(h.kg)+' kg':'')+(h.not?'<br>Not: '+esc(h.not):'')+'</div>';
+  if (tahmin.genislik) {
+    html += '<div class="mini" style="margin-bottom:10px;color:var(--blue)">🤖 Nottan otomatik algılandı: <b>'+tahmin.genislik+'</b>'+(tahmin.adet?' · '+tahmin.adet+' adet':'')+(tahmin.tekEslesme?' — aşağıya otomatik seçildi, kontrol edip onayla.':' — birden fazla eşleşen ürün var, aşağıdan doğru olanı seç.')+'</div>';
+  }
   html += '<div class="mini" style="margin-bottom:12px;color:var(--amber)">Buraya eklediğin ürün/adet stoğuna DOKUNMAZ — sadece masura ve ürün bazlı raporlarda bu satışın doğru sayılmasını sağlar.</div>';
   (window.__urunEslestirKalemler||[]).forEach((k,ki) => {
     html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">'
@@ -1704,6 +1746,7 @@ function urunEslestirModalKapat() {
   if (el) el.remove();
   window.__urunEslestirHedefId = null;
   window.__urunEslestirKalemler = null;
+  window.__urunEslestirTahmin = null;
 }
 
 // ============ KÂRLILIK HESAPLAMA (TAHMİNİ) ============
@@ -1757,7 +1800,7 @@ function satisKarHesapla(h) {
         kg = (k.adet||0) * (m ? (m.kgBobin||0) : 0);
       }
       toplamKg += kg;
-      const mas = MASURALAR[genislik];
+      const mas = masuraBul(genislik);
       // Masura SADECE 2. Kalite'de var — 1. Kalite ve ECO-1 masurasız.
       const buKalemMasuraKg = (kalite === "2. Kalite" && mas) ? (k.adet||0) * mas.masura : 0;
       masuraKg += buKalemMasuraKg;
@@ -1841,6 +1884,18 @@ function rUretim() {
         + '<div style="min-width:0;flex:1"><div style="font-weight:700;font-size:13px">'+esc(h.aciklama)+'</div><div class="mini">'+fmtTarih(h.tarih)+' · '+fmt(h.gelir)+(h.kg?' · '+fmtKg(h.kg)+' kg':'')+(h.not?' · '+esc(h.not):'')+'</div></div>'
         + '<button class="chip" style="color:var(--blue);border-color:var(--blue);white-space:nowrap;flex-shrink:0" onclick="urunEslestirModal(\''+h.__id+'\')">🔧 Eşleştir</button>'
         + '</div>';
+    });
+    html += '</div>';
+  }
+
+  // Ürün seçilerek yapılmış ama genişliği MASURALAR tablosunda tanımsız kalan satışlar —
+  // genelde yazım farkı (ör. "160cm" vs "160 cm") ya da gerçekten yeni/tanımsız bir genişlik yüzünden olur.
+  if (masAn.tanimsizKirilim && Object.keys(masAn.tanimsizKirilim).length) {
+    html += '<div class="card" style="border:1.5px solid var(--red)">'
+      + '<div class="mtitle">🔴 Genişliği Eşleşmeyen 2. Kalite Satışları <span class="pill">'+masAn.tanimsizBobin+' bobin</span></div>'
+      + '<div class="mini" style="margin-bottom:10px">Bu ürünlerin genişliği (120/145/160 cm) masura tablosuyla eşleşmiyor — muhtemelen yazım farkı var (ör. "160cm" ile "160 cm" aynı değil). Stok sekmesinde bu ürünü düzenleyip genişliği düzeltirsen (ör. tam "120 cm" / "145 cm" / "160 cm" yaz) bir sonraki raporda otomatik düzelir.</div>';
+    Object.entries(masAn.tanimsizKirilim).forEach(([genislik, v]) => {
+      html += '<div style="padding:6px 0;border-bottom:1px solid #262837;font-size:13px"><b>'+esc(v.ad)+'</b> <span class="mini">(genişlik: "'+esc(genislik)+'")</span> — '+v.adet+' bobin</div>';
     });
     html += '</div>';
   }
@@ -1989,8 +2044,10 @@ function rHareketler(H) {
     }
     const tahsil = tahsilDurumHucre(h);
     const durumSuAn = tahsilatDurumu(h);
+    const eslesmeGerek = urunEslestirmeGerekiyorMu(h);
     const tutarRenk = h.gelir ? "yesil" : (h.gider ? "kirmizi" : "");
     const tutarDeger = h.gelir ? pg("+"+fmt(h.gelir)) : (h.gider ? pg("−"+fmt(h.gider)) : "—");
+    const eslestirBtn = eslesmeGerek ? '<button class="chip" style="color:var(--blue);border-color:var(--blue);padding:4px 10px;font-size:11px;min-height:auto" onclick="urunEslestirModal(\''+h.__id+'\')">🔧 Ürünle Eşleştir</button>' : "";
     html += '<div class="hareket-kart">'
       + '<div class="hareket-kart-ust">'
       + '<div class="hareket-kart-sol">'
@@ -2004,7 +2061,7 @@ function rHareketler(H) {
       + '<button class="sil-x" style="min-width:28px;min-height:28px;padding:4px 6px;font-size:16px" onclick="silOnay('+idx+')">×</button>'
       + '</div>'
       + '</div>'
-      + (tahsil ? '<div class="hareket-kart-alt">'+tahsil+'</div>' : "")
+      + (tahsil||eslestirBtn ? '<div class="hareket-kart-alt">'+(tahsil||'<span></span>')+eslestirBtn+'</div>' : "")
       + '</div>';
   });
   html += '</div>';
@@ -2030,6 +2087,7 @@ function rHareketler(H) {
     }
     const tahsil = tahsilDurumHucre(h);
     const durumSuAn = tahsilatDurumu(h);
+    const eslesmeGerek = urunEslestirmeGerekiyorMu(h);
     html += '<tr>'
       + '<td style="white-space:nowrap">'+fmtTarih(h.tarih)+(h.vade&&!durumSuAn.tamamlandiMi?'<div class="notrow">vade: '+fmtTarih(h.vade)+'</div>':"")+'</td>'
       + '<td><span class="adet-edit" onclick="duzenleBaslat(\''+h.__id+'\')">'+esc(h.aciklama)+'</span>'+(h.not?'<div class="notrow">'+esc(h.not)+'</div>':"")+'</td>'
@@ -2037,7 +2095,7 @@ function rHareketler(H) {
       + '<td class="num yesil">'+(h.gelir?pg(fmt(h.gelir)):"")+'</td>'
       + '<td class="num kirmizi">'+(h.gider?pg(fmt(h.gider)):"")+'</td>'
       + '<td class="num">'+(h.kg?fmtKg(h.kg):"")+'</td>'
-      + '<td style="text-align:center">'+tahsil+'</td>'
+      + '<td style="text-align:center">'+tahsil+(eslesmeGerek?'<div style="margin-top:3px"><button class="chip" style="color:var(--blue);border-color:var(--blue);padding:3px 8px;font-size:10.5px;min-height:auto" onclick="urunEslestirModal(\''+h.__id+'\')">🔧 Eşleştir</button></div>':'')+'</td>'
       + '<td style="text-align:right"><button class="sil-x" onclick="silOnay('+idx+')">×</button></td>'
       + '</tr>';
   });
@@ -3608,7 +3666,7 @@ function mSet(k,v) { maliyet[k] = v; }
 
 function rMaliyet() {
   const kaliteMasuraKullanir = maliyet.urun === "2. Kalite"; // sadece 2. Kalite'de masura var
-  const mas = kaliteMasuraKullanir ? (MASURALAR[maliyet.genislik] || {masura:0, bobin:0}) : {masura:0, bobin:0};
+  const mas = kaliteMasuraKullanir ? (masuraBul(maliyet.genislik) || {masura:0, bobin:0}) : {masura:0, bobin:0};
   const bobinKg = maliyet.bobinKg !== "" ? parseTL(maliyet.bobinKg) : mas.bobin;
   const masuraKg = kaliteMasuraKullanir ? (maliyet.masuraKg !== "" ? parseTL(maliyet.masuraKg) : mas.masura) : 0;
   const hamF = parseTL(maliyet.hamFiyat);
