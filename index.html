@@ -33,11 +33,12 @@ nav { background: var(--card); border-bottom: 1px solid var(--line); display: fl
 .tab { border: none; background: transparent; padding: 15px 15px; font-size: 14px; cursor: pointer; color: var(--mut); border-bottom: 3px solid transparent; font-weight: 700; white-space: nowrap; min-height: 46px; }
 .tab.on { color: var(--gold); border-bottom-color: var(--gold); }
 main { padding: 16px; max-width: 1150px; margin: 0 auto; padding-bottom: max(28px, env(safe-area-inset-bottom)); }
-.card { background: var(--card); border-radius: 14px; padding: 16px; box-shadow: 0 1px 4px rgba(14,42,71,.07); margin-bottom: 14px; }
+.card { background: linear-gradient(165deg, #1D1F2C 0%, var(--card) 55%); border-radius: 14px; padding: 16px; box-shadow: 0 3px 12px rgba(5,8,20,.28), 0 1px 2px rgba(0,0,0,.15); margin-bottom: 14px; border: 1px solid rgba(255,255,255,.03); }
 .lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--mut); margin-bottom: 4px; font-weight: 700; }
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
 @media (max-width: 700px) { .kpi-grid { grid-template-columns: 1fr 1fr; } }
-.kpi { background: var(--card); border-radius: 14px; padding: 14px 16px; box-shadow: 0 1px 4px rgba(14,42,71,.07); }
+.kpi { background: linear-gradient(165deg, #1E2130 0%, var(--card) 60%); border-radius: 14px; padding: 14px 16px; box-shadow: 0 3px 10px rgba(5,8,20,.25), 0 1px 2px rgba(0,0,0,.12); position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,.03); }
+.kpi::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent, rgba(227,192,90,.35), transparent); }
 .kpi .v { font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; margin: 2px 0; }
 .trend { font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 20px; }
 .trend.up { background: var(--green-bg); color: var(--green); }
@@ -58,6 +59,11 @@ tr:last-child td { border-bottom: none; }
 .hareket-kart-tutar { font-size: 15.5px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hareket-kart-alt { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; padding-top: 6px; border-top: 1px solid #262837; gap: 8px; }
 .hareket-kart-not { font-size: 11.5px; color: var(--mut); margin-top: 2px; word-break: break-word; }
+.hareketler-tablo-wrap { display: none; }
+@media (min-width: 700px) {
+  .hareketler-kartlar { display: none; }
+  .hareketler-tablo-wrap { display: block; }
+}
 .yesil { color: var(--green); font-weight: 600; }
 .kirmizi { color: var(--red); font-weight: 600; }
 input, select { border: 1.5px solid #333648; border-radius: 10px; padding: 11px 12px; font-size: 16px; width: 100%; background: #1B1D28; color: var(--ink); -webkit-appearance: none; }
@@ -311,6 +317,13 @@ const AYLAR = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağus
 const AYLAR_KISA = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"];
 const GELIR_KAT = ["Satış-Fatura","Perakende Satış","Nakliye","Hammadde Satışı","Kredi Kullanımı","Sermaye","Diğer Gelir"];
 const GIDER_KAT = ["Hammadde","Hammadde-Satılan","Personel","Araç/Yakıt","Kredi Ödemesi","Genel Gider","Nakliye","Vergi/SGK","Ekipman/Malzeme"];
+const KATEGORI_IKON = {
+  "Satış-Fatura": "🧾", "Perakende Satış": "🛍️", "Nakliye": "🚚", "Hammadde Satışı": "📤",
+  "Kredi Kullanımı": "💳", "Sermaye": "💰", "Diğer Gelir": "✨",
+  "Hammadde": "🧵", "Hammadde-Satılan": "📦", "Personel": "👷", "Araç/Yakıt": "⛽",
+  "Kredi Ödemesi": "🏦", "Genel Gider": "📋", "Vergi/SGK": "🏛️", "Ekipman/Malzeme": "🔧"
+};
+function kategoriIkon(kategori) { return KATEGORI_IKON[kategori] || "•"; }
 const ISCILIK_VARSAYILAN = 15;
 const MASURA_FIYAT_VARSAYILAN = 30;
 const MASURALAR = { "120 cm": {masura: 1.74, bobin: 12.4}, "145 cm": {masura: 2.12, bobin: 16}, "160 cm": {masura: 2.30, bobin: 16} };
@@ -341,6 +354,31 @@ function gizliModDegistir() {
   render();
 }
 function fmtKg(v) { return v == null ? "—" : Number(v).toLocaleString("tr-TR", {maximumFractionDigits:2}); }
+
+// Küçük bir trend çizgisi (sparkline) üretir — KPI kutularının içine gömülmek için.
+function sparklineSvg(degerler, renk) {
+  if (!degerler || degerler.length < 2) return "";
+  const maxV = Math.max.apply(null, degerler.concat([1]));
+  const minV = Math.min.apply(null, degerler.concat([0]));
+  const araligi = (maxV - minV) || 1;
+  const genislik = 58, yukseklik = 20, pad = 2;
+  const noktalar = degerler.map((v, i) => {
+    const x = pad + (i / (degerler.length - 1)) * (genislik - pad*2);
+    const y = pad + (yukseklik - pad*2) - ((v - minV) / araligi) * (yukseklik - pad*2);
+    return x.toFixed(1) + "," + y.toFixed(1);
+  }).join(" ");
+  const sonNokta = noktalar.split(" ").pop().split(",");
+  return '<svg width="'+genislik+'" height="'+yukseklik+'" viewBox="0 0 '+genislik+' '+yukseklik+'" style="display:block;margin-top:5px;overflow:visible">'
+    + '<polyline points="'+noktalar+'" fill="none" stroke="'+renk+'" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>'
+    + '<circle cx="'+sonNokta[0]+'" cy="'+sonNokta[1]+'" r="2.2" fill="'+renk+'"/>'
+    + '</svg>';
+}
+
+// Bir değeri bir referans üst sınıra göre dolgu çubuğu olarak gösterir (stok seviyesi gibi).
+function doluCubuk(deger, ustSinir, renk) {
+  const oran = Math.max(0, Math.min(1, (deger||0) / (ustSinir||1)));
+  return '<div style="background:#14151F;border-radius:5px;height:5px;overflow:hidden;margin-top:5px;width:100%"><div style="width:'+(oran*100).toFixed(0)+'%;height:100%;background:'+renk+';border-radius:5px;transition:width .3s ease"></div></div>';
+}
 function fmtTarih(iso) { const p = iso.split("-"); return p[2]+"."+p[1]+"."+p[0]; }
 function esc(s) { return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function jsStr(s) { return String(s == null ? "" : s).replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
@@ -759,8 +797,8 @@ function rOzet(H) {
   const buAyKarOz = karlilikAyOzeti(buAyKey());
 
   return '<div class="kpi-grid">'
-    + '<div class="kpi"><div class="lbl">Bu Ay Satış</div><div class="v yesil">'+pg(fmtK(ba.satis))+'</div>'+trendHtml(ba.satis, ga.satis)+'<span class="mini">'+(ba.kg>0?fmtKg(ba.kg)+' kg'+(ba.kgBilinen?'':'+'):'kg bilgisi yok')+'</span></div>'
-    + '<div class="kpi"><div class="lbl">Bu Ay Gider</div><div class="v kirmizi">'+pg(fmtK(ba.gider))+'</div>'+trendHtml(ba.gider, ga.gider)+'</div>'
+    + '<div class="kpi"><div class="lbl">Bu Ay Satış</div><div class="v yesil">'+pg(fmtK(ba.satis))+'</div>'+trendHtml(ba.satis, ga.satis)+'<span class="mini">'+(ba.kg>0?fmtKg(ba.kg)+' kg'+(ba.kgBilinen?'':'+'):'kg bilgisi yok')+'</span>'+sparklineSvg(keys.map(k => H.aylik[k].satis), "var(--green)")+'</div>'
+    + '<div class="kpi"><div class="lbl">Bu Ay Gider</div><div class="v kirmizi">'+pg(fmtK(ba.gider))+'</div>'+trendHtml(ba.gider, ga.gider)+sparklineSvg(keys.map(k => H.aylik[k].gider), "var(--red)")+'</div>'
     + '<div class="kpi"><div class="lbl">Bu Ay Net</div><div class="v" style="color:'+(baNet>=0?"var(--green)":"var(--red)")+'">'+pg((baNet>=0?"+":"")+fmtK(baNet))+'</div><span class="mini">'+AYLAR[new Date().getMonth()]+'</span></div>'
     + '<div class="kpi"><div class="lbl">Stok</div><div class="v">'+fmtKg(mamulKg+hamKg)+' kg</div><span class="mini">'+fmtKg(mamulKg)+' mamul · '+fmtKg(hamKg)+' ham</span></div>'
     + '<div class="kpi"><div class="lbl">Bu Ay Tahmini Kâr</div><div class="v" style="color:'+(buAyKarOz.karMarji==null?"var(--mut)":(buAyKarOz.toplamKar>=0?"var(--green)":"var(--red)"))+'">'+(buAyKarOz.satisSayisi?pg(fmtK(buAyKarOz.toplamKar)):"—")+'</div><span class="mini">'+(buAyKarOz.karMarji!=null?"marj %"+buAyKarOz.karMarji.toFixed(1):"satış yok")+' · tahmini</span></div>'
@@ -1535,7 +1573,9 @@ function uretimAyOzeti(ayKey) {
 // çarpılır. Tartımda tek tek girilen brüt kilolar (12,4 / 12,5 / 12,7 / 11,8 gibi) burada ortalamaya
 // katılmaz — önemli olan kaç bobin satıldığı ve o genişliğin sabit masura kilosu.
 function masuraAnaliziAy(ayKey) {
-  const satislar = data.hareketler.filter(h => h.tarih.slice(0,7) === ayKey && h.gelir && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış") && h.kalemler && h.kalemler.length);
+  const tumSatislar = data.hareketler.filter(h => h.tarih.slice(0,7) === ayKey && h.gelir && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış"));
+  const satislar = tumSatislar.filter(h => h.kalemler && h.kalemler.length);
+  const eksikSatislar = tumSatislar.filter(h => !h.kalemler || !h.kalemler.length);
 
   let toplamBobin = 0, toplamBobinKg = 0, toplamMasuraKg = 0, tanimsizBobin = 0;
   const genislikKirilim = {};
@@ -1560,7 +1600,7 @@ function masuraAnaliziAy(ayKey) {
   });
   const netPlastikKg = toplamBobinKg - toplamMasuraKg;
   const masuraOrani = toplamBobinKg > 0 ? (toplamMasuraKg / toplamBobinKg * 100) : null;
-  return { toplamBobin, toplamBobinKg, toplamMasuraKg, netPlastikKg, masuraOrani, genislikKirilim, tanimsizBobin };
+  return { toplamBobin, toplamBobinKg, toplamMasuraKg, netPlastikKg, masuraOrani, genislikKirilim, tanimsizBobin, eksikSatislar };
 }
 
 // Bu ay hangi üründen kaç adet satıldığını hesaplar (adet birincil metrik).
@@ -1587,6 +1627,83 @@ function urunSatisAyOzeti(ayKey) {
     });
   });
   return { urunler, tanimliOlmayanSatisSayisi };
+}
+
+// ============ ÜRÜNLE EŞLEŞTİRME (GEÇMİŞE DÖNÜK, STOĞA DOKUNMADAN) ============
+// Ürün seçilmeden yapılmış eski bir satışa, sadece RAPORLARDA (masura, ürün bazlı satış, kârlılık)
+// doğru sayılması için kalemler bilgisi ekler. Stoğa KASITLI OLARAK dokunmaz — çünkü satış zaten
+// geçmişte yapılmış, stok o zaman zaten düştüyse tekrar düşürmek çift düşüm hatasına yol açar.
+function urunEslestirModal(hId) {
+  window.__urunEslestirHedefId = hId;
+  window.__urunEslestirKalemler = [{stokIdx:"", adet:""}];
+  const overlay = document.createElement("div");
+  overlay.id = "urun-eslestir-modal";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto";
+  overlay.innerHTML = urunEslestirIcerik();
+  document.body.appendChild(overlay);
+}
+
+function urunEslestirIcerik() {
+  const h = data.hareketler.find(x => x.__id === window.__urunEslestirHedefId);
+  if (!h) return "";
+  let html = '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:440px;max-height:88vh;overflow:auto">';
+  html += '<div class="mtitle">🔧 Ürünle Eşleştir</div>';
+  html += '<div class="mini" style="margin-bottom:10px">'+esc(h.aciklama)+' — '+fmtTarih(h.tarih)+' — '+fmt(h.gelir)+(h.kg?' · '+fmtKg(h.kg)+' kg':'')+'</div>';
+  html += '<div class="mini" style="margin-bottom:12px;color:var(--amber)">Buraya eklediğin ürün/adet stoğuna DOKUNMAZ — sadece masura ve ürün bazlı raporlarda bu satışın doğru sayılmasını sağlar.</div>';
+  (window.__urunEslestirKalemler||[]).forEach((k,ki) => {
+    html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">'
+      + '<select style="flex:2" onchange="urunEslestirSet('+ki+',\'stokIdx\',this.value)"><option value="">— ürün seç —</option>'
+      + data.mamul.map((mm,mi) => '<option value="'+mi+'"'+(String(k.stokIdx)===String(mi)?" selected":"")+'>'+esc(mm.kalite+" · "+mm.tip+" · "+mm.genislik+(mm.gramaj!=="-"?" · "+mm.gramaj:""))+'</option>').join("")
+      + '</select>'
+      + '<input type="text" style="flex:1" inputmode="decimal" placeholder="adet" value="'+esc(k.adet)+'" oninput="urunEslestirSet('+ki+',\'adet\',this.value)">'
+      + '<button class="sil-x" onclick="urunEslestirSil('+ki+')">×</button>'
+      + '</div>';
+  });
+  html += '<button class="chip" onclick="urunEslestirEkle()">+ Ürün Satırı Ekle</button>';
+  html += '<div style="display:flex;gap:8px;margin-top:14px"><button class="btn" style="background:var(--green)" onclick="urunEslestirKaydet()">✓ Kaydet</button><button class="btn" style="background:#2A2C3A" onclick="urunEslestirModalKapat()">İptal</button></div>';
+  html += '</div>';
+  return html;
+}
+
+function urunEslestirSet(i,k,v) {
+  window.__urunEslestirKalemler[i][k] = v;
+  const el = document.getElementById("urun-eslestir-modal");
+  if (el) el.innerHTML = urunEslestirIcerik();
+}
+function urunEslestirEkle() {
+  window.__urunEslestirKalemler.push({stokIdx:"", adet:""});
+  const el = document.getElementById("urun-eslestir-modal");
+  if (el) el.innerHTML = urunEslestirIcerik();
+}
+function urunEslestirSil(i) {
+  window.__urunEslestirKalemler.splice(i,1);
+  const el = document.getElementById("urun-eslestir-modal");
+  if (el) el.innerHTML = urunEslestirIcerik();
+}
+
+function urunEslestirKaydet() {
+  const h = data.hareketler.find(x => x.__id === window.__urunEslestirHedefId);
+  if (!h) return;
+  const gecerli = (window.__urunEslestirKalemler||[]).filter(k => k.stokIdx !== "" && parseTL(k.adet) > 0);
+  if (!gecerli.length) { toast("En az bir ürün ve adet girin"); return; }
+  const kalemKayit = gecerli.map(k => {
+    const m = data.mamul[parseInt(k.stokIdx)];
+    return { key: m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj, adet: parseTL(k.adet), ad: m.kalite+" "+m.tip+" "+m.genislik };
+  });
+  h.kalemler = kalemKayit;
+  const kaliteler = new Set(kalemKayit.map(k => k.key.split("|")[0]));
+  if (kaliteler.size === 1 && !h.urunTipi) h.urunTipi = Array.from(kaliteler)[0];
+  save();
+  urunEslestirModalKapat();
+  render();
+  toast("✓ Eşleştirildi — rapor artık bu satışı da sayıyor");
+}
+
+function urunEslestirModalKapat() {
+  const el = document.getElementById("urun-eslestir-modal");
+  if (el) el.remove();
+  window.__urunEslestirHedefId = null;
+  window.__urunEslestirKalemler = null;
 }
 
 // ============ KÂRLILIK HESAPLAMA (TAHMİNİ) ============
@@ -1713,6 +1830,21 @@ function rUretim() {
     + '<div class="kpi"><div class="lbl">Bu Ay Satılan Masura</div><div class="v" style="color:var(--amber)">'+fmtKg(masAn.toplamMasuraKg)+' kg</div><span class="mini">2. Kalite satışlarından — hammaddesi ödenmemiş, faturaya yansıyan ağırlık</span></div>'
     + '</div>';
 
+  // ---- Masura raporuna dahil OLMAYAN satışlar — açıkça göster, tek tıkla düzeltilebilsin ----
+  if (masAn.eksikSatislar && masAn.eksikSatislar.length) {
+    html += '<div class="card" style="border:1.5px solid var(--amber)">'
+      + '<div class="mtitle">⚠️ Bu Ay Masura Raporuna Dahil OLMAYAN Satışlar <span class="pill">'+masAn.eksikSatislar.length+'</span></div>'
+      + '<div class="mini" style="margin-bottom:10px">Bu satışlarda ürün seçilmediği için masura/ürün raporlarında hiç sayılmıyorlar. Hangisi 2. Kalite ise "Eşleştir" ile ekleyebilirsin — stoğuna dokunulmaz, sadece rapor doğrulanır.</div>';
+    masAn.eksikSatislar.forEach(h => {
+      const idx = data.hareketler.findIndex(x => x.__id === h.__id);
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #262837">'
+        + '<div style="min-width:0;flex:1"><div style="font-weight:700;font-size:13px">'+esc(h.aciklama)+'</div><div class="mini">'+fmtTarih(h.tarih)+' · '+fmt(h.gelir)+(h.kg?' · '+fmtKg(h.kg)+' kg':'')+(h.not?' · '+esc(h.not):'')+'</div></div>'
+        + '<button class="chip" style="color:var(--blue);border-color:var(--blue);white-space:nowrap;flex-shrink:0" onclick="urunEslestirModal(\''+h.__id+'\')">🔧 Eşleştir</button>'
+        + '</div>';
+    });
+    html += '</div>';
+  }
+
   // ---- Yeni üretim kaydı formu ----
   html += '<div class="card"><div class="mtitle">Yeni Üretim Kaydı</div><div class="formgrid">';
   html += '<div class="row2">';
@@ -1837,6 +1969,8 @@ function rHareketler(H) {
     + '</div>';
 
   html += '<div id="hareketler-liste">';
+  // ---- MOBİL: kart görünümü (varsayılan görünür, geniş ekranda CSS ile gizlenir) ----
+  html += '<div class="hareketler-kartlar">';
   liste.forEach(h => {
     const idx = data.hareketler.findIndex(x => x.__id === h.__id);
     if (duzenleIdx === h.__id) {
@@ -1861,7 +1995,7 @@ function rHareketler(H) {
       + '<div class="hareket-kart-ust">'
       + '<div class="hareket-kart-sol">'
       + '<div class="hareket-kart-aciklama" onclick="duzenleBaslat(\''+h.__id+'\')">'+esc(h.aciklama)+'</div>'
-      + '<div class="hareket-kart-meta"><span>'+fmtTarih(h.tarih)+'</span><span class="pill">'+esc(h.kategori)+'</span>'+(h.kg?'<span>· '+fmtKg(h.kg)+' kg</span>':"")+'</div>'
+      + '<div class="hareket-kart-meta"><span>'+fmtTarih(h.tarih)+'</span><span class="pill">'+kategoriIkon(h.kategori)+' '+esc(h.kategori)+'</span>'+(h.kg?'<span>· '+fmtKg(h.kg)+' kg</span>':"")+'</div>'
       + (h.not ? '<div class="hareket-kart-not">'+esc(h.not)+'</div>' : "")
       + (h.vade && !durumSuAn.tamamlandiMi ? '<div class="hareket-kart-not">📅 vade: '+fmtTarih(h.vade)+'</div>' : "")
       + '</div>'
@@ -1873,6 +2007,46 @@ function rHareketler(H) {
       + (tahsil ? '<div class="hareket-kart-alt">'+tahsil+'</div>' : "")
       + '</div>';
   });
+  html += '</div>';
+
+  // ---- MASAÜSTÜ: geniş ekranlarda tablo görünümü (CSS ile geniş ekranda görünür yapılır) ----
+  html += '<div class="hareketler-tablo-wrap"><div class="scroll"><table><tr><th>Tarih</th><th>Açıklama</th><th>Kategori</th><th class="num">Gelir</th><th class="num">Gider</th><th class="num">Kg</th><th>Tahsil</th><th></th></tr>';
+  liste.forEach(h => {
+    const idx = data.hareketler.findIndex(x => x.__id === h.__id);
+    if (duzenleIdx === h.__id) {
+      const e = window.__editForm || {};
+      html += '<tr><td colspan="8" style="background:#1B1D28;border-radius:10px">'
+        + '<div class="formgrid" style="padding:10px">'
+        + '<div class="row2"><input type="date" value="'+(e.tarih||h.tarih)+'" onchange="editSet(\'tarih\',this.value)">'
+        + '<select onchange="editSet(\'kategori\',this.value)">'+(h.tur==="GELİR"?GELIR_KAT:GIDER_KAT).map(k => '<option'+((e.kategori||h.kategori)===k?" selected":"")+'>'+k+'</option>').join("")+'</select></div>'
+        + '<input type="text" value="'+esc(e.aciklama!=null?e.aciklama:h.aciklama)+'" oninput="editSet(\'aciklama\',this.value)" placeholder="Açıklama">'
+        + '<div class="row2"><input type="text" inputmode="decimal" value="'+esc(e.tutar!=null?e.tutar:String(h.gelir||h.gider||"").replace(".",","))+'" oninput="editSet(\'tutar\',this.value)" placeholder="Tutar">'
+        + '<input type="text" inputmode="decimal" value="'+esc(e.kg!=null?e.kg:(h.kg!=null?String(h.kg).replace(".",","):""))+'" oninput="editSet(\'kg\',this.value)" placeholder="Kg (opsiyonel)"></div>'
+        + '<div class="row2"><input type="date" value="'+(e.vade!=null?e.vade:(h.vade||""))+'" onchange="editSet(\'vade\',this.value)">'
+        + '<input type="text" value="'+esc(e.not!=null?e.not:(h.not||""))+'" oninput="editSet(\'not\',this.value)" placeholder="Not"></div>'
+        + '<div style="display:flex;gap:8px"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="duzenleKaydet(\''+h.__id+'\')">✓ Kaydet</button><button class="chip" onclick="duzenleIptal()">İptal</button></div>'
+        + '</div></td></tr>';
+      return;
+    }
+    const tahsil = tahsilDurumHucre(h);
+    const durumSuAn = tahsilatDurumu(h);
+    html += '<tr>'
+      + '<td style="white-space:nowrap">'+fmtTarih(h.tarih)+(h.vade&&!durumSuAn.tamamlandiMi?'<div class="notrow">vade: '+fmtTarih(h.vade)+'</div>':"")+'</td>'
+      + '<td><span class="adet-edit" onclick="duzenleBaslat(\''+h.__id+'\')">'+esc(h.aciklama)+'</span>'+(h.not?'<div class="notrow">'+esc(h.not)+'</div>':"")+'</td>'
+      + '<td><span class="pill">'+kategoriIkon(h.kategori)+' '+esc(h.kategori)+'</span></td>'
+      + '<td class="num yesil">'+(h.gelir?pg(fmt(h.gelir)):"")+'</td>'
+      + '<td class="num kirmizi">'+(h.gider?pg(fmt(h.gider)):"")+'</td>'
+      + '<td class="num">'+(h.kg?fmtKg(h.kg):"")+'</td>'
+      + '<td style="text-align:center">'+tahsil+'</td>'
+      + '<td style="text-align:right"><button class="sil-x" onclick="silOnay('+idx+')">×</button></td>'
+      + '</tr>';
+  });
+  html += '<tr style="border-top:2px solid var(--line)"><td colspan="3" style="font-weight:800">TOPLAM ('+liste.length+' kayıt)</td>'
+    + '<td class="num yesil" style="font-weight:800">'+(fGelir?pg(fmt(fGelir)):"—")+'</td>'
+    + '<td class="num kirmizi" style="font-weight:800">'+(fGider?pg(fmt(fGider)):"—")+'</td>'
+    + '<td colspan="3"></td></tr>';
+  html += '</table></div></div>';
+
   html += '</div></div>';
   return html;
 }
@@ -2832,8 +3006,9 @@ function rStok() {
     topKg += kg;
     const deger = kg * fiyatBul(m.kalite) * 1.2;
     const renk = m.adet <= 0 ? "kirmizi" : (m.adet < STOK_ESIK ? "" : "yesil");
+    const barRenk = m.adet <= 0 ? "var(--red)" : (m.adet < STOK_ESIK ? "var(--amber)" : "var(--green)");
     html += '<tr><td><b>'+esc(m.kalite)+'</b> '+esc(m.tip)+' · '+esc(m.genislik)+(m.gramaj!=="-"?' · '+esc(m.gramaj):"")+'<div class="notrow"><span class="adet-edit" onclick="mamulDuzenle('+i+')">✎ ürünü düzenle</span></div></td>'
-      + '<td class="num"><span class="adet-edit '+renk+'" onclick="adetDuzenle('+i+')">'+m.adet+'</span></td>'
+      + '<td class="num" style="min-width:56px"><span class="adet-edit '+renk+'" onclick="adetDuzenle('+i+')">'+m.adet+'</span>'+doluCubuk(m.adet, STOK_ESIK*3, barRenk)+'</td>'
       + '<td class="num"><span class="adet-edit" onclick="kgBobinDuzenle('+i+')">'+fmtKg(m.kgBobin)+'</span></td>'
       + '<td class="num">'+fmtKg(kg)+'</td>'
       + '<td class="num">'+(deger>0?fmtK(deger):"—")+'</td>'
@@ -2849,9 +3024,11 @@ function rStok() {
     hamTop += h.kalan||0;
     const hf = hamFiyatBul(h);
     const deger = (h.kalan||0) * hf * 1.2;
+    const hamOran = h.alinan != null && h.alinan > 0 ? h.kalan / h.alinan : null;
+    const hamBarRenk = hamOran == null ? "var(--blue)" : (hamOran < 0.15 ? "var(--red)" : (hamOran < 0.35 ? "var(--amber)" : "var(--green)"));
     html += '<tr><td><b>'+esc(h.tedarikci)+'</b>'+(h.aciklama&&h.aciklama!=="-"?' · '+esc(h.aciklama):"")+' <span class="pill" style="font-size:9.5px;padding:1px 6px">'+esc(h.kalite||"Genel")+'</span>'+(h.not?'<div class="notrow">📄 '+esc(h.not)+'</div>':"")+'<div class="notrow"><span class="adet-edit" onclick="hamDuzenleTam('+i+')">✎ düzenle</span></div></td>'
       + '<td class="num">'+(h.alinan!=null?fmtKg(h.alinan):"—")+'</td>'
-      + '<td class="num"><span class="adet-edit" onclick="hamDuzenle('+i+')">'+fmtKg(h.kalan)+'</span></td>'
+      + '<td class="num" style="min-width:56px"><span class="adet-edit" onclick="hamDuzenle('+i+')">'+fmtKg(h.kalan)+'</span>'+(h.alinan!=null?doluCubuk(h.kalan, h.alinan, hamBarRenk):"")+'</td>'
       + '<td class="num">'+(deger>0?fmtK(deger):"—")+'</td>'
       + '<td style="text-align:right"><button class="sil-x" onclick="hamSil('+i+')">×</button></td></tr>';
   });
