@@ -48,15 +48,16 @@ th { text-align: left; padding: 8px 9px; font-size: 10px; text-transform: upperc
 td { padding: 8px 9px; border-bottom: 1px solid #262837; font-variant-numeric: tabular-nums; }
 tr:last-child td { border-bottom: none; }
 .num { text-align: right; }
-.hareket-kart { background: #1B1D28; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; }
+.hareket-kart { background: #1B1D28; border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; margin-bottom: 6px; }
 .hareket-kart-ust { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .hareket-kart-sol { flex: 1; min-width: 0; }
-.hareket-kart-aciklama { font-weight: 800; font-size: 14.5px; cursor: pointer; word-break: break-word; }
-.hareket-kart-meta { font-size: 11.5px; color: var(--mut); margin-top: 3px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.hareket-kart-aciklama { font-weight: 800; font-size: 14px; cursor: pointer; word-break: break-word; line-height: 1.25; }
+.hareket-kart-meta { font-size: 12.5px; color: var(--mut); margin-top: 2px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.hareket-kart-meta .pill { font-size: 10.5px; padding: 2px 8px; }
 .hareket-kart-sag { text-align: right; flex-shrink: 0; }
-.hareket-kart-tutar { font-size: 16.5px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.hareket-kart-alt { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px solid #262837; gap: 8px; }
-.hareket-kart-not { font-size: 12px; color: var(--mut); margin-top: 4px; word-break: break-word; }
+.hareket-kart-tutar { font-size: 15.5px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hareket-kart-alt { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; padding-top: 6px; border-top: 1px solid #262837; gap: 8px; }
+.hareket-kart-not { font-size: 11.5px; color: var(--mut); margin-top: 2px; word-break: break-word; }
 .yesil { color: var(--green); font-weight: 600; }
 .kirmizi { color: var(--red); font-weight: 600; }
 input, select { border: 1.5px solid #333648; border-radius: 10px; padding: 11px 12px; font-size: 16px; width: 100%; background: #1B1D28; color: var(--ink); -webkit-appearance: none; }
@@ -324,7 +325,7 @@ let digerAcik = false;
 let form = null;
 let duzenleIdx = null;
 let arama = "";
-let hFiltre = "tumu";
+let hFiltre = "buay";
 let maliyet = { urun: "1. Kalite", genislik: "120 cm", hamFiyat: "", satisFiyat: "", bobinKg: "", masuraKg: "" };
 let uForm = null;
 let uFiltre = "buay";
@@ -374,6 +375,7 @@ function saglaId(d) {
   if (!d.gizliUyarilar) d.gizliUyarilar = [];
   if (!d.uretimler) d.uretimler = [];
   if (!d.sayimlar) d.sayimlar = [];
+  if (!d.cariBakiyeler) d.cariBakiyeler = {}; // müşteri fazla ödemesi (kredi) — bir sonraki faturaya otomatik düşer
   if (!d.ayarlar) d.ayarlar = {};
   // İşçilik artık ürün tipine göre ayrı ayrı: 1.Kalite 25₺, 2.Kalite 15₺, ECO-1 20₺ (net plastik kg başına, masura hariç).
   // Eski tek-sayı formatındaysa (bu güncellemeden önce kaydedilmişse) yeni doğru değerlerle değiştirilir.
@@ -1108,9 +1110,24 @@ function kaydet() {
     };
   }
   data.hareketler.push(kayit);
+  // Yeni satışta müşterinin pozitif cari bakiyesi (önceki fazla ödemesi) varsa otomatik uygulanır
+  let cariMesaji = "";
+  if (kayit.gelir && (kayit.kategori === "Satış-Fatura" || kayit.kategori === "Perakende Satış" || kayit.vade)) {
+    const cariAnahtar = normMusteri(kayit.aciklama);
+    const mevcutKredi = data.cariBakiyeler[cariAnahtar] || 0;
+    if (mevcutKredi > 0.01) {
+      const uygulanan = Math.min(mevcutKredi, kayit.gelir);
+      if (!kayit.tahsilatlar) kayit.tahsilatlar = [];
+      kayit.tahsilatlar.push({ tarih: kayit.tarih, tutar: uygulanan });
+      data.cariBakiyeler[cariAnahtar] = mevcutKredi - uygulanan;
+      if (data.cariBakiyeler[cariAnahtar] < 0.01) delete data.cariBakiyeler[cariAnahtar];
+      kayit.odendi = tahsilatDurumu(kayit).tamamlandiMi;
+      cariMesaji = " · "+fmt(uygulanan)+" cari bakiyeden otomatik düşüldü";
+    }
+  }
   save();
   resetForm();
-  toast("✓ Kayıt eklendi");
+  toast("✓ Kayıt eklendi"+cariMesaji);
   tab = "hareketler";
   hFiltre = "tumu";
   arama = "";
@@ -1848,9 +1865,12 @@ function rHareketler(H) {
       + (h.not ? '<div class="hareket-kart-not">'+esc(h.not)+'</div>' : "")
       + (h.vade && !durumSuAn.tamamlandiMi ? '<div class="hareket-kart-not">📅 vade: '+fmtTarih(h.vade)+'</div>' : "")
       + '</div>'
-      + '<div class="hareket-kart-sag"><div class="hareket-kart-tutar '+tutarRenk+'">'+tutarDeger+'</div></div>'
+      + '<div class="hareket-kart-sag" style="display:flex;align-items:center;gap:2px">'
+      + '<div class="hareket-kart-tutar '+tutarRenk+'">'+tutarDeger+'</div>'
+      + '<button class="sil-x" style="min-width:28px;min-height:28px;padding:4px 6px;font-size:16px" onclick="silOnay('+idx+')">×</button>'
       + '</div>'
-      + '<div class="hareket-kart-alt">'+(tahsil?('<span>'+tahsil+'</span>'):'<span></span>')+'<button class="sil-x" onclick="silOnay('+idx+')">×</button></div>'
+      + '</div>'
+      + (tahsil ? '<div class="hareket-kart-alt">'+tahsil+'</div>' : "")
       + '</div>';
   });
   html += '</div></div>';
@@ -1917,11 +1937,16 @@ function tahsilatModal(hId) {
 
 function tahsilatModalIcerik(h) {
   const durum = tahsilatDurumu(h);
+  const cariAnahtar = normMusteri(h.aciklama);
+  const mevcutKredi = data.cariBakiyeler[cariAnahtar] || 0;
   let html = '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:420px;max-height:88vh;overflow:auto">';
   html += '<div class="mtitle">💰 Tahsilat — '+esc(h.aciklama)+'</div>';
   html += '<div class="hesap-satir"><span>Toplam Tutar</span><b>'+fmt(h.gelir)+'</b></div>';
   html += '<div class="hesap-satir"><span>Tahsil Edilen</span><b class="yesil">'+fmt(durum.toplamTahsil)+'</b></div>';
   html += '<div class="hesap-satir"><span>Kalan</span><b class="'+(durum.kalan>0.01?"kirmizi":"yesil")+'">'+fmt(durum.kalan)+'</b></div>';
+  if (mevcutKredi > 0.01 && durum.kalan > 0.01) {
+    html += '<div class="mini" style="color:var(--green);margin-top:6px">Bu müşterinin +'+fmt(mevcutKredi)+' cari bakiyesi var. <span class="adet-edit" onclick="cariUygulaTekil()">Buraya uygula</span></div>';
+  }
   if (h.tahsilatlar && h.tahsilatlar.length) {
     html += '<div class="mini" style="font-weight:800;margin:12px 0 6px">Tahsilat Geçmişi</div>';
     h.tahsilatlar.forEach((t,i) => {
@@ -1960,6 +1985,28 @@ function tahsilatEkle() {
   if (modalEl) modalEl.innerHTML = tahsilatModalIcerik(h);
   render();
   toast("✓ Tahsilat kaydedildi");
+}
+
+// Müşterinin mevcut cari bakiyesini (fazla ödemesini) açık olan tekil faturaya uygular
+function cariUygulaTekil() {
+  const h = data.hareketler.find(x => x.__id === window.__tahsilatHedefId);
+  if (!h) return;
+  const anahtar = normMusteri(h.aciklama);
+  const kredi = data.cariBakiyeler[anahtar] || 0;
+  if (kredi <= 0.01) { toast("Cari bakiye kalmadı"); return; }
+  const durum = tahsilatDurumu(h);
+  const uygulanan = Math.min(kredi, durum.kalan);
+  if (uygulanan <= 0.01) { toast("Bu faturada zaten kalan bakiye yok"); return; }
+  if (!h.tahsilatlar) h.tahsilatlar = [];
+  h.tahsilatlar.push({ tarih: yerelTarihStr(), tutar: uygulanan });
+  data.cariBakiyeler[anahtar] = kredi - uygulanan;
+  if (data.cariBakiyeler[anahtar] < 0.01) delete data.cariBakiyeler[anahtar];
+  h.odendi = tahsilatDurumu(h).tamamlandiMi;
+  save();
+  const modalEl = document.getElementById("tahsilat-modal");
+  if (modalEl) modalEl.innerHTML = tahsilatModalIcerik(h);
+  render();
+  toast("✓ "+fmt(uygulanan)+" cari bakiyeden uygulandı");
 }
 
 function tahsilatSil(i) {
@@ -2023,9 +2070,11 @@ function musteriTahsilatIcerik() {
   const musteriAdi = window.__musteriTahsilatHedef;
   const faturalar = musteriBekleyenFaturalar(musteriAdi);
   const toplamBekleyen = faturalar.reduce((s,x) => s + x.durum.kalan, 0);
+  const mevcutKredi = data.cariBakiyeler[normMusteri(musteriAdi)] || 0;
   let html = '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:440px;max-height:88vh;overflow:auto">';
   html += '<div class="mtitle">💰 '+esc(musteriAdi)+' — Toplu Tahsilat</div>';
   html += '<div class="hesap-satir"><span>Toplam Bekleyen ('+faturalar.length+' fatura)</span><b class="kirmizi">'+fmt(toplamBekleyen)+'</b></div>';
+  if (mevcutKredi > 0.01) html += '<div class="hesap-satir"><span>Mevcut Cari Bakiye (fazla ödeme)</span><b class="yesil">+'+fmt(mevcutKredi)+'</b></div>';
   if (faturalar.length) {
     html += '<div class="mini" style="font-weight:800;margin:10px 0 6px">Bekleyen Faturalar (eskiden yeniye — dağıtım bu sırayla yapılır)</div>';
     faturalar.forEach(x => {
@@ -2033,13 +2082,13 @@ function musteriTahsilatIcerik() {
         + '<span>'+fmtTarih(x.h.tarih)+' · '+esc(x.h.kategori)+(x.durum.toplamTahsil>0.01?' <span class="mini">(kısmi ödenmiş)</span>':'')+'</span>'
         + '<span class="kirmizi" style="font-weight:700">'+fmt(x.durum.kalan)+'</span></div>';
     });
-    html += '<div style="margin-top:14px"><div class="mini" style="margin-bottom:5px">Alınan Toplu Ödeme Tutarı</div>'
-      + '<input type="text" id="musteri-tahsilat-tutar" inputmode="decimal" placeholder="ör. 40000" oninput="musteriTahsilatOnizle()"></div>';
-    html += '<div id="musteri-tahsilat-onizleme"></div>';
-    html += '<button class="btn" style="background:var(--green);margin-top:10px" onclick="musteriTahsilatUygula()">✓ Dağıt ve Kaydet</button>';
   } else {
-    html += '<div class="mini" style="margin-top:10px">Bu müşteride bekleyen fatura yok.</div>';
+    html += '<div class="mini" style="margin-top:6px">Bu müşteride bekleyen fatura yok'+(mevcutKredi>0.01?" — girdiğin tutar tamamen cari bakiyeye eklenecek.":".")+'</div>';
   }
+  html += '<div style="margin-top:14px"><div class="mini" style="margin-bottom:5px">Alınan Toplu Ödeme Tutarı</div>'
+    + '<input type="text" id="musteri-tahsilat-tutar" inputmode="decimal" placeholder="ör. 40000" oninput="musteriTahsilatOnizle()"></div>';
+  html += '<div id="musteri-tahsilat-onizleme"></div>';
+  html += '<button class="btn" style="background:var(--green);margin-top:10px" onclick="musteriTahsilatUygula()">✓ Dağıt ve Kaydet</button>';
   html += '<button class="btn" style="background:#2A2C3A;margin-top:8px" onclick="musteriTahsilatModalKapat()">Kapat</button>';
   html += '</div>';
   return html;
@@ -2060,7 +2109,7 @@ function musteriTahsilatOnizle() {
       + '<span class="mini">'+(d.kalanSonra<0.01?"✓ kapanıyor":"kalan "+fmt(d.kalanSonra))+'</span></div>';
   });
   if (kullanilmayanTutar > 0.01) {
-    html += '<div class="mini" style="color:var(--amber);margin-top:6px">⚠ Girilen tutardan '+fmt(kullanilmayanTutar)+' fazlası kullanılmayacak — tüm bekleyen faturalar zaten kapanıyor.</div>';
+    html += '<div class="mini" style="color:var(--green);margin-top:6px;font-weight:700">+ '+fmt(kullanilmayanTutar)+' cari bakiyeye eklenecek — bir sonraki faturasından otomatik düşülecek.</div>';
   }
   onizEl.innerHTML = html;
 }
@@ -2069,18 +2118,24 @@ function musteriTahsilatUygula() {
   const el = document.getElementById("musteri-tahsilat-tutar");
   const n = parseTL(el ? el.value : "");
   if (isNaN(n) || n <= 0) { toast("Geçerli bir tutar girin"); return; }
-  const { dagitim } = musteriTahsilatDagitimHesapla(window.__musteriTahsilatHedef, n);
-  if (!dagitim.length) { toast("Bu müşteride bekleyen fatura yok"); return; }
+  const musteriAdi = window.__musteriTahsilatHedef;
+  const { dagitim, kullanilmayanTutar } = musteriTahsilatDagitimHesapla(musteriAdi, n);
   const bugun = yerelTarihStr();
   dagitim.forEach(d => {
     if (!d.h.tahsilatlar) d.h.tahsilatlar = [];
     d.h.tahsilatlar.push({ tarih: bugun, tutar: d.uygulanan });
     d.h.odendi = tahsilatDurumu(d.h).tamamlandiMi;
   });
+  let mesaj = "✓ Tahsilat "+dagitim.length+" faturaya dağıtıldı";
+  if (kullanilmayanTutar > 0.01) {
+    const anahtar = normMusteri(musteriAdi);
+    data.cariBakiyeler[anahtar] = (data.cariBakiyeler[anahtar]||0) + kullanilmayanTutar;
+    mesaj += " · +"+fmt(kullanilmayanTutar)+" cari bakiyeye eklendi";
+  }
   save();
   musteriTahsilatModalKapat();
   render();
-  toast("✓ Tahsilat "+dagitim.length+" faturaya dağıtıldı");
+  toast(mesaj);
 }
 
 function musteriTahsilatModalKapat() {
@@ -2133,6 +2188,15 @@ function silOnay(idx) {
         const m = data.mamul.find(m => m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj === k.key);
         if (m) m.adet += k.adet;
       });
+    }
+  }
+  // Bu satışa daha önce tahsilat girilmişse (kısmi/tam), o para zaten müşteriden alınmıştı —
+  // fatura silinince kaybolmasın diye müşterinin cari bakiyesine geri eklenebilir.
+  const toplamTahsil = (h.tahsilatlar||[]).reduce((s,t) => s + (t.tutar||0), 0);
+  if (toplamTahsil > 0.01) {
+    if (confirm("Bu satışta "+fmt(toplamTahsil)+" tahsilat kaydı var. Bu tutar müşterinin cari bakiyesine geri eklensin mi? (Evet demezsen bu tahsilat kaybolur)")) {
+      const anahtar = normMusteri(h.aciklama);
+      data.cariBakiyeler[anahtar] = (data.cariBakiyeler[anahtar]||0) + toplamTahsil;
     }
   }
   data.hareketler.splice(idx, 1);
@@ -3180,20 +3244,26 @@ function rMusteriler(H) {
   const girdiler = Object.entries(H.musteriler).sort((a,b) => b[1].toplam - a[1].toplam);
   const genelToplam = girdiler.reduce((s,g) => s + g[1].toplam, 0);
   const genelBekleyen = girdiler.reduce((s,[ad]) => s + musteriBekleyenToplam(ad), 0);
+  const genelCari = Object.values(data.cariBakiyeler).reduce((s,v) => s + v, 0);
   let html = '<div class="kpi-grid">'
     + '<div class="kpi"><div class="lbl">Müşteri</div><div class="v">'+girdiler.length+'</div></div>'
     + '<div class="kpi"><div class="lbl">Toplam Satış</div><div class="v yesil">'+pg(fmtK(genelToplam))+'</div></div>'
     + '<div class="kpi"><div class="lbl">Toplam Bekleyen</div><div class="v" style="color:'+(genelBekleyen>0?"var(--red)":"var(--green)")+'">'+pg(fmtK(genelBekleyen))+'</div></div>'
+    + (genelCari>0.01 ? '<div class="kpi"><div class="lbl">Toplam Cari Bakiye</div><div class="v yesil">+'+pg(fmtK(genelCari))+'</div><span class="mini">bir sonraki faturalardan otomatik düşer</span></div>' : '')
     + '</div>';
   html += '<div class="card"><div class="mtitle">Müşteri Analizi <span class="pill">satış gelirleri</span></div><div class="scroll"><table><tr><th>Müşteri</th><th class="num">Toplam</th><th class="num">İşlem</th><th>Son Satış</th><th class="num">Bekleyen</th><th></th></tr>';
   girdiler.forEach(([ad, m]) => {
     const bekleyen = musteriBekleyenToplam(ad);
+    const kredi = data.cariBakiyeler[normMusteri(ad)] || 0;
     html += '<tr><td><b>'+esc(ad)+'</b></td>'
       + '<td class="num yesil">'+pg(fmt(m.toplam))+'</td>'
       + '<td class="num">'+m.sayi+'</td>'
       + '<td style="white-space:nowrap">'+fmtTarih(m.son)+'</td>'
-      + '<td class="num" style="color:'+(bekleyen>0.01?"var(--red)":"var(--mut)")+';font-weight:'+(bekleyen>0.01?"800":"400")+'">'+(bekleyen>0.01?pg(fmt(bekleyen)):"—")+'</td>'
-      + '<td style="text-align:right">'+(bekleyen>0.01?'<button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap" onclick="musteriTahsilatModal(\''+jsStr(ad)+'\')">💰 Tahsilat</button>':'')+'</td>'
+      + '<td class="num">'
+      + (bekleyen>0.01?'<span style="color:var(--red);font-weight:800">'+pg(fmt(bekleyen))+'</span>':'<span style="color:var(--mut)">—</span>')
+      + (kredi>0.01?'<div class="mini" style="color:var(--green);font-weight:700">+'+pg(fmt(kredi))+' cari</div>':'')
+      + '</td>'
+      + '<td style="text-align:right">'+((bekleyen>0.01||kredi>0.01)?'<button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap" onclick="musteriTahsilatModal(\''+jsStr(ad)+'\')">💰 Tahsilat</button>':'')+'</td>'
       + '</tr>';
   });
   html += '</table></div></div>';
