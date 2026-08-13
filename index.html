@@ -316,11 +316,11 @@ const SEED = {"hareketler":[{"tarih":"2025-12-16","tur":"GELİR","aciklama":"Ba�
 const AYLAR = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
 const AYLAR_KISA = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"];
 const GELIR_KAT = ["Satış-Fatura","Perakende Satış","Nakliye","Hammadde Satışı","Kredi Kullanımı","Sermaye","Diğer Gelir"];
-const GIDER_KAT = ["Hammadde","Hammadde-Satılan","Personel","Araç/Yakıt","Kredi Ödemesi","Genel Gider","Nakliye","Vergi/SGK","Ekipman/Malzeme"];
+const GIDER_KAT = ["Hammadde","Hammadde-Satılan","Personel","Avans","Araç/Yakıt","Kredi Ödemesi","Genel Gider","Nakliye","Vergi/SGK","Ekipman/Malzeme"];
 const KATEGORI_IKON = {
   "Satış-Fatura": "🧾", "Perakende Satış": "🛍️", "Nakliye": "🚚", "Hammadde Satışı": "📤",
   "Kredi Kullanımı": "💳", "Sermaye": "💰", "Diğer Gelir": "✨",
-  "Hammadde": "🧵", "Hammadde-Satılan": "📦", "Personel": "👷", "Araç/Yakıt": "⛽",
+  "Hammadde": "🧵", "Hammadde-Satılan": "📦", "Personel": "👷", "Avans": "💵", "Araç/Yakıt": "⛽",
   "Kredi Ödemesi": "🏦", "Genel Gider": "📋", "Vergi/SGK": "🏛️", "Ekipman/Malzeme": "🔧"
 };
 function kategoriIkon(kategori) { return KATEGORI_IKON[kategori] || "•"; }
@@ -443,6 +443,7 @@ function saglaId(d) {
   if (!d.uretimler) d.uretimler = [];
   if (!d.sayimlar) d.sayimlar = [];
   if (!d.cariBakiyeler) d.cariBakiyeler = {}; // müşteri fazla ödemesi (kredi) — bir sonraki faturaya otomatik düşer
+  if (!d.personeller) d.personeller = []; // maaş bordrosu — Krediler'deki gibi tek dokunuşla ödeme kaydı
   if (!d.ayarlar) d.ayarlar = {};
   // İşçilik artık ürün tipine göre ayrı ayrı: 1.Kalite 25₺, 2.Kalite 15₺, ECO-1 20₺ (net plastik kg başına, masura hariç).
   // Eski tek-sayı formatındaysa (bu güncellemeden önce kaydedilmişse) yeni doğru değerlerle değiştirilir.
@@ -3634,6 +3635,36 @@ function rKrediler() {
   });
   html = '<div class="kpi-grid"><div class="kpi"><div class="lbl">Aktif Kredi</div><div class="v">'+data.krediler.length+'</div></div><div class="kpi"><div class="lbl">Toplam Kalan Borç</div><div class="v kirmizi">'+fmtK(toplamKalan)+'</div></div></div>' + html;
   html += '<div class="card"><button class="chip" onclick="krediEkle()">+ Kredi Ekle</button></div>';
+
+  // ---- Personel Maaşları — kredi ile aynı "tek dokunuşla öde" mantığı, ama sabit taksit sayısı yok,
+  // her ay tekrar eden bir ödeme. O ay zaten ödenmişse buton kapanır, yanlışlıkla iki kez ödenmesin diye.
+  const buAy = buAyKey();
+  let toplamMaas = 0, odenenSayisi = 0;
+  let personelHtml = "";
+  data.personeller.forEach(p => {
+    toplamMaas += p.maas;
+    const odendiMi = personelBuAyOdendiMi(p);
+    if (odendiMi) odenenSayisi++;
+    const avans = personelBuAyAvansToplami(p);
+    const netTutar = Math.max(0, p.maas - avans);
+    personelHtml += '<div class="card"><div class="mtitle"><span class="adet-edit" onclick="personelDuzenleMaas(\''+p.id+'\')">'+esc(p.ad)+'</span><span style="flex:1"></span><button class="sil-x" onclick="personelSil(\''+p.id+'\')">×</button></div>'
+      + '<div class="hesap-satir"><span>Aylık Maaş</span><b>'+fmt(p.maas)+'</b></div>'
+      + (avans > 0 ? '<div class="hesap-satir"><span>Bu Ay Verilen Avans</span><b style="color:var(--amber)">−'+fmt(avans)+'</b></div><div class="hesap-satir"><span>Kalan (Net Ödenecek)</span><b>'+fmt(netTutar)+'</b></div>' : '')
+      + '<div class="hesap-satir"><span>'+AYLAR[new Date().getMonth()]+' Durumu</span><b class="'+(odendiMi?"yesil":"kirmizi")+'">'+(odendiMi?"✓ Ödendi":"Bekliyor")+'</b></div>'
+      + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
+      + '<button class="chip" style="color:var(--amber);border-color:var(--amber)" onclick="personelAvansVer(\''+p.id+'\')">💵 Avans Ver</button>'
+      + (odendiMi || netTutar<=0 ? "" : '<button class="btn" style="background:var(--green);flex:1;min-width:160px" onclick="personelMaasOde(\''+p.id+'\')">✓ Bu Ay Maaşı Öde ('+fmt(netTutar)+')</button>')
+      + '</div>'
+      + '</div>';
+  });
+  html += '<div class="card" style="margin-top:4px"><div class="mtitle">👷 Personel Maaşları</div>'
+    + '<div class="kpi-grid" style="margin-bottom:0">'
+    + '<div class="kpi"><div class="lbl">Personel</div><div class="v">'+data.personeller.length+'</div></div>'
+    + '<div class="kpi"><div class="lbl">Aylık Toplam</div><div class="v">'+fmtK(toplamMaas)+'</div></div>'
+    + '<div class="kpi"><div class="lbl">Bu Ay Ödenen</div><div class="v" style="color:'+(odenenSayisi===data.personeller.length&&data.personeller.length>0?"var(--green)":"var(--amber)")+'">'+odenenSayisi+'/'+data.personeller.length+'</div></div>'
+    + '</div></div>'
+    + personelHtml
+    + '<div class="card"><button class="chip" onclick="personelEkle()">+ Personel Ekle</button></div>';
   return html;
 }
 
@@ -3681,6 +3712,90 @@ function krediSil(id) {
   if (!k) return;
   if (!confirm('"'+k.ad+'" kredisi listeden silinsin mi? (Ödeme kayıtları silinmez)')) return;
   data.krediler = data.krediler.filter(x => x.id !== id);
+  save(); render();
+}
+
+// ============ PERSONEL MAAŞLARI (KREDİ İLE AYNI MANTIK — TEK DOKUNUŞLA ÖDEME) ============
+// Kredi'den farkı: sabit taksit sayısı yok, her ay tekrar eder. Bu ay zaten ödenmiş mi diye
+// Personel kategorisindeki gider kayıtlarını isim eşleşmesiyle tarar.
+function personelBuAyOdendiMi(p) {
+  const ay = buAyKey();
+  return data.hareketler.some(h => h.tur === "GİDER" && h.kategori === "Personel" && trFold(h.aciklama) === trFold(p.ad) && h.tarih.slice(0,7) === ay);
+}
+// Bu ay şimdiye kadar verilmiş toplam avans — istediği kadar parçalı girilmiş olsa bile hepsini toplar.
+function personelBuAyAvansToplami(p) {
+  const ay = buAyKey();
+  return data.hareketler
+    .filter(h => h.tur === "GİDER" && h.kategori === "Avans" && trFold(h.aciklama) === trFold(p.ad) && h.tarih.slice(0,7) === ay)
+    .reduce((s,h) => s + (h.gider||0), 0);
+}
+
+// Avans, maaştan bağımsız, istediğin an istediğin tutarda — parçalı parçalı da girilebilir.
+function personelAvansVer(id) {
+  const p = data.personeller.find(x => x.id === id);
+  if (!p) return;
+  const v = prompt(p.ad + " — avans tutarı (₺):", "");
+  if (v === null) return;
+  const tutar = parseTL(v);
+  if (isNaN(tutar) || tutar <= 0) { toast("Geçerli bir tutar girin"); return; }
+  const bugun = yerelTarihStr();
+  const kayit = {
+    tarih: bugun, tur: "GİDER", aciklama: p.ad, kategori: "Avans",
+    gelir: null, gider: tutar, not: buAyKey() + " avansı",
+    __id: "h_" + Date.now() + "_" + Math.random().toString(36).slice(2,7)
+  };
+  data.hareketler.push(kayit);
+  save(); render();
+  toast("✓ " + fmt(tutar) + " avans kaydedildi");
+}
+
+function personelMaasOde(id) {
+  const p = data.personeller.find(x => x.id === id);
+  if (!p) return;
+  if (personelBuAyOdendiMi(p)) { toast("Bu ay zaten ödenmiş görünüyor"); return; }
+  const avans = personelBuAyAvansToplami(p);
+  const netTutar = Math.max(0, p.maas - avans);
+  if (netTutar <= 0) { toast("Bu ay verilen avans maaşı karşılıyor/geçiyor — ödenecek kalan yok"); return; }
+  const bugun = yerelTarihStr();
+  const avansNotu = avans > 0 ? (" (" + fmt(p.maas) + " maaş − " + fmt(avans) + " avans)") : "";
+  if (!confirm(p.ad + "\n\n" + fmt(netTutar) + " maaş ödemesi bugün gider olarak kaydedilsin mi?" + avansNotu)) return;
+  const kayit = {
+    tarih: bugun, tur: "GİDER", aciklama: p.ad, kategori: "Personel",
+    gelir: null, gider: netTutar, not: buAyKey() + " maaşı" + (avans > 0 ? " (avans düşülmüş: " + fmt(avans) + ")" : ""),
+    __id: "h_" + Date.now() + "_" + Math.random().toString(36).slice(2,7)
+  };
+  data.hareketler.push(kayit);
+  save(); render();
+  toast("✓ " + p.ad + " maaşı ödendi olarak kaydedildi");
+}
+
+function personelEkle() {
+  const ad = prompt("Personel adı:");
+  if (!ad || !ad.trim()) return;
+  const maas = parseTL(prompt("Aylık maaş (₺):", "") || "");
+  if (isNaN(maas) || maas <= 0) { toast("Geçerli maaş tutarı girin"); return; }
+  data.personeller.push({ id: "p_" + Date.now(), ad: ad.trim(), maas });
+  save(); render();
+  toast("✓ Personel eklendi");
+}
+
+function personelDuzenleMaas(id) {
+  const p = data.personeller.find(x => x.id === id);
+  if (!p) return;
+  const v = prompt(p.ad + " — yeni aylık maaş (₺):", String(p.maas).replace(".", ","));
+  if (v === null) return;
+  const yeni = parseTL(v);
+  if (isNaN(yeni) || yeni <= 0) { toast("Geçerli tutar girin"); return; }
+  p.maas = yeni;
+  save(); render();
+  toast("✓ Maaş güncellendi");
+}
+
+function personelSil(id) {
+  const p = data.personeller.find(x => x.id === id);
+  if (!p) return;
+  if (!confirm('"'+p.ad+'" listeden silinsin mi? (Geçmiş ödeme kayıtları silinmez)')) return;
+  data.personeller = data.personeller.filter(x => x.id !== id);
   save(); render();
 }
 
