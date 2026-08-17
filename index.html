@@ -1573,6 +1573,7 @@ function uretimAyOzeti(ayKey) {
   const kayitlar = (data.uretimler||[]).filter(u => u.tarih.slice(0,7) === ayKey);
   let toplamBobin = 0, toplamSaat = 0, toplamUretilenKg = 0, toplamHammaddeKg = 0;
   const makineSaat = {}; MAKINELER.forEach(m => makineSaat[m] = 0);
+  const makineKg = {}; MAKINELER.forEach(m => makineKg[m] = 0);
   const vardiyaSaat = {}; VARDIYALAR.forEach(v => vardiyaSaat[v] = {saat:0, bobin:0, vardiyaSayisi:0});
   const ustaOzet = {};
   kayitlar.forEach(u => {
@@ -1581,6 +1582,7 @@ function uretimAyOzeti(ayKey) {
     toplamHammaddeKg += u.hammaddeKg||0;
     (u.urunler||[]).forEach(x => toplamBobin += x.adet);
     makineSaat[u.makine] = (makineSaat[u.makine]||0) + (u.saat||0);
+    makineKg[u.makine] = (makineKg[u.makine]||0) + (u.uretilenKg||0);
     if (!vardiyaSaat[u.vardiya]) vardiyaSaat[u.vardiya] = {saat:0, bobin:0, vardiyaSayisi:0};
     vardiyaSaat[u.vardiya].saat += u.saat||0;
     vardiyaSaat[u.vardiya].vardiyaSayisi += 1;
@@ -1590,8 +1592,11 @@ function uretimAyOzeti(ayKey) {
     ustaOzet[u.usta].saat += u.saat||0;
     (u.urunler||[]).forEach(x => ustaOzet[u.usta].bobin += x.adet);
   });
+  // Saatlik verim (kg/saat) — makine bazında ayrı ayrı. Saat 0 ise hesaplanamaz (null).
+  const makineSaatlikVerim = {};
+  MAKINELER.forEach(m => { makineSaatlikVerim[m] = makineSaat[m] > 0 ? (makineKg[m] / makineSaat[m]) : null; });
   const ortVerimlilik = (toplamUretilenKg > 0 && toplamHammaddeKg > 0) ? (toplamUretilenKg / toplamHammaddeKg * 100) : null;
-  return { kayitlar, toplamBobin, toplamSaat, toplamUretilenKg, toplamHammaddeKg, ortVerimlilik, makineSaat, vardiyaSaat, ustaOzet };
+  return { kayitlar, toplamBobin, toplamSaat, toplamUretilenKg, toplamHammaddeKg, ortVerimlilik, makineSaat, makineKg, makineSaatlikVerim, vardiyaSaat, ustaOzet };
 }
 
 // 2. Kalite bobinlerin satışında faturaya yansıyan ama hammadde maliyeti ödenmeyen masura (karton/plastik göbek)
@@ -1896,6 +1901,19 @@ function rUretim() {
     + '<div class="kpi"><div class="lbl">Ort. Verimlilik</div><div class="v" style="color:'+(oz.ortVerimlilik==null?"var(--mut)":(oz.ortVerimlilik>=90?"var(--green)":"var(--amber)"))+'">'+(oz.ortVerimlilik!=null?"%"+oz.ortVerimlilik.toFixed(1):"—")+'</div><span class="mini">üretilen kg / kullanılan hammadde kg</span></div>'
     + '<div class="kpi"><div class="lbl">Bu Ay Satılan Masura</div><div class="v" style="color:var(--amber)">'+fmtKg(masAn.toplamMasuraKg)+' kg</div><span class="mini">2. Kalite satışlarından — hammaddesi ödenmemiş, faturaya yansıyan ağırlık</span></div>'
     + '</div>';
+
+  // ---- Makine Saatlik Verim — iki makine ayrı ayrı, kg/saat olarak karşılaştırmalı ----
+  html += '<div class="card"><div class="mtitle">⚙️ Makine Saatlik Verim <span class="pill">bu ay, kg/saat</span></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+    + MAKINELER.map(m => {
+        const verim = oz.makineSaatlikVerim[m];
+        return '<div style="background:#1B1D28;border:1px solid var(--line);border-radius:10px;padding:10px">'
+          + '<div class="mini" style="font-weight:800;margin-bottom:4px">'+m.replace(" Makinası","")+'</div>'
+          + '<div style="font-size:18px;font-weight:800;color:'+(verim!=null?"var(--blue)":"var(--mut)")+'">'+(verim!=null?fmtKg(verim)+' kg/sa':"—")+'</div>'
+          + '<div class="mini" style="margin-top:3px">'+fmtKg(oz.makineKg[m]||0)+' kg ÷ '+fmtKg(oz.makineSaat[m]||0)+' sa</div>'
+          + '</div>';
+      }).join("")
+    + '</div></div>';
 
   // ---- Masura raporuna dahil OLMAYAN satışlar — açıkça göster, tek tıkla düzeltilebilsin ----
   if (masAn.eksikSatislar && masAn.eksikSatislar.length) {
@@ -2988,10 +3006,10 @@ function aylikRaporIndir(secilenAyKey) {
   s1.push(xlsxSatir(r, [xT("Toplam Hammadde Tüketimi (kg)",XS.etiket), xM(oz.toplamHammaddeKg, XS.kg)])); r++;
   s1.push(xlsxSatir(r, [xT("Ortalama Verimlilik",XS.etiket), xM(oz.ortVerimlilik||0, XS.yuzde)])); r++;
   r++;
-  bb = xlsxBaslikSatiri(r, "MAKİNE ÇALIŞMA SAATLERİ", 2, XS.baslikNavy); s1.push(bb.xml); m1.push(bb.merge); r++;
-  s1.push(xlsxSatir(r, [xT("Makine",XS.tabloBaslik), xT("Toplam Saat",XS.tabloBaslik)])); r++;
-  MAKINELER.forEach(mk => { s1.push(xlsxSatir(r, [xT(mk,XS.metinBorder), xM(oz.makineSaat[mk]||0, XS.saat)])); r++; });
-  s1.push(xlsxSatir(r, [xT("TOPLAM",XS.toplamEtiket), xM(oz.toplamSaat, XS.toplamSaat)])); r++;
+  bb = xlsxBaslikSatiri(r, "MAKİNE ÇALIŞMA SAATLERİ VE SAATLİK VERİM", 4, XS.baslikNavy); s1.push(bb.xml); m1.push(bb.merge); r++;
+  s1.push(xlsxSatir(r, [xT("Makine",XS.tabloBaslik), xT("Toplam Saat",XS.tabloBaslik), xT("Üretilen Kg",XS.tabloBaslik), xT("Saatlik Verim (kg/sa)",XS.tabloBaslik)])); r++;
+  MAKINELER.forEach(mk => { s1.push(xlsxSatir(r, [xT(mk,XS.metinBorder), xM(oz.makineSaat[mk]||0, XS.saat), xM(oz.makineKg[mk]||0, XS.kg), oz.makineSaatlikVerim[mk]!=null ? xM(oz.makineSaatlikVerim[mk], XS.kg) : xT("—",XS.ortaBorder)])); r++; });
+  s1.push(xlsxSatir(r, [xT("TOPLAM",XS.toplamEtiket), xM(oz.toplamSaat, XS.toplamSaat), xM(oz.toplamUretilenKg, XS.toplamKg), oz.toplamSaat>0 ? xM(oz.toplamUretilenKg/oz.toplamSaat, XS.toplamKg) : xT("—",XS.toplamEtiket)])); r++;
   r++;
   bb = xlsxBaslikSatiri(r, "VARDİYA KARŞILAŞTIRMASI", 4, XS.baslikNavy); s1.push(bb.xml); m1.push(bb.merge); r++;
   s1.push(xlsxSatir(r, [xT("Vardiya",XS.tabloBaslik), xT("Vardiya Sayısı",XS.tabloBaslik), xT("Toplam Saat",XS.tabloBaslik), xT("Toplam Bobin",XS.tabloBaslik)])); r++;
