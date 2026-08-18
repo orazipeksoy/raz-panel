@@ -1342,11 +1342,33 @@ function tartimYazdir() {
     + '<div class="toplam"><span>Toplam Bobin: <b>' + oz.adet + '</b></span><span>Toplam Kg: <b>' + fmtKg(oz.brutT) + '</b></span></div>'
     + '</div></div>'
     + '</body></html>';
-  const w = window.open("", "_blank");
-  if (!w) { toast("Tarayıcı yeni pencereyi engelledi — izin verin"); return; }
-  w.document.write(sayfa);
-  w.document.close();
+  const blob = new Blob([sayfa], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, "_blank");
+  if (!w) {
+    // Popup engellendi — kullanıcının KENDİ dokunacağı gerçek bir bağlantı göster.
+    // Gerçek bir tıklama her zaman çalışır, popup engelleyiciler script ile açılan pencereleri engeller.
+    tartimYazdirLinkGoster(url);
+    return;
+  }
   toast("Fiş yeni sekmede açıldı — Yazdır butonuna dokun");
+}
+
+// window.open engellendiğinde (bazı mobil tarayıcılarda script ile açılan pencereler engellenebiliyor)
+// kullanıcının kendi dokunacağı gerçek bir bağlantı gösterir — bu asla engellenmez.
+function tartimYazdirLinkGoster(url) {
+  const overlay = document.createElement("div");
+  overlay.id = "tartim-link-modal";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.8);z-index:600;display:flex;align-items:center;justify-content:center;padding:20px";
+  overlay.innerHTML =
+    '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:22px;width:100%;max-width:380px;text-align:center">'
+    + '<div style="font-size:32px;margin-bottom:10px">📄</div>'
+    + '<div class="mtitle" style="justify-content:center">Fiş Hazır</div>'
+    + '<div class="mini" style="margin:8px 0 18px">Tarayıcı otomatik açmayı engelledi. Aşağıdaki butona dokunarak fişi aç, oradan yazdırabilirsin.</div>'
+    + '<a href="'+url+'" target="_blank" rel="noopener" style="display:block;padding:16px;background:#4A3670;color:#fff;border-radius:10px;font-weight:800;text-decoration:none;font-size:16px" onclick="document.getElementById(\'tartim-link-modal\').remove()">🖨 Tartım Fişini Aç</a>'
+    + '<button class="chip" style="margin-top:12px" onclick="document.getElementById(\'tartim-link-modal\').remove()">Kapat</button>'
+    + '</div>';
+  document.body.appendChild(overlay);
 }
 
 function tartimSatisaAktar() {
