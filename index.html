@@ -1213,49 +1213,72 @@ function tartimYukle() {
   if (!tartim) {
     tartim = {
       firma: "", tarih: yerelTarihStr(),
-      urun: "2. Kalite Bal Köpüğü 120cm",
-      kapasite: "120 cm", fiyatKg: "55", stokIdx: "",
-      satirlar: [], aktifAlan: "brut"
+      gruplar: [ { stokIdx: "", satirlar: [] } ]
     };
   }
-  if (!tartim.satirlar) tartim.satirlar = [];
-  if (tartim.stokIdx === undefined) tartim.stokIdx = ""; // eski kayıtlarla uyumluluk
+  // Eski format (tek ürün, tartim.satirlar doğrudan) kullanılıyorsa çoklu-grup formatına taşı.
+  if (!tartim.gruplar) {
+    tartim.gruplar = [ { stokIdx: tartim.stokIdx || "", satirlar: tartim.satirlar || [] } ];
+    delete tartim.satirlar; delete tartim.stokIdx; delete tartim.urun;
+  }
+  if (!tartim.gruplar.length) tartim.gruplar = [ { stokIdx: "", satirlar: [] } ];
+  tartim.gruplar.forEach(g => { if (!g.satirlar) g.satirlar = []; if (g.stokIdx === undefined) g.stokIdx = ""; });
 }
 
 function tartimKaydet() {
   try { localStorage.setItem("raz-tartim-v1", JSON.stringify(tartim)); } catch(e) {}
 }
 
+// Tek bir grubun (ürünün) kendi toplamı — kart üzerinde ayrı ayrı göstermek için.
+function tartimGrupOzetHesapla(g) {
+  let brutT = 0, adet = 0;
+  g.satirlar.forEach(s => { brutT += s.brut; adet += 1; });
+  return {brutT, adet};
+}
+// Tüm grupların (ürünlerin) toplamı — genel KPI için.
 function tartimOzetHesapla() {
   let brutT = 0, adet = 0;
-  tartim.satirlar.forEach(s => {
-    brutT += s.brut;
-    adet += 1;
-  });
+  tartim.gruplar.forEach(g => { const o = tartimGrupOzetHesapla(g); brutT += o.brutT; adet += o.adet; });
   return {brutT, adet};
 }
 
-function tartimGir(deger) {
+function tartimGrupEkle() {
+  tartim.gruplar.push({ stokIdx: "", satirlar: [] });
+  tartimKaydet();
+  render();
+}
+function tartimGrupSil(gi) {
+  if (tartim.gruplar.length <= 1) { tartim.gruplar[0] = {stokIdx:"", satirlar:[]}; tartimKaydet(); render(); return; }
+  tartim.gruplar.splice(gi, 1);
+  tartimKaydet();
+  render();
+}
+function tartimGrupStokSec(gi, stokIdx) {
+  tartim.gruplar[gi].stokIdx = stokIdx;
+  tartimKaydet();
+}
+
+function tartimGir(gi, deger) {
   const v = parseTL(deger);
   if (isNaN(v) || v <= 0) { toast("Geçerli kg girin"); return; }
-  tartim.satirlar.push({brut: v});
+  tartim.gruplar[gi].satirlar.push({brut: v});
   tartimKaydet();
   render();
   setTimeout(() => {
-    const inp = document.getElementById("t-brut");
+    const inp = document.getElementById("t-brut-"+gi);
     if (inp) { inp.value = ""; inp.focus(); }
   }, 30);
 }
 
-function tartimSatirSil(i) {
-  tartim.satirlar.splice(i,1);
+function tartimSatirSil(gi, i) {
+  tartim.gruplar[gi].satirlar.splice(i,1);
   tartimKaydet();
   render();
 }
 
 function tartimTemizle() {
-  if (!confirm("Tüm tartım satırları silinsin mi?")) return;
-  tartim.satirlar = [];
+  if (!confirm("Tüm tartım satırları (tüm ürünler) silinsin mi?")) return;
+  tartim.gruplar = [ { stokIdx: "", satirlar: [] } ];
   tartimKaydet();
   render();
 }
@@ -1287,19 +1310,31 @@ function tartimFirmaSec(n) {
 function tartimYazdir() {
   const oz = tartimOzetHesapla();
   if (!oz.adet) { toast("Önce tartım girin"); return; }
-  const HANE = 110; // sabit A4 tablo: 5 sütun × 22 satır
-  const SATIR = 22, SUTUN = 5;
-  // Sütun-öncelikli doldurma: 1-22 ilk sütun, 23-44 ikinci sütun...
-  let hucreler = "";
-  for (let r = 0; r < SATIR; r++) {
-    hucreler += "<tr>";
-    for (let c = 0; c < SUTUN; c++) {
-      const no = c * SATIR + r + 1;
-      const s = tartim.satirlar[no - 1];
-      hucreler += '<td class="no">' + no + '</td><td class="kg">' + (s ? String(s.brut).replace(".", ",") : "") + '</td>';
+  const SUTUN = 5;
+  // Her ürün grubu kendi başlıklı bloğunda, kendi gerçek satır sayısına göre boyutlanan bir tablo alır —
+  // farklı ürünler asla aynı tabloda karışmaz, hangi bobinin hangi ürüne ait olduğu her zaman net.
+  let gruplarHtml = "";
+  tartim.gruplar.forEach((g, gi) => {
+    if (!g.satirlar.length) return;
+    const goz = tartimGrupOzetHesapla(g);
+    const m = data.mamul[parseInt(g.stokIdx)];
+    const urunAdi = m ? (m.kalite + " " + m.tip + " " + m.genislik + (m.gramaj !== "-" ? " " + m.gramaj : "")) : ("Ürün " + (gi + 1));
+    const satirSayisi = Math.ceil(g.satirlar.length / SUTUN);
+    let hucreler = "";
+    for (let r = 0; r < satirSayisi; r++) {
+      hucreler += "<tr>";
+      for (let c = 0; c < SUTUN; c++) {
+        const no = c * satirSayisi + r + 1;
+        const s = g.satirlar[no - 1];
+        hucreler += '<td class="no">' + no + '</td><td class="kg">' + (s ? String(s.brut).replace(".", ",") : "") + '</td>';
+      }
+      hucreler += "</tr>";
     }
-    hucreler += "</tr>";
-  }
+    gruplarHtml += '<div class="urun-blok">'
+      + '<div class="urun-baslik">' + esc(urunAdi) + '<span>' + goz.adet + ' bobin · ' + fmtKg(goz.brutT) + ' kg</span></div>'
+      + '<table>' + hucreler + '</table>'
+      + '</div>';
+  });
   const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Tartım Fişi</title><style>'
     // Not: Safari (özellikle iOS) @page margin ayarını her zaman dikkate almıyor ve URL/tarih
     // üst-altbilgisini kendi yazdırma motorundan (sayfa koduyla ilgisi yok) ekliyor — bu yüzden
@@ -1317,8 +1352,10 @@ function tartimYazdir() {
     + '.baslik { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #000; padding-bottom: 2mm; margin-bottom: 2mm; flex-wrap: wrap; }'
     + '.baslik h1 { font-size: 13pt; letter-spacing: .5px; line-height: 1.1; }'
     + '.baslik .alt { font-size: 8pt; color: #444; }'
-    + '.bilgi { display: flex; gap: 7mm; font-size: 9pt; margin-bottom: 2mm; flex-wrap: wrap; line-height: 1.1; }'
+    + '.bilgi { display: flex; gap: 7mm; font-size: 9pt; margin-bottom: 3mm; flex-wrap: wrap; line-height: 1.1; }'
     + '.bilgi b { border-bottom: 1px solid #000; padding: 0 2mm 1px; min-width: 26mm; display: inline-block; }'
+    + '.urun-blok { page-break-inside: avoid; margin-bottom: 3mm; }'
+    + '.urun-baslik { display: flex; justify-content: space-between; background: #E8E8E8; font-weight: bold; font-size: 9pt; padding: 1.5mm 2mm; border-radius: 1.5mm; margin-bottom: 1.5mm; }'
     + 'table { width: 100%; border-collapse: collapse; table-layout: fixed; }'
     + 'tr { page-break-inside: avoid; }'
     + 'td { border: 1px solid #000; height: 7mm; font-size: 8.5pt; text-align: center; vertical-align: middle; }'
@@ -1336,9 +1373,8 @@ function tartimYazdir() {
     + '<div class="bilgi">'
     + '<span>Firma: <b>' + esc(tartim.firma || "") + '</b></span>'
     + '<span>Tarih: <b>' + fmtTarih(tartim.tarih) + '</b></span>'
-    + '<span>Ürün: <b>' + esc(tartim.urun || "") + '</b></span>'
     + '</div>'
-    + '<table>' + hucreler + '</table>'
+    + gruplarHtml
     + '<div class="toplam"><span>Toplam Bobin: <b>' + oz.adet + '</b></span><span>Toplam Kg: <b>' + fmtKg(oz.brutT) + '</b></span></div>'
     + '</div></div>'
     + '</body></html>';
@@ -1374,31 +1410,44 @@ function tartimYazdirLinkGoster(url) {
 function tartimSatisaAktar() {
   const oz = tartimOzetHesapla();
   if (!oz.adet) { toast("Önce tartım girin"); return; }
-  if (tartim.stokIdx === "" || tartim.stokIdx == null) { toast("Önce Stok Ürünü seçin — stok düşümü ve masura raporu için zorunlu"); return; }
-  const m = data.mamul[parseInt(tartim.stokIdx)];
-  if (!m) { toast("Seçilen stok ürünü bulunamadı, tekrar seçin"); return; }
+  // Her ürün grubu için ayrı ayrı doğrulama — hangi grupta eksik varsa açıkça söyle.
+  const gecerliGruplar = tartim.gruplar.filter(g => g.satirlar.length > 0);
+  if (!gecerliGruplar.length) { toast("Önce tartım girin"); return; }
+  const eksikStok = gecerliGruplar.some(g => g.stokIdx === "" || g.stokIdx == null);
+  if (eksikStok) { toast("Bir veya daha fazla ürün grubunda Stok Ürünü seçilmemiş — stok düşümü ve masura raporu için her grup için zorunlu"); return; }
+
   resetForm();
   form.tur = "GELİR";
   form.kategori = "Satış-Fatura";
   form.aciklama = tartim.firma || "";
   form.tutar = "";
-  form.satisKg = oz.brutT.toFixed(2).replace(".",",");
-  form.not = (tartim.urun ? tartim.urun+" — " : "") + oz.adet + " bobin (tartımdan)";
+  form.satisKg = oz.brutT.toFixed(2).replace(".", ",");
   form.tarih = tartim.tarih || form.tarih;
-  form.urunTipi = m.kalite;
-  // Stok ürünü seçildiği için kalem olarak ekleniyor — böylece kaydet() hem stoktan doğru adedi düşer
-  // hem de masura/ürün raporları bu satışı görebilir (serbest metinden değil, gerçek ürün seçiminden).
-  const onerilenFiyat = fiyatBul(m.kalite);
-  form.kalemler = [{
-    stokIdx: String(tartim.stokIdx),
-    adet: String(oz.adet),
-    kg: oz.brutT.toFixed(2).replace(".",","),
-    fiyatTuru: "kg",
-    fiyat: onerilenFiyat > 0 ? String(onerilenFiyat).replace(".",",") : ""
-  }];
+
+  // Her grup KENDİ ürününe göre ayrı bir kalem olur — masura hesabı (kalem bazlı) hiçbir ürünü
+  // birbirine karıştırmaz, her kalemin kendi genişliği/kalitesi kendi kg'sine uygulanır.
+  const notParcalari = [];
+  const kalitelerSeti = new Set();
+  form.kalemler = gecerliGruplar.map(g => {
+    const m = data.mamul[parseInt(g.stokIdx)];
+    const goz = tartimGrupOzetHesapla(g);
+    const onerilenFiyat = fiyatBul(m.kalite);
+    kalitelerSeti.add(m.kalite);
+    notParcalari.push(m.kalite + " " + m.tip + " " + m.genislik + " — " + goz.adet + " bobin");
+    return {
+      stokIdx: String(g.stokIdx),
+      adet: String(goz.adet),
+      kg: goz.brutT.toFixed(2).replace(".", ","),
+      fiyatTuru: "kg",
+      fiyat: onerilenFiyat > 0 ? String(onerilenFiyat).replace(".", ",") : ""
+    };
+  });
+  form.not = notParcalari.join(" · ") + " (tartımdan)";
+  form.urunTipi = kalitelerSeti.size === 1 ? Array.from(kalitelerSeti)[0] : "Karışık";
+
   tab = "yeni";
   render();
-  toast("Tartım satış formuna aktarıldı — stok ürünü, adet ve kg otomatik dolduruldu");
+  toast((gecerliGruplar.length > 1 ? gecerliGruplar.length + " farklı ürün" : "Ürün") + " satış formuna aktarıldı — stok, adet ve kg otomatik dolduruldu");
 }
 
 function rTartim() {
@@ -1406,29 +1455,40 @@ function rTartim() {
   const oz = tartimOzetHesapla();
   let html = '<div class="card"><div class="mtitle">Tartım Aracı <span class="pill">bobin kantarı</span></div><div class="formgrid">';
   html += '<div style="position:relative"><div class="mini" style="margin-bottom:5px">Firma</div><input type="text" id="t-firma" placeholder="ör. Gözükırmızı" value="'+esc(tartim.firma)+'" oninput="tartimFirmaDegisti(this.value)" autocomplete="off"><div id="t-firma-oneri" style="position:absolute;left:0;right:0;top:100%;z-index:20"></div></div>';
-  html += '<div class="row2">';
   html += '<div><div class="mini" style="margin-bottom:5px">Tarih</div><input type="date" value="'+tartim.tarih+'" onchange="tartimSet(\'tarih\',this.value)"></div>';
-  html += '<div><div class="mini" style="margin-bottom:5px">Ürün (not için serbest yazı)</div><input type="text" value="'+esc(tartim.urun)+'" oninput="tartimSet(\'urun\',this.value)" placeholder="ör. 2. Kalite Bal Köpüğü 120cm"></div>';
-  html += '</div>';
-  html += '<div><div class="mini" style="margin-bottom:5px">Stok Ürünü <span style="color:var(--red)">*</span> — stok düşümü ve masura raporu için zorunlu</div><select onchange="tartimSet(\'stokIdx\',this.value)"><option value="">— ürün seç —</option>'
-    + data.mamul.map((m,mi) => '<option value="'+mi+'"'+(String(tartim.stokIdx)===String(mi)?" selected":"")+'>'+esc(m.kalite+" · "+m.tip+" · "+m.genislik+(m.gramaj!=="-"?" · "+m.gramaj:""))+' (stok: '+m.adet+')</option>').join("")
-    + '</select></div>';
-  html += '<div><div class="mini" style="margin-bottom:5px">Kg gir → Enter</div><div style="display:flex;gap:8px"><input type="text" id="t-brut" inputmode="decimal" placeholder="ör. 12,4" onkeydown="if(event.key===\'Enter\')tartimGir(this.value)"><button class="chip" style="flex-shrink:0" onclick="tartimGir(document.getElementById(\'t-brut\').value)">Ekle</button></div></div>';
   html += '</div></div>';
 
   html += '<div class="kpi-grid" style="grid-template-columns:1fr 1fr">';
-  html += '<div class="kpi"><div class="lbl">Bobin</div><div class="v">'+oz.adet+'</div></div>';
+  html += '<div class="kpi"><div class="lbl">Toplam Bobin</div><div class="v">'+oz.adet+'</div></div>';
   html += '<div class="kpi"><div class="lbl">Toplam Kg</div><div class="v yesil">'+fmtKg(oz.brutT)+'</div></div>';
   html += '</div>';
 
-  if (tartim.satirlar.length) {
-    html += '<div class="card"><div class="mtitle">Tartım Satırları</div><div class="scroll"><table><tr><th>#</th><th class="num">Kg</th><th></th></tr>';
-    tartim.satirlar.forEach((s,i) => {
-      html += '<tr><td>'+(i+1)+'</td><td class="num">'+fmtKg(s.brut)+'</td><td style="text-align:right"><button class="sil-x" onclick="tartimSatirSil('+i+')">×</button></td></tr>';
-    });
-    html += '</table></div>';
-    html += '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="tartimSatisaAktar()">→ Satış Kaydına Aktar</button><button class="chip" onclick="tartimYazdir()">🖨 A4 Yazdır / PDF</button><button class="chip" style="color:var(--red);border-color:var(--red)" onclick="tartimTemizle()">Temizle</button></div>';
+  // Her ürün grubu kendi kartında — farklı kalite/genişlikteki bobinler asla birbirine karışmıyor,
+  // her grup kendi stok ürününü taşıyor, masura hesabı buna göre grup grup ayrı hesaplanıyor.
+  tartim.gruplar.forEach((g, gi) => {
+    const goz = tartimGrupOzetHesapla(g);
+    html += '<div class="card"><div class="mtitle">Ürün '+(gi+1)+(tartim.gruplar.length>1?' <span class="pill">'+goz.adet+' bobin · '+fmtKg(goz.brutT)+' kg</span>':'')+'<span style="flex:1"></span>'+(tartim.gruplar.length>1?'<button class="sil-x" onclick="tartimGrupSil('+gi+')">×</button>':'')+'</div>';
+    html += '<div class="formgrid">';
+    html += '<div><div class="mini" style="margin-bottom:5px">Stok Ürünü <span style="color:var(--red)">*</span> — stok düşümü ve masura raporu için zorunlu</div><select onchange="tartimGrupStokSec('+gi+',this.value)"><option value="">— ürün seç —</option>'
+      + data.mamul.map((m,mi) => '<option value="'+mi+'"'+(String(g.stokIdx)===String(mi)?" selected":"")+'>'+esc(m.kalite+" · "+m.tip+" · "+m.genislik+(m.gramaj!=="-"?" · "+m.gramaj:""))+' (stok: '+m.adet+')</option>').join("")
+      + '</select></div>';
+    html += '<div><div class="mini" style="margin-bottom:5px">Kg gir → Enter</div><div style="display:flex;gap:8px"><input type="text" id="t-brut-'+gi+'" inputmode="decimal" placeholder="ör. 12,4" onkeydown="if(event.key===\'Enter\')tartimGir('+gi+',this.value)"><button class="chip" style="flex-shrink:0" onclick="tartimGir('+gi+',document.getElementById(\'t-brut-'+gi+'\').value)">Ekle</button></div></div>';
     html += '</div>';
+    if (g.satirlar.length) {
+      html += '<div class="scroll" style="margin-top:10px"><table><tr><th>#</th><th class="num">Kg</th><th></th></tr>';
+      g.satirlar.forEach((s,i) => {
+        html += '<tr><td>'+(i+1)+'</td><td class="num">'+fmtKg(s.brut)+'</td><td style="text-align:right"><button class="sil-x" onclick="tartimSatirSil('+gi+','+i+')">×</button></td></tr>';
+      });
+      html += '</table></div>';
+    }
+    html += '</div>';
+  });
+
+  html += '<div class="card"><button class="chip" onclick="tartimGrupEkle()">+ Farklı Ürün Ekle</button>'
+    + '<div class="mini" style="margin-top:6px">Aynı tartım partisinde birden fazla ürün/genişlik varsa buradan ekle — her biri satışa ayrı kalem olarak aktarılır, masura hesabı hiçbirini karıştırmaz.</div></div>';
+
+  if (oz.adet > 0) {
+    html += '<div class="card"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="tartimSatisaAktar()">→ Satış Kaydına Aktar</button><button class="chip" onclick="tartimYazdir()">🖨 A4 Yazdır / PDF</button><button class="chip" style="color:var(--red);border-color:var(--red)" onclick="tartimTemizle()">Temizle</button></div></div>';
   }
   return html;
 }
