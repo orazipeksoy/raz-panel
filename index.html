@@ -2128,7 +2128,7 @@ function rHareketler(H) {
   const q = arama.trim().toLocaleLowerCase("tr");
   if (q) liste = liste.filter(h => (h.aciklama||"").toLocaleLowerCase("tr").indexOf(q) >= 0 || (h.not||"").toLocaleLowerCase("tr").indexOf(q) >= 0 || (h.kategori||"").toLocaleLowerCase("tr").indexOf(q) >= 0);
 
-  let html = '<div class="card"><div class="mtitle">Hareketler <span class="pill">'+liste.length+' kayıt</span></div>';
+  let html = '<div class="card"><div class="mtitle">Hareketler <span class="pill">'+liste.length+' kayıt</span><span style="flex:1"></span><button class="chip" style="color:var(--blue);border-color:var(--blue);white-space:nowrap" onclick="gunlukRaporSec()">📆 Günlük Rapor</button></div>';
   html += '<input type="text" id="h-arama" placeholder="🔍 Ara: firma, kategori, not…" value="'+esc(arama)+'" oninput="arama=this.value;renderKorumali()" style="margin-bottom:10px">';
   html += '<div class="chips">'+filtreler.map(f => '<button class="chip'+(hFiltre===f[0]?" on":"")+'" onclick="hFiltre=\''+f[0]+'\';render()">'+f[1]+'</button>').join("")+'</div>';
 
@@ -3027,6 +3027,93 @@ function aylikRaporSec() {
 function aylikRaporModalKapat() {
   const el = document.getElementById("aylik-rapor-modal");
   if (el) el.remove();
+}
+
+// ============ GÜNLÜK RAPOR ============
+function gunlukRaporSec() {
+  const bugun = yerelTarihStr();
+  const dun = yerelTarihStr(new Date(Date.now() - 86400000));
+  const overlay = document.createElement("div");
+  overlay.id = "gunluk-rapor-modal";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px";
+  overlay.innerHTML =
+    '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:20px;width:100%;max-width:380px">'
+    + '<div class="mtitle">Hangi günün raporu?</div>'
+    + '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">'
+    + '<button class="btn" style="background:var(--blue)" onclick="gunlukRaporModalKapat();gunlukRaporIndir(\''+bugun+'\')">📆 Bugün ('+fmtTarih(bugun)+')</button>'
+    + '<button class="btn" style="background:var(--navy2)" onclick="gunlukRaporModalKapat();gunlukRaporIndir(\''+dun+'\')">📆 Dün ('+fmtTarih(dun)+')</button>'
+    + '</div>'
+    + '<div class="mini" style="margin-bottom:5px">Ya da başka bir tarih seç</div>'
+    + '<input type="date" id="gunluk-tarih-sec" value="'+bugun+'">'
+    + '<button class="btn" style="background:var(--green);margin-top:10px" onclick="gunlukRaporOzelTarih()">Seçili Günün Raporu</button>'
+    + '<button class="btn" style="background:#2A2C3A;margin-top:8px" onclick="gunlukRaporModalKapat()">İptal</button>'
+    + '</div>';
+  document.body.appendChild(overlay);
+}
+function gunlukRaporModalKapat() {
+  const el = document.getElementById("gunluk-rapor-modal");
+  if (el) el.remove();
+}
+function gunlukRaporOzelTarih() {
+  const v = gv("gunluk-tarih-sec");
+  if (!v) { toast("Tarih seçin"); return; }
+  gunlukRaporModalKapat();
+  gunlukRaporIndir(v);
+}
+
+function gunlukRaporIndir(tarihIso) {
+  const gunKayitlari = data.hareketler.filter(h => h.tarih === tarihIso);
+  const gelirler = gunKayitlari.filter(h => h.tur === "GELİR");
+  const giderler = gunKayitlari.filter(h => h.tur === "GİDER");
+  const toplamGelir = gelirler.reduce((s,h) => s + (h.gelir||0), 0);
+  const toplamGider = giderler.reduce((s,h) => s + (h.gider||0), 0);
+  const net = toplamGelir - toplamGider;
+
+  const s1 = []; const m1 = [];
+  let r = 1;
+  let bb = xlsxBaslikSatiri(r, "RAZ PLASTİK — GÜNLÜK RAPOR — "+fmtTarih(tarihIso), 6, XS.baslikNavy, 30); s1.push(bb.xml); m1.push(bb.merge); r++;
+  bb = xlsxBaslikSatiri(r, "Rapor tarihi: "+fmtTarih(yerelTarihStr()), 6, XS.altbilgi, 20); s1.push(bb.xml); m1.push(bb.merge); r++;
+  r++;
+  bb = xlsxBaslikSatiri(r, "GÜN ÖZETİ", 6, XS.baslikYesil); s1.push(bb.xml); m1.push(bb.merge); r++;
+  s1.push(xlsxSatir(r, [xT("Toplam Gelir",XS.etiket), xM(toplamGelir,XS.para)])); r++;
+  s1.push(xlsxSatir(r, [xT("Toplam Gider",XS.etiket), xM(toplamGider,XS.para)])); r++;
+  s1.push(xlsxSatir(r, [xT("Net",XS.etiket), xM(net, net>=0?XS.paraYesil:XS.paraKirmizi)])); r++;
+  r++;
+
+  bb = xlsxBaslikSatiri(r, "GELİRLER ("+gelirler.length+" kayıt)", 6, XS.baslikYesil); s1.push(bb.xml); m1.push(bb.merge); r++;
+  s1.push(xlsxSatir(r, [xT("Açıklama",XS.tabloBaslik), xT("Kategori",XS.tabloBaslik), xT("Tutar",XS.tabloBaslik), xT("Kg",XS.tabloBaslik), xT("Tahsil",XS.tabloBaslik), xT("Not",XS.tabloBaslik)])); r++;
+  if (gelirler.length) {
+    gelirler.forEach(h => {
+      const tahsilVar = (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış" || h.vade);
+      const durum = tahsilatDurumu(h);
+      const tahsilMetin = tahsilVar ? (durum.tamamlandiMi ? "Evet" : (durum.toplamTahsil > 0.01 ? "Kısmi" : "Hayır")) : "";
+      s1.push(xlsxSatir(r, [xT(h.aciklama,XS.metinBorder), xT(h.kategori,XS.metinBorder), xM(h.gelir,XS.paraYesil), xM(h.kg||0,XS.kg), xT(tahsilMetin,XS.ortaBorder), xT(h.not||"",XS.metinBorder)])); r++;
+    });
+  } else {
+    s1.push(xlsxSatir(r, [xT("Bu gün gelir kaydı yok",XS.metinBorder)])); r++;
+  }
+  r++;
+
+  bb = xlsxBaslikSatiri(r, "GİDERLER ("+giderler.length+" kayıt)", 6, XS.baslikNavy); s1.push(bb.xml); m1.push(bb.merge); r++;
+  s1.push(xlsxSatir(r, [xT("Açıklama",XS.tabloBaslik), xT("Kategori",XS.tabloBaslik), xT("Tutar",XS.tabloBaslik), xT("",XS.tabloBaslik), xT("",XS.tabloBaslik), xT("Not",XS.tabloBaslik)])); r++;
+  if (giderler.length) {
+    giderler.forEach(h => {
+      s1.push(xlsxSatir(r, [xT(h.aciklama,XS.metinBorder), xT(h.kategori,XS.metinBorder), xM(h.gider,XS.paraKirmizi), xT("",XS.ortaBorder), xT("",XS.ortaBorder), xT(h.not||"",XS.metinBorder)])); r++;
+    });
+  } else {
+    s1.push(xlsxSatir(r, [xT("Bu gün gider kaydı yok",XS.metinBorder)])); r++;
+  }
+
+  const s1Xml = xlsxSayfaXml({ satirlar: s1, kolonGenislikleri: [28,18,14,11,10,26], donmusSatir: 0, birlesmeler: m1, sonSutun: 6, sonSatir: r-1 });
+  const sayfalar = [ { ad: "Günlük Rapor", xml: s1Xml } ];
+  const xlsxBytes = xlsxOlustur(sayfalar);
+  const blob = new Blob([xlsxBytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "RAZ_Plastik_Gunluk_Rapor_" + tarihIso + ".xlsx";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast("⬇ Günlük rapor indirildi ("+gunKayitlari.length+" kayıt)");
 }
 
 function aylikRaporIndir(secilenAyKey) {
