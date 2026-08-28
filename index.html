@@ -1384,7 +1384,7 @@ function tartimYazdir() {
   if (!w) {
     // Popup engellendi — kullanıcının KENDİ dokunacağı gerçek bir bağlantı göster.
     // Gerçek bir tıklama her zaman çalışır, popup engelleyiciler script ile açılan pencereleri engeller.
-    tartimYazdirLinkGoster(url);
+    yazdirLinkGoster(url, "Fiş Hazır", "Tartım Fişini Aç");
     return;
   }
   toast("Fiş yeni sekmede açıldı — Yazdır butonuna dokun");
@@ -1392,17 +1392,17 @@ function tartimYazdir() {
 
 // window.open engellendiğinde (bazı mobil tarayıcılarda script ile açılan pencereler engellenebiliyor)
 // kullanıcının kendi dokunacağı gerçek bir bağlantı gösterir — bu asla engellenmez.
-function tartimYazdirLinkGoster(url) {
+function yazdirLinkGoster(url, baslik, butonMetni) {
   const overlay = document.createElement("div");
-  overlay.id = "tartim-link-modal";
+  overlay.id = "yazdir-link-modal";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.8);z-index:600;display:flex;align-items:center;justify-content:center;padding:20px";
   overlay.innerHTML =
     '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:22px;width:100%;max-width:380px;text-align:center">'
     + '<div style="font-size:32px;margin-bottom:10px">📄</div>'
-    + '<div class="mtitle" style="justify-content:center">Fiş Hazır</div>'
-    + '<div class="mini" style="margin:8px 0 18px">Tarayıcı otomatik açmayı engelledi. Aşağıdaki butona dokunarak fişi aç, oradan yazdırabilirsin.</div>'
-    + '<a href="'+url+'" target="_blank" rel="noopener" style="display:block;padding:16px;background:#4A3670;color:#fff;border-radius:10px;font-weight:800;text-decoration:none;font-size:16px" onclick="document.getElementById(\'tartim-link-modal\').remove()">🖨 Tartım Fişini Aç</a>'
-    + '<button class="chip" style="margin-top:12px" onclick="document.getElementById(\'tartim-link-modal\').remove()">Kapat</button>'
+    + '<div class="mtitle" style="justify-content:center">'+esc(baslik)+'</div>'
+    + '<div class="mini" style="margin:8px 0 18px">Tarayıcı otomatik açmayı engelledi. Aşağıdaki butona dokunarak aç, oradan yazdırabilirsin.</div>'
+    + '<a href="'+url+'" target="_blank" rel="noopener" style="display:block;padding:16px;background:#4A3670;color:#fff;border-radius:10px;font-weight:800;text-decoration:none;font-size:16px" onclick="document.getElementById(\'yazdir-link-modal\').remove()">🖨 '+esc(butonMetni)+'</a>'
+    + '<button class="chip" style="margin-top:12px" onclick="document.getElementById(\'yazdir-link-modal\').remove()">Kapat</button>'
     + '</div>';
   document.body.appendChild(overlay);
 }
@@ -3069,51 +3069,103 @@ function gunlukRaporIndir(tarihIso) {
   const toplamGider = giderler.reduce((s,h) => s + (h.gider||0), 0);
   const net = toplamGelir - toplamGider;
 
-  const s1 = []; const m1 = [];
-  let r = 1;
-  let bb = xlsxBaslikSatiri(r, "RAZ PLASTİK — GÜNLÜK RAPOR — "+fmtTarih(tarihIso), 6, XS.baslikNavy, 30); s1.push(bb.xml); m1.push(bb.merge); r++;
-  bb = xlsxBaslikSatiri(r, "Rapor tarihi: "+fmtTarih(yerelTarihStr()), 6, XS.altbilgi, 20); s1.push(bb.xml); m1.push(bb.merge); r++;
-  r++;
-  bb = xlsxBaslikSatiri(r, "GÜN ÖZETİ", 6, XS.baslikYesil); s1.push(bb.xml); m1.push(bb.merge); r++;
-  s1.push(xlsxSatir(r, [xT("Toplam Gelir",XS.etiket), xM(toplamGelir,XS.para)])); r++;
-  s1.push(xlsxSatir(r, [xT("Toplam Gider",XS.etiket), xM(toplamGider,XS.para)])); r++;
-  s1.push(xlsxSatir(r, [xT("Net",XS.etiket), xM(net, net>=0?XS.paraYesil:XS.paraKirmizi)])); r++;
-  r++;
-
-  bb = xlsxBaslikSatiri(r, "GELİRLER ("+gelirler.length+" kayıt)", 6, XS.baslikYesil); s1.push(bb.xml); m1.push(bb.merge); r++;
-  s1.push(xlsxSatir(r, [xT("Açıklama",XS.tabloBaslik), xT("Kategori",XS.tabloBaslik), xT("Tutar",XS.tabloBaslik), xT("Kg",XS.tabloBaslik), xT("Tahsil",XS.tabloBaslik), xT("Not",XS.tabloBaslik)])); r++;
-  if (gelirler.length) {
-    gelirler.forEach(h => {
-      const tahsilVar = (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış" || h.vade);
-      const durum = tahsilatDurumu(h);
-      const tahsilMetin = tahsilVar ? (durum.tamamlandiMi ? "Evet" : (durum.toplamTahsil > 0.01 ? "Kısmi" : "Hayır")) : "";
-      s1.push(xlsxSatir(r, [xT(h.aciklama,XS.metinBorder), xT(h.kategori,XS.metinBorder), xM(h.gelir,XS.paraYesil), xM(h.kg||0,XS.kg), xT(tahsilMetin,XS.ortaBorder), xT(h.not||"",XS.metinBorder)])); r++;
+  // Bugün GERÇEKTEN eline geçen para — faturanın kesildiği tarihten bağımsız, sadece o gün
+  // yapılmış tahsilat kayıtları. Geçen haftaki fatura bugün ödenmişse burada görünür.
+  const tahsilatlarBugun = [];
+  data.hareketler.forEach(h => {
+    (h.tahsilatlar||[]).forEach(t => {
+      if (t.tarih === tarihIso) tahsilatlarBugun.push({ aciklama: h.aciklama, faturaTarihi: h.tarih, tutar: t.tutar });
     });
-  } else {
-    s1.push(xlsxSatir(r, [xT("Bu gün gelir kaydı yok",XS.metinBorder)])); r++;
-  }
-  r++;
+  });
+  const toplamTahsilBugun = tahsilatlarBugun.reduce((s,t) => s + t.tutar, 0);
+  const tahsilatSatirlari = tahsilatlarBugun.map(t =>
+    '<tr><td class="sol">'+esc(t.aciklama)+'</td><td>Fatura tarihi: '+fmtTarih(t.faturaTarihi)+(t.faturaTarihi===tarihIso?' <span class="altnot">(bugünkü fatura)</span>':'')+'</td><td class="num tutar-y" colspan="3">'+fmt(t.tutar)+'</td></tr>'
+  ).join("");
 
-  bb = xlsxBaslikSatiri(r, "GİDERLER ("+giderler.length+" kayıt)", 6, XS.baslikNavy); s1.push(bb.xml); m1.push(bb.merge); r++;
-  s1.push(xlsxSatir(r, [xT("Açıklama",XS.tabloBaslik), xT("Kategori",XS.tabloBaslik), xT("Tutar",XS.tabloBaslik), xT("",XS.tabloBaslik), xT("",XS.tabloBaslik), xT("Not",XS.tabloBaslik)])); r++;
-  if (giderler.length) {
-    giderler.forEach(h => {
-      s1.push(xlsxSatir(r, [xT(h.aciklama,XS.metinBorder), xT(h.kategori,XS.metinBorder), xM(h.gider,XS.paraKirmizi), xT("",XS.ortaBorder), xT("",XS.ortaBorder), xT(h.not||"",XS.metinBorder)])); r++;
-    });
-  } else {
-    s1.push(xlsxSatir(r, [xT("Bu gün gider kaydı yok",XS.metinBorder)])); r++;
-  }
+  const gelirSatirlari = gelirler.map(h => {
+    const tahsilVar = (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış" || h.vade);
+    const durum = tahsilatDurumu(h);
+    let tahsilMetin;
+    if (!tahsilVar) tahsilMetin = "—";
+    else if (durum.tamamlandiMi) tahsilMetin = "✓ Ödendi";
+    else {
+      const durumEtiket = durum.toplamTahsil > 0.01 ? "Kısmi ödendi" : "Ödenmedi";
+      tahsilMetin = durumEtiket + (h.vade ? '<div class="altnot">vade: ' + fmtTarih(h.vade) + '</div>' : "");
+    }
+    return '<tr><td class="sol">'+esc(h.aciklama)+(h.not?'<div class="altnot">'+esc(h.not)+'</div>':"")+'</td><td>'+esc(h.kategori)+'</td><td class="num">'+(h.kg?fmtKg(h.kg)+' kg':"—")+'</td><td>'+tahsilMetin+'</td><td class="num tutar-y">'+fmt(h.gelir)+'</td></tr>';
+  }).join("");
+  const giderSatirlari = giderler.map(h =>
+    '<tr><td class="sol">'+esc(h.aciklama)+(h.not?'<div class="altnot">'+esc(h.not)+'</div>':"")+'</td><td>'+esc(h.kategori)+'</td><td class="num tutar-k" colspan="2">'+fmt(h.gider)+'</td></tr>'
+  ).join("");
 
-  const s1Xml = xlsxSayfaXml({ satirlar: s1, kolonGenislikleri: [28,18,14,11,10,26], donmusSatir: 0, birlesmeler: m1, sonSutun: 6, sonSatir: r-1 });
-  const sayfalar = [ { ad: "Günlük Rapor", xml: s1Xml } ];
-  const xlsxBytes = xlsxOlustur(sayfalar);
-  const blob = new Blob([xlsxBytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "RAZ_Plastik_Gunluk_Rapor_" + tarihIso + ".xlsx";
-  a.click();
-  URL.revokeObjectURL(a.href);
-  toast("⬇ Günlük rapor indirildi ("+gunKayitlari.length+" kayıt)");
+  const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Günlük Rapor</title><style>'
+    + '@page { size: A4 portrait; margin: 6mm; }'
+    + '* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: rgba(0,0,0,.1); }'
+    + 'html, body { width: 100%; height: auto; }'
+    + 'body { font-family: Arial, sans-serif; color: #000; background: #fff; }'
+    + '.ekran-sarma { width: 100%; max-width: 190mm; margin: 0 auto; padding: 10px; }'
+    + '.yazdir-btn { display: block; width: 100%; margin-bottom: 10px; padding: 16px; font-size: 17px; font-weight: bold; cursor: pointer; background: #4A3670; color: #fff; border: none; border-radius: 10px; -webkit-appearance: none; }'
+    + '.yazdir-not { font-size: 12px; color: #666; text-align: center; margin-bottom: 14px; line-height: 1.5; }'
+    + '.yazdir-not b { color: #333; }'
+    + '.fis-icerik { }'
+    + '.baslik { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #000; padding-bottom: 2mm; margin-bottom: 2mm; flex-wrap: wrap; }'
+    + '.baslik h1 { font-size: 13pt; letter-spacing: .5px; line-height: 1.1; }'
+    + '.baslik .alt { font-size: 8pt; color: #444; }'
+    + '.bilgi { font-size: 9.5pt; margin-bottom: 3mm; }'
+    + '.ozet { display: flex; gap: 4mm; margin-bottom: 4mm; page-break-inside: avoid; }'
+    + '.ozet-kutu { flex: 1; border: 1px solid #000; border-radius: 1.5mm; padding: 2mm 3mm; text-align: center; }'
+    + '.ozet-kutu .lbl { font-size: 7.5pt; color: #555; text-transform: uppercase; letter-spacing: .04em; }'
+    + '.ozet-kutu .val { font-size: 13pt; font-weight: 800; margin-top: .5mm; }'
+    + '.blok-baslik { background: #E8E8E8; font-weight: bold; font-size: 9.5pt; padding: 1.5mm 2mm; border-radius: 1.5mm; margin: 3mm 0 1.5mm; page-break-after: avoid; }'
+    + 'table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-bottom: 2mm; }'
+    + 'tr { page-break-inside: avoid; }'
+    + 'th { text-align: left; font-size: 7.5pt; color: #555; border-bottom: 1px solid #000; padding: 1mm 1.5mm; }'
+    + 'th.num, td.num { text-align: right; }'
+    + 'td { border-bottom: 1px solid #ccc; padding: 1.5mm; font-size: 9pt; vertical-align: top; }'
+    + 'td.sol { width: 34%; }'
+    + '.altnot { font-size: 7pt; color: #666; margin-top: .5mm; }'
+    + '.tutar-y { font-weight: 700; font-variant-numeric: tabular-nums; }'
+    + '.tutar-k { font-weight: 700; font-variant-numeric: tabular-nums; }'
+    + '.bos-not { font-size: 8.5pt; color: #777; padding: 2mm; text-align: center; }'
+    + '@media print { .yazdir-btn, .yazdir-not { display: none; } .ekran-sarma { max-width: none; padding: 0; } }'
+    + '</style></head><body>'
+    + '<div class="ekran-sarma">'
+    + '<button class="yazdir-btn" onclick="window.print()">🖨 Yazdır / PDF Olarak Kaydet</button>'
+    + '<div class="yazdir-not">Alttaki adres/tarih yazısı çıkarsa bu sayfadan değil, tarayıcının kendi ayarından geliyor: yazdırma ekranında <b>"Üstbilgiler ve Altbilgiler"</b> (Safari) veya <b>"Headers and footers"</b> seçeneğini kapatabilirsin.</div>'
+    + '<div class="fis-icerik">'
+    + '<div class="baslik"><h1>RAZ PLASTİK</h1><span class="alt">Poliwood — Günlük Rapor</span></div>'
+    + '<div class="bilgi">Tarih: <b>' + fmtTarih(tarihIso) + '</b></div>'
+    + '<div class="ozet">'
+    + '<div class="ozet-kutu"><div class="lbl">Bugün Kesilen Fatura</div><div class="val">' + fmt(toplamGelir) + '</div></div>'
+    + '<div class="ozet-kutu"><div class="lbl">Toplam Gider</div><div class="val">' + fmt(toplamGider) + '</div></div>'
+    + '<div class="ozet-kutu"><div class="lbl">Net (fatura)</div><div class="val">' + (net>=0?"+":"") + fmt(net) + '</div></div>'
+    + '</div>'
+    + '<div class="ozet" style="margin-bottom:3mm">'
+    + '<div class="ozet-kutu" style="border-color:#2a7"><div class="lbl">💰 Bugün Eline Geçen Para (Tahsilat)</div><div class="val">' + fmt(toplamTahsilBugun) + '</div></div>'
+    + '</div>'
+    + '<div class="blok-baslik">💰 BUGÜN GELEN ÖDEMELER (' + tahsilatlarBugun.length + ' kayıt)</div>'
+    + (tahsilatlarBugun.length
+        ? '<table><tr><th>Müşteri</th><th>Hangi Faturaya Ait</th><th class="num" colspan="3">Gelen Tutar</th></tr>' + tahsilatSatirlari + '</table>'
+        : '<div class="bos-not">Bugün hiç tahsilat kaydı girilmemiş</div>')
+    + '<div class="blok-baslik">GELİRLER — BUGÜN KESİLEN FATURALAR (' + gelirler.length + ' kayıt)</div>'
+    + (gelirler.length
+        ? '<table><tr><th>Açıklama</th><th>Kategori</th><th class="num">Kg</th><th>Tahsil</th><th class="num">Tutar</th></tr>' + gelirSatirlari + '</table>'
+        : '<div class="bos-not">Bu gün gelir kaydı yok</div>')
+    + '<div class="blok-baslik">GİDERLER (' + giderler.length + ' kayıt)</div>'
+    + (giderler.length
+        ? '<table><tr><th>Açıklama</th><th>Kategori</th><th class="num" colspan="2">Tutar</th></tr>' + giderSatirlari + '</table>'
+        : '<div class="bos-not">Bu gün gider kaydı yok</div>')
+    + '</div></div>'
+    + '</body></html>';
+
+  const blob = new Blob([sayfa], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, "_blank");
+  if (!w) {
+    yazdirLinkGoster(url, "Rapor Hazır", "Günlük Raporu Aç");
+    return;
+  }
+  toast("Günlük rapor yeni sekmede açıldı — Yazdır butonuna dokun");
 }
 
 function aylikRaporIndir(secilenAyKey) {
