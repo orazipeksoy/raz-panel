@@ -354,7 +354,8 @@ const MASURALAR = { "120 cm": {masura: 1.74, bobin: 12.4}, "145 cm": {masura: 2.
 // böylece bir yazım farkı yüzünden satışlar sessizce masura hesabından düşmez.
 function genislikNormalize(g) { return String(g||"").trim().toLowerCase().replace(/\s+/g," ").replace(/(\d)\s*cm/,"$1 cm"); }
 const MASURALAR_NORM = {};
-Object.keys(MASURALAR).forEach(k => { MASURALAR_NORM[genislikNormalize(k)] = MASURALAR[k]; });
+const MASURALAR_KANONIK = {}; // normalize edilmiş -> gerçek MASURALAR anahtarı (raporlarda tutarlı isim göstermek için)
+Object.keys(MASURALAR).forEach(k => { const n = genislikNormalize(k); MASURALAR_NORM[n] = MASURALAR[k]; MASURALAR_KANONIK[n] = k; });
 // Doğrudan eşleşmezse, kullanıcının tanımladığı kalıcı "eşleme" tablosuna bakar — ör. "70-50" gibi
 // stokta AYRI bir ürün olarak kalması gereken ama hesaplamada 120cm masurasını kullanması gereken
 // bir genişlik için. Stoktaki ürün ayrı kalır, sadece hangi masura sabitini kullanacağı öğretilir.
@@ -1762,7 +1763,7 @@ function masuraAnaliziAy(ayKey) {
       // varsa, ait olduğu "120 cm" satırının altında toplanır (stoktaki ürün ayrı kalmaya devam eder,
       // bu sadece raporlama gruplaması).
       const norm = genislikNormalize(genislik);
-      const gercekGenislik = MASURALAR_NORM[norm] ? genislik : ((data.genislikEslenikleri && data.genislikEslenikleri[norm]) || genislik);
+      const gercekGenislik = MASURALAR_NORM[norm] ? MASURALAR_KANONIK[norm] : ((data.genislikEslenikleri && data.genislikEslenikleri[norm]) || genislik);
       if (!genislikKirilim[gercekGenislik]) genislikKirilim[gercekGenislik] = {adet:0, masuraKg:0, bobinKg:0};
       genislikKirilim[gercekGenislik].adet += adet;
       genislikKirilim[gercekGenislik].masuraKg += masuraKg;
@@ -3308,6 +3309,9 @@ function aylikRaporIndir(secilenAyKey) {
   }
   if (masAn.tanimsizBobin > 0) {
     s1.push(xlsxSatir(r, [xT("⚠ Masura verisi tanımsız genişlikte satılan bobin",XS.metinBorder), xM(masAn.tanimsizBobin,XS.adetBorder)])); r++;
+    Object.entries(masAn.tanimsizKirilim).forEach(([genislik, v]) => {
+      s1.push(xlsxSatir(r, [xT("   → "+v.ad+" (genişlik: \""+genislik+"\")",XS.metinBorder), xM(v.adet,XS.adetBorder)])); r++;
+    });
   }
   r++;
   bb = xlsxBaslikSatiri(r, "ÜRETİM ÖZETİ", 4, XS.baslikKirmizi); s1.push(bb.xml); m1.push(bb.merge); r++;
