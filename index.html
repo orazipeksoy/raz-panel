@@ -1733,6 +1733,24 @@ function uretimAyOzeti(ayKey) {
 // Hesap tamamen BOBİN SAYISI üzerinden: her genişliğin sabit masura kilosu (MASURALAR) bobin adediyle
 // çarpılır. Tartımda tek tek girilen brüt kilolar (12,4 / 12,5 / 12,7 / 11,8 gibi) burada ortalamaya
 // katılmaz — önemli olan kaç bobin satıldığı ve o genişliğin sabit masura kilosu.
+// Tüm zamanlardaki (sadece bu ay değil) genişliği eşleşmeyen 2. Kalite satışlarını tarar.
+// Ay değiştikçe bu uyarının "kaybolması" (ki geçmişteki sorun aslında çözülmemiş demektir) engellenir.
+function tumZamanlarTanimsizGenislikler() {
+  const sonuc = {};
+  data.hareketler.forEach(h => {
+    if (!(h.gelir && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış"))) return;
+    (h.kalemler||[]).forEach(k => {
+      const parcalar = String(k.key||"").split("|");
+      const kalite = parcalar[0], genislik = parcalar[2];
+      if (kalite !== "2. Kalite") return;
+      if (masuraBul(genislik)) return; // zaten eşleşiyor, sorun yok
+      if (!sonuc[genislik]) sonuc[genislik] = {adet:0, ad:k.ad||("2. Kalite · "+genislik)};
+      sonuc[genislik].adet += (k.adet||0);
+    });
+  });
+  return sonuc;
+}
+
 function masuraAnaliziAy(ayKey) {
   const tumSatislar = data.hareketler.filter(h => h.tarih.slice(0,7) === ayKey && h.gelir && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış"));
   const satislar = tumSatislar.filter(h => h.kalemler && h.kalemler.length);
@@ -1914,7 +1932,6 @@ function urunEslestirModalKapat() {
 // ürünü hem de bununla yapılmış TÜM geçmiş satışları tek seferde doğru genişliğe taşır.
 // Stok miktarı ve satış tutarları hiç değişmez — sadece hangi genişliğe ait olduğu düzelir.
 function genislikDuzeltModal(eskiGenislik) {
-  window.__genislikDuzeltEski = eskiGenislik;
   const overlay = document.createElement("div");
   overlay.id = "genislik-duzelt-modal";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px";
@@ -1924,7 +1941,7 @@ function genislikDuzeltModal(eskiGenislik) {
     + '<div class="mtitle">🔗 "'+esc(eskiGenislik)+'" Hangi Masurayı Kullanıyor?</div>'
     + '<div class="mini" style="margin-bottom:12px">Stoktaki "'+esc(eskiGenislik)+'" ürünü AYRI bir ürün olarak kalmaya devam eder — kendi stok miktarını, kendi adını korur, hiçbir şey birleşmez/silinmez. Sadece masura hesaplamasında hangi masura sabitini (120/145/160 cm) kullanacağını öğretmiş oluyoruz.</div>'
     + '<div style="display:flex;flex-direction:column;gap:8px">'
-    + hedefler.map(g => '<button class="btn" style="background:var(--blue)" onclick="genislikDuzeltUygula(\''+g+'\')">→ '+g+' masurası</button>').join("")
+    + hedefler.map(g => '<button class="btn" style="background:var(--blue)" onclick="genislikDuzeltUygula(\''+jsStr(eskiGenislik)+'\',\''+jsStr(g)+'\')">→ '+g+' masurası</button>').join("")
     + '</div>'
     + '<button class="chip" style="margin-top:12px" onclick="genislikDuzeltModalKapat()">İptal</button>'
     + '</div>';
@@ -1933,17 +1950,19 @@ function genislikDuzeltModal(eskiGenislik) {
 function genislikDuzeltModalKapat() {
   const el = document.getElementById("genislik-duzelt-modal");
   if (el) el.remove();
-  window.__genislikDuzeltEski = null;
 }
-function genislikDuzeltUygula(hedefGenislik) {
-  const eskiGenislik = window.__genislikDuzeltEski;
-  if (!eskiGenislik) return;
-  if (!data.genislikEslenikleri) data.genislikEslenikleri = {};
-  data.genislikEslenikleri[genislikNormalize(eskiGenislik)] = hedefGenislik;
-  save();
+function genislikDuzeltUygula(eskiGenislik, hedefGenislik) {
+  try {
+    if (!data.genislikEslenikleri) data.genislikEslenikleri = {};
+    data.genislikEslenikleri[genislikNormalize(eskiGenislik)] = hedefGenislik;
+    save();
+  } catch (e) {
+    alert("Bir hata oluştu, eşleme kaydedilemedi: " + (e && e.message ? e.message : e));
+    return;
+  }
   genislikDuzeltModalKapat();
-  render();
   toast('✓ "' + eskiGenislik + '" artık ' + hedefGenislik + ' masurası olarak hesaplanacak — stok ayrı kaldı, hiçbir şey birleşmedi');
+  try { render(); } catch (e) { /* eşleme zaten kaydedildi, render hatası bunu etkilemez */ }
 }
 
 // ============ KÂRLILIK HESAPLAMA (TAHMİNİ) ============
@@ -2100,11 +2119,14 @@ function rUretim() {
 
   // Ürün seçilerek yapılmış ama genişliği MASURALAR tablosunda tanımsız kalan satışlar —
   // genelde yazım farkı (ör. "160cm" vs "160 cm") ya da özel paketleme etiketi (ör. "70-50") yüzünden olur.
-  if (masAn.tanimsizKirilim && Object.keys(masAn.tanimsizKirilim).length) {
+  // TÜM ZAMANLARI tarar (sadece bu ay değil) — ay değişince bu uyarı kaybolup unutulmasın diye.
+  const tumZamanTanimsiz = tumZamanlarTanimsizGenislikler();
+  if (Object.keys(tumZamanTanimsiz).length) {
+    const toplamTanimsizBobin = Object.values(tumZamanTanimsiz).reduce((s,v) => s+v.adet, 0);
     html += '<div class="card" style="border:1.5px solid var(--red)">'
-      + '<div class="mtitle">🔴 Genişliği Eşleşmeyen 2. Kalite Satışları <span class="pill">'+masAn.tanimsizBobin+' bobin</span></div>'
+      + '<div class="mtitle">🔴 Genişliği Eşleşmeyen 2. Kalite Satışları <span class="pill">'+toplamTanimsizBobin+' bobin, tüm zamanlar</span></div>'
       + '<div class="mini" style="margin-bottom:10px">Bu ürünlerin genişliği (120/145/160 cm) masura tablosuyla eşleşmiyor. Eğer bu gerçekten farklı bir stok ürünüyse ama bir masura sabitini kullanıyorsa, "Eşle" ile hangi masurayı kullandığını öğret — stoktaki ürün AYRI kalmaya devam eder, hiçbir şey birleşmez/silinmez, sadece hesaplama artık doğru masura sabitini kullanır.</div>';
-    Object.entries(masAn.tanimsizKirilim).forEach(([genislik, v]) => {
+    Object.entries(tumZamanTanimsiz).forEach(([genislik, v]) => {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #262837;font-size:13px">'
         + '<span><b>'+esc(v.ad)+'</b> <span class="mini">(genişlik: "'+esc(genislik)+'")</span> — '+v.adet+' bobin</span>'
         + '<button class="chip" style="color:var(--blue);border-color:var(--blue);white-space:nowrap;flex-shrink:0" onclick="genislikDuzeltModal(\''+jsStr(genislik)+'\')">🔗 Eşle</button>'
