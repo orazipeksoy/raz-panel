@@ -355,7 +355,15 @@ const MASURALAR = { "120 cm": {masura: 1.74, bobin: 12.4}, "145 cm": {masura: 2.
 function genislikNormalize(g) { return String(g||"").trim().toLowerCase().replace(/\s+/g," ").replace(/(\d)\s*cm/,"$1 cm"); }
 const MASURALAR_NORM = {};
 Object.keys(MASURALAR).forEach(k => { MASURALAR_NORM[genislikNormalize(k)] = MASURALAR[k]; });
-function masuraBul(genislik) { return MASURALAR_NORM[genislikNormalize(genislik)] || null; }
+// Doğrudan eşleşmezse, kullanıcının tanımladığı kalıcı "eşleme" tablosuna bakar — ör. "70-50" gibi
+// stokta AYRI bir ürün olarak kalması gereken ama hesaplamada 120cm masurasını kullanması gereken
+// bir genişlik için. Stoktaki ürün ayrı kalır, sadece hangi masura sabitini kullanacağı öğretilir.
+function masuraBul(genislik) {
+  const norm = genislikNormalize(genislik);
+  if (MASURALAR_NORM[norm]) return MASURALAR_NORM[norm];
+  const eslenik = data.genislikEslenikleri && data.genislikEslenikleri[norm];
+  return eslenik ? (MASURALAR_NORM[genislikNormalize(eslenik)] || null) : null;
+}
 const STOK_ESIK = 30; // bu adetin altı uyarı
 const MAKINELER = ["1. Kalite Makinası", "2. Kalite Makinası"];
 const VARDIYALAR = ["Gündüz", "Gece"];
@@ -444,6 +452,7 @@ function saglaId(d) {
   if (!d.sayimlar) d.sayimlar = [];
   if (!d.cariBakiyeler) d.cariBakiyeler = {}; // müşteri fazla ödemesi (kredi) — bir sonraki faturaya otomatik düşer
   if (!d.personeller) d.personeller = []; // maaş bordrosu — Krediler'deki gibi tek dokunuşla ödeme kaydı
+  if (!d.genislikEslenikleri) d.genislikEslenikleri = {}; // özel genişlik etiketi -> gerçek masura genişliği (stok ayrı kalır)
   if (!d.ayarlar) d.ayarlar = {};
   // İşçilik artık ürün tipine göre ayrı ayrı: 1.Kalite 25₺, 2.Kalite 15₺, ECO-1 20₺ (net plastik kg başına, masura hariç).
   // Eski tek-sayı formatındaysa (bu güncellemeden önce kaydedilmişse) yeni doğru değerlerle değiştirilir.
@@ -1507,6 +1516,40 @@ function resetUForm() {
   };
 }
 function uSet(k, v) { uForm[k] = v; }
+function uTarihSet(isoTarih) { uSet("tarih", isoTarih); }
+
+const AY_ADLARI = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
+// Yerleşik tarayıcı tarih kutusunun yıl hanesine elle yazarken bazı mobil tarayıcılarda erken kapanma/
+// atlama sorunu yaşanabiliyor. Bunun yerine Gün/Ay/Yıl için ayrı açılır listeler kullanılır — yazma
+// değil seçme olduğu için bu sorun hiçbir cihazda yaşanmaz.
+function tarihSeciciHtml(idOnEki, mevcutIso, setFonksiyonu) {
+  const parcalar = String(mevcutIso||"").split("-");
+  const yil = parseInt(parcalar[0]) || new Date().getFullYear();
+  const ay = parseInt(parcalar[1]) || 1;
+  const gun = parseInt(parcalar[2]) || 1;
+  const suAnkiYil = new Date().getFullYear();
+  const yilAraligi = []; for (let y = suAnkiYil - 5; y <= suAnkiYil + 1; y++) yilAraligi.push(y);
+  const ayinGunSayisi = new Date(yil, ay, 0).getDate();
+  const gunler = []; for (let g = 1; g <= ayinGunSayisi; g++) gunler.push(g);
+  const guncelle = "tarihSeciciGuncelle('"+idOnEki+"','"+setFonksiyonu+"')";
+  let h = '<div style="display:flex;gap:5px">';
+  h += '<select id="'+idOnEki+'-gun" style="flex:1" onchange="'+guncelle+'">'+gunler.map(g => '<option value="'+g+'"'+(g===gun?" selected":"")+'>'+g+'</option>').join("")+'</select>';
+  h += '<select id="'+idOnEki+'-ay" style="flex:1.6" onchange="'+guncelle+'">'+AY_ADLARI.map((a,i) => '<option value="'+(i+1)+'"'+((i+1)===ay?" selected":"")+'>'+a+'</option>').join("")+'</select>';
+  h += '<select id="'+idOnEki+'-yil" style="flex:1.1" onchange="'+guncelle+'">'+yilAraligi.map(y => '<option value="'+y+'"'+(y===yil?" selected":"")+'>'+y+'</option>').join("")+'</select>';
+  h += '</div>';
+  return h;
+}
+function tarihSeciciGuncelle(idOnEki, setFonksiyonu) {
+  const gun = parseInt(gv(idOnEki+"-gun"));
+  const ay = parseInt(gv(idOnEki+"-ay"));
+  const yil = parseInt(gv(idOnEki+"-yil"));
+  const isoTarih = yil + "-" + String(ay).padStart(2,"0") + "-" + String(Math.min(gun, new Date(yil,ay,0).getDate())).padStart(2,"0");
+  window[setFonksiyonu](isoTarih);
+}
+function tarihSeciciBugun(idOnEki, setFonksiyonu) {
+  window[setFonksiyonu](yerelTarihStr());
+  render();
+}
 function uHamEkle() { if (!uForm.hammaddeler) uForm.hammaddeler = []; uForm.hammaddeler.push({hamIdx:"", kg:""}); render(); }
 function uHamSil(i) { uForm.hammaddeler.splice(i,1); render(); }
 function uHamSet(i,k,v) { uForm.hammaddeler[i][k] = v; }
@@ -1715,10 +1758,15 @@ function masuraAnaliziAy(ayKey) {
       toplamBobin += adet;
       toplamMasuraKg += masuraKg;
       toplamBobinKg += bobinKg;
-      if (!genislikKirilim[genislik]) genislikKirilim[genislik] = {adet:0, masuraKg:0, bobinKg:0};
-      genislikKirilim[genislik].adet += adet;
-      genislikKirilim[genislik].masuraKg += masuraKg;
-      genislikKirilim[genislik].bobinKg += bobinKg;
+      // Kırılım tablosunda gerçek masura genişliğine göre grupla — "70-50" gibi eşlenmiş bir etiket
+      // varsa, ait olduğu "120 cm" satırının altında toplanır (stoktaki ürün ayrı kalmaya devam eder,
+      // bu sadece raporlama gruplaması).
+      const norm = genislikNormalize(genislik);
+      const gercekGenislik = MASURALAR_NORM[norm] ? genislik : ((data.genislikEslenikleri && data.genislikEslenikleri[norm]) || genislik);
+      if (!genislikKirilim[gercekGenislik]) genislikKirilim[gercekGenislik] = {adet:0, masuraKg:0, bobinKg:0};
+      genislikKirilim[gercekGenislik].adet += adet;
+      genislikKirilim[gercekGenislik].masuraKg += masuraKg;
+      genislikKirilim[gercekGenislik].bobinKg += bobinKg;
     });
   });
   const netPlastikKg = toplamBobinKg - toplamMasuraKg;
@@ -1858,6 +1906,43 @@ function urunEslestirModalKapat() {
   window.__urunEslestirHedefId = null;
   window.__urunEslestirKalemler = null;
   window.__urunEslestirTahmin = null;
+}
+
+// ============ GENİŞLİK TOPLU DÜZELTME ============
+// Bir genişlik yanlış/not-amaçlı girilmişse (ör. "70-50" aslında 120cm masurası), hem stoktaki
+// ürünü hem de bununla yapılmış TÜM geçmiş satışları tek seferde doğru genişliğe taşır.
+// Stok miktarı ve satış tutarları hiç değişmez — sadece hangi genişliğe ait olduğu düzelir.
+function genislikDuzeltModal(eskiGenislik) {
+  window.__genislikDuzeltEski = eskiGenislik;
+  const overlay = document.createElement("div");
+  overlay.id = "genislik-duzelt-modal";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px";
+  const hedefler = Object.keys(MASURALAR);
+  overlay.innerHTML =
+    '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:20px;width:100%;max-width:380px">'
+    + '<div class="mtitle">🔗 "'+esc(eskiGenislik)+'" Hangi Masurayı Kullanıyor?</div>'
+    + '<div class="mini" style="margin-bottom:12px">Stoktaki "'+esc(eskiGenislik)+'" ürünü AYRI bir ürün olarak kalmaya devam eder — kendi stok miktarını, kendi adını korur, hiçbir şey birleşmez/silinmez. Sadece masura hesaplamasında hangi masura sabitini (120/145/160 cm) kullanacağını öğretmiş oluyoruz.</div>'
+    + '<div style="display:flex;flex-direction:column;gap:8px">'
+    + hedefler.map(g => '<button class="btn" style="background:var(--blue)" onclick="genislikDuzeltUygula(\''+g+'\')">→ '+g+' masurası</button>').join("")
+    + '</div>'
+    + '<button class="chip" style="margin-top:12px" onclick="genislikDuzeltModalKapat()">İptal</button>'
+    + '</div>';
+  document.body.appendChild(overlay);
+}
+function genislikDuzeltModalKapat() {
+  const el = document.getElementById("genislik-duzelt-modal");
+  if (el) el.remove();
+  window.__genislikDuzeltEski = null;
+}
+function genislikDuzeltUygula(hedefGenislik) {
+  const eskiGenislik = window.__genislikDuzeltEski;
+  if (!eskiGenislik) return;
+  if (!data.genislikEslenikleri) data.genislikEslenikleri = {};
+  data.genislikEslenikleri[genislikNormalize(eskiGenislik)] = hedefGenislik;
+  save();
+  genislikDuzeltModalKapat();
+  render();
+  toast('✓ "' + eskiGenislik + '" artık ' + hedefGenislik + ' masurası olarak hesaplanacak — stok ayrı kaldı, hiçbir şey birleşmedi');
 }
 
 // ============ KÂRLILIK HESAPLAMA (TAHMİNİ) ============
@@ -2013,13 +2098,16 @@ function rUretim() {
   }
 
   // Ürün seçilerek yapılmış ama genişliği MASURALAR tablosunda tanımsız kalan satışlar —
-  // genelde yazım farkı (ör. "160cm" vs "160 cm") ya da gerçekten yeni/tanımsız bir genişlik yüzünden olur.
+  // genelde yazım farkı (ör. "160cm" vs "160 cm") ya da özel paketleme etiketi (ör. "70-50") yüzünden olur.
   if (masAn.tanimsizKirilim && Object.keys(masAn.tanimsizKirilim).length) {
     html += '<div class="card" style="border:1.5px solid var(--red)">'
       + '<div class="mtitle">🔴 Genişliği Eşleşmeyen 2. Kalite Satışları <span class="pill">'+masAn.tanimsizBobin+' bobin</span></div>'
-      + '<div class="mini" style="margin-bottom:10px">Bu ürünlerin genişliği (120/145/160 cm) masura tablosuyla eşleşmiyor — muhtemelen yazım farkı var (ör. "160cm" ile "160 cm" aynı değil). Stok sekmesinde bu ürünü düzenleyip genişliği düzeltirsen (ör. tam "120 cm" / "145 cm" / "160 cm" yaz) bir sonraki raporda otomatik düzelir.</div>';
+      + '<div class="mini" style="margin-bottom:10px">Bu ürünlerin genişliği (120/145/160 cm) masura tablosuyla eşleşmiyor. Eğer bu gerçekten farklı bir stok ürünüyse ama bir masura sabitini kullanıyorsa, "Eşle" ile hangi masurayı kullandığını öğret — stoktaki ürün AYRI kalmaya devam eder, hiçbir şey birleşmez/silinmez, sadece hesaplama artık doğru masura sabitini kullanır.</div>';
     Object.entries(masAn.tanimsizKirilim).forEach(([genislik, v]) => {
-      html += '<div style="padding:6px 0;border-bottom:1px solid #262837;font-size:13px"><b>'+esc(v.ad)+'</b> <span class="mini">(genişlik: "'+esc(genislik)+'")</span> — '+v.adet+' bobin</div>';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #262837;font-size:13px">'
+        + '<span><b>'+esc(v.ad)+'</b> <span class="mini">(genişlik: "'+esc(genislik)+'")</span> — '+v.adet+' bobin</span>'
+        + '<button class="chip" style="color:var(--blue);border-color:var(--blue);white-space:nowrap;flex-shrink:0" onclick="genislikDuzeltModal(\''+jsStr(genislik)+'\')">🔗 Eşle</button>'
+        + '</div>';
     });
     html += '</div>';
   }
@@ -2027,7 +2115,7 @@ function rUretim() {
   // ---- Yeni üretim kaydı formu ----
   html += '<div class="card"><div class="mtitle">Yeni Üretim Kaydı</div><div class="formgrid">';
   html += '<div class="row2">';
-  html += '<div><div class="mini" style="margin-bottom:5px">Tarih</div><input type="date" value="'+uForm.tarih+'" onchange="uSet(\'tarih\',this.value);render()"></div>';
+  html += '<div><div class="mini" style="margin-bottom:5px">Tarih</div>'+tarihSeciciHtml("u-tarih", uForm.tarih, "uTarihSet")+'<button type="button" class="chip" style="margin-top:6px" onclick="tarihSeciciBugun(\'u-tarih\',\'uTarihSet\')">Bugün</button></div>';
   html += '<div><div class="mini" style="margin-bottom:5px">Makine</div><select onchange="uSet(\'makine\',this.value)">'+MAKINELER.map(m => '<option'+(uForm.makine===m?" selected":"")+'>'+m+'</option>').join("")+'</select></div>';
   html += '</div>';
   html += '<div><div class="mini" style="margin-bottom:5px">Vardiya</div><div class="seg" style="display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;width:fit-content">'
@@ -2035,7 +2123,7 @@ function rUretim() {
     + '</div></div>';
   html += '<div class="row2">';
   html += '<div style="position:relative"><div class="mini" style="margin-bottom:5px">Usta</div><input type="text" id="u-usta" placeholder="ör. Ahmet Yılmaz" value="'+esc(uForm.usta)+'" oninput="ustaInputDegisti(this.value)" autocomplete="off"><div id="usta-oneri" style="position:absolute;left:0;right:0;top:100%;z-index:20"></div></div>';
-  html += '<div><div class="mini" style="margin-bottom:5px">Çalışma Saati</div><input type="text" inputmode="decimal" placeholder="ör. 8" value="'+esc(uForm.saat)+'" onchange="uSet(\'saat\',this.value);render()"></div>';
+  html += '<div><div class="mini" style="margin-bottom:5px">Çalışma Saati</div><input type="text" inputmode="decimal" placeholder="ör. 8" value="'+esc(uForm.saat)+'" oninput="uSet(\'saat\',this.value)"></div>';
   html += '</div>';
 
   // Kullanılan hammadde satırları
@@ -3089,13 +3177,13 @@ function gunlukRaporIndir(tarihIso) {
     if (!tahsilVar) tahsilMetin = "—";
     else if (durum.tamamlandiMi) tahsilMetin = "✓ Ödendi";
     else {
-      const durumEtiket = durum.toplamTahsil > 0.01 ? "Kısmi ödendi" : "Ödenmedi";
-      tahsilMetin = durumEtiket + (h.vade ? '<div class="altnot">vade: ' + fmtTarih(h.vade) + '</div>' : "");
+      tahsilMetin = (durum.toplamTahsil > 0.01 ? "Kısmi" : "Ödenmedi");
     }
-    return '<tr><td class="sol">'+esc(h.aciklama)+(h.not?'<div class="altnot">'+esc(h.not)+'</div>':"")+'</td><td>'+esc(h.kategori)+'</td><td class="num">'+(h.kg?fmtKg(h.kg)+' kg':"—")+'</td><td>'+tahsilMetin+'</td><td class="num tutar-y">'+fmt(h.gelir)+'</td></tr>';
+    const urunMetni = (h.kalemler && h.kalemler.length) ? kalemlerOzet(h.kalemler) : (h.not ? esc(h.not) : "—");
+    return '<tr><td>'+esc(h.aciklama)+'</td><td>'+urunMetni+'</td><td>'+esc(h.kategori)+'</td><td class="num">'+(h.kg?fmtKg(h.kg)+' kg':"—")+'</td><td>'+(h.vade?fmtTarih(h.vade):"—")+'</td><td>'+tahsilMetin+'</td><td class="num tutar-y">'+fmt(h.gelir)+'</td></tr>';
   }).join("");
   const giderSatirlari = giderler.map(h =>
-    '<tr><td class="sol">'+esc(h.aciklama)+(h.not?'<div class="altnot">'+esc(h.not)+'</div>':"")+'</td><td>'+esc(h.kategori)+'</td><td class="num tutar-k" colspan="2">'+fmt(h.gider)+'</td></tr>'
+    '<tr><td>'+esc(h.aciklama)+'</td><td>'+esc(h.kategori)+'</td><td>'+(h.not?esc(h.not):"—")+'</td><td class="num tutar-k">'+fmt(h.gider)+'</td></tr>'
   ).join("");
 
   const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Günlük Rapor</title><style>'
@@ -3116,12 +3204,13 @@ function gunlukRaporIndir(tarihIso) {
     + '.ozet-kutu { flex: 1; border: 1px solid #000; border-radius: 1.5mm; padding: 2.5mm 3mm; text-align: center; }'
     + '.ozet-kutu .lbl { font-size: 8.5pt; color: #555; text-transform: uppercase; letter-spacing: .04em; }'
     + '.ozet-kutu .val { font-size: 16pt; font-weight: 800; margin-top: .5mm; }'
-    + '.blok-baslik { background: #E8E8E8; font-weight: bold; font-size: 11pt; padding: 1.5mm 2mm; border-radius: 1.5mm; margin: 3mm 0 1.5mm; page-break-after: avoid; }'
-    + 'table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-bottom: 2mm; }'
+    + '.blok-baslik { background: #4A3670; color: #fff; font-weight: bold; font-size: 11pt; padding: 1.8mm 2mm; margin: 3mm 0 0; page-break-after: avoid; }'
+    + 'table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-bottom: 3mm; border: 1px solid #000; }'
     + 'tr { page-break-inside: avoid; }'
-    + 'th { text-align: left; font-size: 9pt; color: #555; border-bottom: 1px solid #000; padding: 1mm 1.5mm; }'
+    + 'th { text-align: left; font-size: 9pt; font-weight: 700; color: #000; background: #D9D9D9; border: 1px solid #000; padding: 1.5mm 2mm; }'
     + 'th.num, td.num { text-align: right; }'
-    + 'td { border-bottom: 1px solid #ccc; padding: 2mm 1.5mm; font-size: 10.5pt; vertical-align: top; }'
+    + 'td { border: 1px solid #999; padding: 1.8mm 2mm; font-size: 10.5pt; vertical-align: top; }'
+    + 'tbody tr:nth-child(even) td, tr:nth-child(even) td { background: #F4F4F4; }'
     + 'td.sol { width: 34%; }'
     + '.altnot { font-size: 8.5pt; color: #666; margin-top: .5mm; }'
     + '.tutar-y { font-weight: 700; font-variant-numeric: tabular-nums; }'
@@ -3149,11 +3238,11 @@ function gunlukRaporIndir(tarihIso) {
         : '<div class="bos-not">Bugün hiç tahsilat kaydı girilmemiş</div>')
     + '<div class="blok-baslik">GELİRLER — BUGÜN KESİLEN FATURALAR (' + gelirler.length + ' kayıt)</div>'
     + (gelirler.length
-        ? '<table><tr><th>Açıklama</th><th>Kategori</th><th class="num">Kg</th><th>Tahsil</th><th class="num">Tutar</th></tr>' + gelirSatirlari + '</table>'
+        ? '<table><tr><th>Müşteri</th><th>Ne Gitti (Ürün)</th><th>Kategori</th><th class="num">Kg</th><th>Vade</th><th>Durum</th><th class="num">Tutar</th></tr>' + gelirSatirlari + '</table>'
         : '<div class="bos-not">Bu gün gelir kaydı yok</div>')
-    + '<div class="blok-baslik">GİDERLER (' + giderler.length + ' kayıt)</div>'
+    + '<div class="blok-baslik">GİDERLER — NEREYE ÖDENDİ (' + giderler.length + ' kayıt)</div>'
     + (giderler.length
-        ? '<table><tr><th>Açıklama</th><th>Kategori</th><th class="num" colspan="2">Tutar</th></tr>' + giderSatirlari + '</table>'
+        ? '<table><tr><th>Nereye Ödendi</th><th>Kategori</th><th>Not</th><th class="num">Tutar</th></tr>' + giderSatirlari + '</table>'
         : '<div class="bos-not">Bu gün gider kaydı yok</div>')
     + '</div></div>'
     + '</body></html>';
@@ -3393,7 +3482,8 @@ function rStok() {
     const deger = kg * fiyatBul(m.kalite) * 1.2;
     const renk = m.adet <= 0 ? "kirmizi" : (m.adet < STOK_ESIK ? "" : "yesil");
     const barRenk = m.adet <= 0 ? "var(--red)" : (m.adet < STOK_ESIK ? "var(--amber)" : "var(--green)");
-    html += '<tr><td><b>'+esc(m.kalite)+'</b> '+esc(m.tip)+' · '+esc(m.genislik)+(m.gramaj!=="-"?' · '+esc(m.gramaj):"")+'<div class="notrow"><span class="adet-edit" onclick="mamulDuzenle('+i+')">✎ ürünü düzenle</span></div></td>'
+    const eslenikGosterge = (data.genislikEslenikleri && data.genislikEslenikleri[genislikNormalize(m.genislik)]) ? '<div class="notrow">🔗 masura: '+esc(data.genislikEslenikleri[genislikNormalize(m.genislik)])+'</div>' : '';
+    html += '<tr><td><b>'+esc(m.kalite)+'</b> '+esc(m.tip)+' · '+esc(m.genislik)+(m.gramaj!=="-"?' · '+esc(m.gramaj):"")+eslenikGosterge+'<div class="notrow"><span class="adet-edit" onclick="mamulDuzenle('+i+')">✎ ürünü düzenle</span></div></td>'
       + '<td class="num" style="min-width:56px"><span class="adet-edit '+renk+'" onclick="adetDuzenle('+i+')">'+m.adet+'</span>'+doluCubuk(m.adet, STOK_ESIK*3, barRenk)+'</td>'
       + '<td class="num"><span class="adet-edit" onclick="kgBobinDuzenle('+i+')">'+fmtKg(m.kgBobin)+'</span></td>'
       + '<td class="num">'+fmtKg(kg)+'</td>'
