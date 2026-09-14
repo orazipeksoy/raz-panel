@@ -380,7 +380,6 @@ let hFiltre = "buay";
 let maliyet = { urun: "1. Kalite", genislik: "120 cm", hamFiyat: "", satisFiyat: "", bobinKg: "", masuraKg: "" };
 let uForm = null;
 let uFiltre = "buay";
-let bForm = null; // Barkod okutma ekranı durumu
 
 function fmt(v) { return (v == null || v === 0) ? "—" : "₺" + Number(v).toLocaleString("tr-TR", {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function fmtK(v) { if (v == null || v === 0) return "—"; const neg = v < 0 ? "−" : ""; const a = Math.abs(v); if (a >= 1000000) return neg + "₺" + (a/1000000).toLocaleString("tr-TR",{maximumFractionDigits:2}) + "M"; if (a >= 1000) return neg + "₺" + (a/1000).toLocaleString("tr-TR",{maximumFractionDigits:0}) + "K"; return fmt(v); }
@@ -452,7 +451,6 @@ function saglaId(d) {
   if (!d.gizliUyarilar) d.gizliUyarilar = [];
   if (!d.uretimler) d.uretimler = [];
   if (!d.sayimlar) d.sayimlar = [];
-  if (!d.barkodOturumlari) d.barkodOturumlari = []; // barkodla yapılan üretim/sevk oturumları — stok değişikliğinin izi ve geri alma için
   if (!d.cariBakiyeler) d.cariBakiyeler = {}; // müşteri fazla ödemesi (kredi) — bir sonraki faturaya otomatik düşer
   if (!d.personeller) d.personeller = []; // maaş bordrosu — Krediler'deki gibi tek dokunuşla ödeme kaydı
   if (!d.genislikEslenikleri) d.genislikEslenikleri = {}; // özel genişlik etiketi -> gerçek masura genişliği (stok ayrı kalır)
@@ -608,7 +606,7 @@ function render() {
   document.getElementById("hdr-kasa").style.color = H.bakiye >= 0 ? "#4ADE80" : "#F87171";
   const gizliIkon = document.getElementById("gizli-toggle");
   if (gizliIkon) gizliIkon.textContent = gizliMod ? "🙈" : "👁️";
-  const anaTabs = [["ozet","Özet"],["yeni","+ Kayıt"],["tartim","Tartım"],["barkod","Barkod"],["uretim","Üretim"],["hareketler","Hareketler"],["stok","Stok"]];
+  const anaTabs = [["ozet","Özet"],["yeni","+ Kayıt"],["tartim","Tartım"],["uretim","Üretim"],["hareketler","Hareketler"],["stok","Stok"]];
   const digerTabs = [["musteriler","Müşteriler"],["krediler","Krediler"],["notlar","Notlar"],["maliyet","Maliyet"],["aylik","Aylık"]];
   const digerAktif = digerTabs.some(t => t[0] === tab);
   document.getElementById("nav").innerHTML = anaTabs.map(t =>
@@ -626,7 +624,6 @@ function render() {
   if (tab === "ozet") m.innerHTML = rOzet(H);
   else if (tab === "yeni") m.innerHTML = rYeni();
   else if (tab === "tartim") m.innerHTML = rTartim();
-  else if (tab === "barkod") m.innerHTML = rBarkod();
   else if (tab === "uretim") m.innerHTML = rUretim();
   else if (tab === "hareketler") m.innerHTML = rHareketler(H);
   else if (tab === "stok") m.innerHTML = rStok();
@@ -635,7 +632,6 @@ function render() {
   else if (tab === "notlar") m.innerHTML = rNotlar();
   else if (tab === "maliyet") m.innerHTML = rMaliyet();
   else if (tab === "aylik") m.innerHTML = rAylik(H);
-  if (tab === "barkod") setTimeout(bOdakla, 60); // her yenilemede imleç okutma alanına döner — okuyucu tetiğe hep hazır
 }
 
 function setTab(t) { tab = t; duzenleIdx = null; digerAcik = false; render(); }
@@ -1236,6 +1232,7 @@ function tartimYukle() {
     delete tartim.satirlar; delete tartim.stokIdx; delete tartim.urun;
   }
   if (!tartim.gruplar.length) tartim.gruplar = [ { stokIdx: "", satirlar: [] } ];
+  tartim.stogaEklendi = false;
   tartim.gruplar.forEach(g => { if (!g.satirlar) g.satirlar = []; if (g.stokIdx === undefined) g.stokIdx = ""; });
 }
 
@@ -1272,22 +1269,73 @@ function tartimGrupStokSec(gi, stokIdx) {
   tartimKaydet();
 }
 
+// Terazi etiketi EAN13 yapısı: 27 | PPPPP (ürün/PLU) | WWWWW (kg × 100) | K (kontrol)
+// Örn. 2701001087202 -> 87,20 kg. Kg kutusuna elle yazılan değerle barkod aynı yerden girer:
+// 13 hane tamamı rakamsa barkod kabul edilir (elle 13 haneli kg girilemeyeceği için karışma olmaz).
+function barkodCoz(kod) {
+  const s = String(kod).replace(/\D/g, "");
+  if (s.length !== 13) return { hata: "Geçersiz barkod — 13 hane bekleniyordu, " + s.length + " hane okundu" };
+  let t = 0; for (let i = 0; i < 12; i++) t += (i % 2 === 0 ? 1 : 3) * parseInt(s[i]);
+  if ((10 - (t % 10)) % 10 !== parseInt(s[12])) return { hata: "Barkod kontrol hanesi tutmuyor — etiketi tekrar okut" };
+  return { plu: s.slice(2, 7), kg: parseInt(s.slice(7, 12)) / 100 };
+}
+let __tartimSonOkut = null; // okuyucu çift tetik koruması — kaydedilmez, sayfa yenilenince sıfırlanır
+
 function tartimGir(gi, deger) {
-  const v = parseTL(deger);
-  if (isNaN(v) || v <= 0) { toast("Geçerli kg girin"); return; }
-  tartim.gruplar[gi].satirlar.push({brut: v});
-  tartimKaydet();
-  render();
-  setTimeout(() => {
+  const ham = String(deger).trim();
+  const temizleOdakla = () => setTimeout(() => {
     const inp = document.getElementById("t-brut-"+gi);
     if (inp) { inp.value = ""; inp.focus(); }
   }, 30);
+  let v;
+  if (/^\d{13}$/.test(ham)) {
+    // Barkod okundu
+    const c = barkodCoz(ham);
+    if (c.hata) { toast(c.hata); temizleOdakla(); return; }
+    if (!(c.kg > 0)) { toast("Barkodda kilo yok (0 kg) — ağırlık varken basılan etiketi okut"); temizleOdakla(); return; }
+    // Aynı barkod 2 sn içinde ikinci kez gelirse yok say (okuyucu bazen çift gönderir; 2 sn sonrası
+    // aynı kiloda GERÇEK ikinci bir rulo olabilir, o yüzden süre kısa tutuldu)
+    if (__tartimSonOkut && __tartimSonOkut.kod === ham && (Date.now() - __tartimSonOkut.zaman) < 2000) { temizleOdakla(); return; }
+    __tartimSonOkut = { kod: ham, zaman: Date.now() };
+    v = c.kg;
+    toast("✓ Barkod: " + fmtKg(v) + " kg");
+  } else {
+    v = parseTL(ham);
+    if (isNaN(v) || v <= 0) { toast("Geçerli kg girin ya da barkod okutun"); return; }
+  }
+  tartim.gruplar[gi].satirlar.push({brut: v});
+  tartimKaydet();
+  render();
+  temizleOdakla();
 }
 
 function tartimSatirSil(gi, i) {
   tartim.gruplar[gi].satirlar.splice(i,1);
   tartimKaydet();
   render();
+}
+
+function tartimStogaEkle() {
+  const dolular = tartim.gruplar.filter(g => g.satirlar.length);
+  if (!dolular.length) { toast("Önce kg gir ya da barkod okut"); return; }
+  for (const g of dolular) {
+    if (g.stokIdx === "" || !data.mamul[parseInt(g.stokIdx)]) { toast("Stoğa eklemek için her ürün grubunda Stok Ürünü seçilmeli"); return; }
+  }
+  if (tartim.stogaEklendi) {
+    if (!confirm("DİKKAT: Bu liste daha önce stoğa eklendi. Devam edersen listedeki BÜTÜN bobinler İKİNCİ KEZ eklenir.\n\nYine de devam edilsin mi?")) return;
+  }
+  const ozet = dolular.map(g => {
+    const m = data.mamul[parseInt(g.stokIdx)];
+    const oz = tartimGrupOzetHesapla(g);
+    return "+ " + m.kalite + " " + m.tip + " " + m.genislik + (m.gramaj !== "-" ? " " + m.gramaj : "") + " × " + oz.adet + " bobin (" + fmtKg(oz.brutT) + " kg)";
+  }).join("\n");
+  if (!confirm("Üretim stoğa eklensin mi?\n\n" + ozet + "\n\n(Liste silinmez — ardından A4/PDF çıktısı alabilirsin. Aynı listeyi ikinci kez ekleme.)")) return;
+  dolular.forEach(g => { data.mamul[parseInt(g.stokIdx)].adet += g.satirlar.length; });
+  tartim.stogaEklendi = true;
+  tartimKaydet();
+  save();
+  render();
+  toast("✓ Stoğa eklendi — stok güncellendi");
 }
 
 function tartimTemizle() {
@@ -1486,7 +1534,7 @@ function rTartim() {
     html += '<div><div class="mini" style="margin-bottom:5px">Stok Ürünü <span style="color:var(--red)">*</span> — stok düşümü ve masura raporu için zorunlu</div><select onchange="tartimGrupStokSec('+gi+',this.value)"><option value="">— ürün seç —</option>'
       + data.mamul.map((m,mi) => '<option value="'+mi+'"'+(String(g.stokIdx)===String(mi)?" selected":"")+'>'+esc(m.kalite+" · "+m.tip+" · "+m.genislik+(m.gramaj!=="-"?" · "+m.gramaj:""))+' (stok: '+m.adet+')</option>').join("")
       + '</select></div>';
-    html += '<div><div class="mini" style="margin-bottom:5px">Kg gir → Enter</div><div style="display:flex;gap:8px"><input type="text" id="t-brut-'+gi+'" inputmode="decimal" placeholder="ör. 12,4" onkeydown="if(event.key===\'Enter\')tartimGir('+gi+',this.value)"><button class="chip" style="flex-shrink:0" onclick="tartimGir('+gi+',document.getElementById(\'t-brut-'+gi+'\').value)">Ekle</button></div></div>';
+    html += '<div><div class="mini" style="margin-bottom:5px">Kg yaz ya da barkod okut → Enter <span style="opacity:.7">(imleç kutudayken okuyucunun tetiğine bas)</span></div><div style="display:flex;gap:8px"><input type="text" id="t-brut-'+gi+'" inputmode="decimal" placeholder="ör. 12,4 ya da ▎ barkod" onkeydown="if(event.key===\'Enter\')tartimGir('+gi+',this.value)"><button class="chip" style="flex-shrink:0" onclick="tartimGir('+gi+',document.getElementById(\'t-brut-'+gi+'\').value)">Ekle</button></div></div>';
     html += '</div>';
     if (g.satirlar.length) {
       html += '<div class="scroll" style="margin-top:10px"><table><tr><th>#</th><th class="num">Kg</th><th></th></tr>';
@@ -1502,181 +1550,8 @@ function rTartim() {
     + '<div class="mini" style="margin-top:6px">Aynı tartım partisinde birden fazla ürün/genişlik varsa buradan ekle — her biri satışa ayrı kalem olarak aktarılır, masura hesabı hiçbirini karıştırmaz.</div></div>';
 
   if (oz.adet > 0) {
-    html += '<div class="card"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="tartimSatisaAktar()">→ Satış Kaydına Aktar</button><button class="chip" onclick="tartimYazdir()">🖨 A4 Yazdır / PDF</button><button class="chip" style="color:var(--red);border-color:var(--red)" onclick="tartimTemizle()">Temizle</button></div></div>';
-  }
-  return html;
-}
-
-// ============ BARKOD OKUTMA ============
-// Terazi etiketi EAN13 yapısı: 27 | PPPPP (ürün/PLU) | WWWWW (kg × 100) | K (kontrol)
-// Örn. 2701001087202 -> PLU 01001, 87,20 kg. Ürün panelden seçilir (terazide tek PLU kayıtlı),
-// barkoddan yalnızca kilo alınır; PLU yine de saklanır ki ileride ürünler teraziye ayrı ayrı
-// tanımlanırsa otomatik ürün eşleme buraya eklenebilsin.
-function resetBForm() { bForm = { mod: "uretim", mamulIdx: "", okutmalar: [], sonMesaj: null }; }
-function bOdakla() { const el = document.getElementById("b-scan"); if (el && document.activeElement !== el) el.focus(); }
-function bModSet(m) { bForm.mod = m; bForm.sonMesaj = null; render(); }
-function bMamulSet(v) { bForm.mamulIdx = v; bForm.sonMesaj = null; render(); }
-
-function barkodCoz(kod) {
-  const s = String(kod).replace(/\D/g, "");
-  if (s.length !== 13) return { hata: "Geçersiz barkod — 13 hane bekleniyordu, " + s.length + " hane okundu" };
-  let t = 0; for (let i = 0; i < 12; i++) t += (i % 2 === 0 ? 1 : 3) * parseInt(s[i]);
-  if ((10 - (t % 10)) % 10 !== parseInt(s[12])) return { hata: "Barkod kontrol hanesi tutmuyor — etiketi tekrar okut" };
-  return { plu: s.slice(2, 7), kg: parseInt(s.slice(7, 12)) / 100 };
-}
-
-function bScanKey(ev) {
-  if (ev.key !== "Enter") return;
-  ev.preventDefault();
-  const kod = ev.target.value.trim();
-  ev.target.value = "";
-  if (kod) bOkut(kod);
-}
-
-function bOkut(kod) {
-  if (bForm.mamulIdx === "") { bForm.sonMesaj = { tip: "hata", metin: "Önce üstten ürün seç — okutma o ürüne işlenecek" }; render(); return; }
-  const c = barkodCoz(kod);
-  if (c.hata) { bForm.sonMesaj = { tip: "hata", metin: c.hata }; render(); return; }
-  if (!(c.kg > 0)) { bForm.sonMesaj = { tip: "hata", metin: "Barkodda kilo yok (0 kg) — terazide ağırlık varken basılan etiketi okut" }; render(); return; }
-  // Çift tetik koruması: okuyucu bazen aynı okumayı iki kez gönderir — aynı barkod 2 sn içinde tekrar gelirse yok sayılır.
-  // (2 sn'den sonra gelen aynı barkod, aynı kiloda GERÇEK ikinci bir rulo olabilir; o yüzden süre kısa tutuldu.)
-  const son = bForm.okutmalar[bForm.okutmalar.length - 1];
-  if (son && son.kod === kod && (Date.now() - son.zaman) < 2000) return;
-  bForm.okutmalar.push({ kod, kg: c.kg, plu: c.plu, mamulIdx: parseInt(bForm.mamulIdx), zaman: Date.now() });
-  bForm.sonMesaj = { tip: "ok", metin: "✓ " + fmtKg(c.kg) + " kg eklendi (" + bForm.okutmalar.length + ". bobin)" };
-  render();
-}
-
-function bOkutmaSil(i) { bForm.okutmalar.splice(i, 1); bForm.sonMesaj = null; render(); }
-function bSonGeriAl() {
-  if (!bForm.okutmalar.length) return;
-  const o = bForm.okutmalar.pop();
-  bForm.sonMesaj = { tip: "ok", metin: "↩ Son okutma geri alındı (" + fmtKg(o.kg) + " kg)" };
-  render();
-}
-function bTemizle() {
-  if (bForm.okutmalar.length && !confirm("Okutulan " + bForm.okutmalar.length + " bobin listeden silinsin mi? (Stoğa henüz işlenmedi)")) return;
-  resetBForm(); render();
-}
-
-// Okutmaları ürüne göre gruplar — oturum içinde ürün değiştirilse de her okutma kendi ürününü taşır
-function bGruplar() {
-  const g = {};
-  bForm.okutmalar.forEach(o => {
-    if (!g[o.mamulIdx]) g[o.mamulIdx] = { m: data.mamul[o.mamulIdx], adet: 0, kg: 0 };
-    g[o.mamulIdx].adet += 1;
-    g[o.mamulIdx].kg += o.kg;
-  });
-  return Object.values(g);
-}
-function bUrunAd(m) { return m ? m.kalite + " " + m.tip + " " + m.genislik + (m.gramaj !== "-" ? " " + m.gramaj : "") : "?"; }
-
-function bKaydet() {
-  const gruplar = bGruplar();
-  if (!gruplar.length) { toast("Önce barkod okut"); return; }
-  const uretimMi = bForm.mod === "uretim";
-  if (!uretimMi) {
-    for (const g of gruplar) {
-      if (g.m && g.adet > g.m.adet) {
-        if (!confirm(bUrunAd(g.m) + " stoğu " + fmtKg(g.m.adet) + " bobin — " + g.adet + " bobin sevk okutuldu. Stok eksiye düşecek, devam edilsin mi?")) return;
-      }
-    }
-  }
-  const kalemler = gruplar.map(g => {
-    if (g.m) g.m.adet += uretimMi ? g.adet : -g.adet;
-    return {
-      key: g.m ? g.m.kalite + "|" + g.m.tip + "|" + g.m.genislik + "|" + g.m.gramaj : "?",
-      ad: bUrunAd(g.m), adet: g.adet, kg: Math.round(g.kg * 100) / 100
-    };
-  });
-  const kayit = {
-    __id: "b_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
-    tarih: yerelTarihStr(),
-    saat: new Date().toTimeString().slice(0, 5),
-    mod: bForm.mod,
-    kalemler,
-    toplamAdet: kalemler.reduce((s, k) => s + k.adet, 0),
-    toplamKg: Math.round(kalemler.reduce((s, k) => s + k.kg, 0) * 100) / 100
-  };
-  data.barkodOturumlari.push(kayit);
-  if (data.barkodOturumlari.length > 300) data.barkodOturumlari = data.barkodOturumlari.slice(-300);
-  save();
-  resetBForm();
-  bForm.sonMesaj = { tip: "ok", metin: (uretimMi ? "✓ Stoğa eklendi" : "✓ Stoktan düşüldü") + " — " + kayit.toplamAdet + " bobin, " + fmtKg(kayit.toplamKg) + " kg" };
-  render();
-}
-
-function bOturumGeriAl(id) {
-  const idx = (data.barkodOturumlari || []).findIndex(o => o.__id === id);
-  if (idx < 0) return;
-  const o = data.barkodOturumlari[idx];
-  const yon = o.mod === "uretim" ? "stoktan geri düşülecek" : "stoğa geri eklenecek";
-  if (!confirm(fmtTarih(o.tarih) + " " + o.saat + " oturumu geri alınsın mı? " + o.toplamAdet + " bobin " + yon + ".")) return;
-  o.kalemler.forEach(k => {
-    const m = data.mamul.find(m => m.kalite + "|" + m.tip + "|" + m.genislik + "|" + m.gramaj === k.key);
-    if (m) m.adet += o.mod === "uretim" ? -k.adet : k.adet;
-  });
-  data.barkodOturumlari.splice(idx, 1);
-  save(); render();
-  toast("Oturum geri alındı — stok düzeltildi");
-}
-
-function rBarkod() {
-  if (!bForm) resetBForm();
-  const uretimMi = bForm.mod === "uretim";
-  const gruplar = bGruplar();
-  const toplamKg = Math.round(bForm.okutmalar.reduce((s, o) => s + o.kg, 0) * 100) / 100;
-
-  let html = '<div class="card" onclick="bOdakla()"><div class="mtitle">Barkod Okut <span class="pill">' + (uretimMi ? "üretim → stoğa ekle" : "sevk → stoktan düş") + '</span></div>';
-  html += '<div class="chips">'
-    + '<button class="chip' + (uretimMi ? " on" : "") + '" onclick="event.stopPropagation();bModSet(\'uretim\')">📦 Üretim — stoğa ekle</button>'
-    + '<button class="chip' + (!uretimMi ? " on" : "") + '" onclick="event.stopPropagation();bModSet(\'satis\')">🚚 Satış / Sevk — stoktan düş</button></div>';
-  html += '<div class="mini" style="margin-bottom:5px">Ürün — okutulan her barkod bu ürüne işlenir; ürün değiştirip okutmaya devam edebilirsin</div>';
-  html += '<select onclick="event.stopPropagation()" onchange="event.stopPropagation();bMamulSet(this.value)"><option value="">— ürün seç —</option>'
-    + data.mamul.map((m, mi) => '<option value="' + mi + '"' + (String(bForm.mamulIdx) === String(mi) ? " selected" : "") + '>' + esc(m.kalite + " · " + m.tip + " · " + m.genislik + (m.gramaj !== "-" ? " · " + m.gramaj : "")) + " (stok: " + m.adet + ")</option>").join("")
-    + '</select>';
-  html += '<div class="mini" style="margin:10px 0 5px">İmleç aşağıdaki alandayken okuyucunun tetiğine bas — elle yazıp Enter da olur</div>';
-  html += '<input type="text" id="b-scan" autocomplete="off" placeholder="▮ okutmaya hazır…" onkeydown="bScanKey(event)" style="font-size:18px;letter-spacing:.05em">';
-  if (bForm.sonMesaj) {
-    const ok = bForm.sonMesaj.tip === "ok";
-    html += '<div style="margin-top:10px;padding:12px 14px;border-radius:10px;font-weight:800;font-size:16px;background:' + (ok ? "var(--green-bg)" : "var(--red-bg)") + ';color:' + (ok ? "var(--green)" : "var(--red)") + '">' + esc(bForm.sonMesaj.metin) + '</div>';
-  }
-  html += '</div>';
-
-  html += '<div class="kpi-grid" style="grid-template-columns:1fr 1fr">'
-    + '<div class="kpi"><div class="lbl">Okutulan Bobin</div><div class="v">' + bForm.okutmalar.length + '</div></div>'
-    + '<div class="kpi"><div class="lbl">Toplam Kg</div><div class="v yesil">' + fmtKg(toplamKg) + '</div></div></div>';
-
-  if (bForm.okutmalar.length) {
-    html += '<div class="card"><div class="mtitle">Okutulanlar' + (gruplar.length > 1 ? ' <span class="pill">' + gruplar.length + ' farklı ürün</span>' : '') + '</div>';
-    if (gruplar.length > 1) {
-      html += '<div style="margin-bottom:10px">' + gruplar.map(g => '<div class="mini" style="margin-bottom:3px"><b style="color:var(--ink)">' + esc(bUrunAd(g.m)) + '</b> — ' + g.adet + ' bobin · ' + fmtKg(Math.round(g.kg * 100) / 100) + ' kg</div>').join("") + '</div>';
-    }
-    html += '<div class="scroll"><table><tr><th>#</th><th>Ürün</th><th class="num">Kg</th><th></th></tr>';
-    for (let i = bForm.okutmalar.length - 1; i >= 0; i--) {
-      const o = bForm.okutmalar[i];
-      html += '<tr><td>' + (i + 1) + '</td><td>' + esc(bUrunAd(data.mamul[o.mamulIdx])) + '</td><td class="num">' + fmtKg(o.kg) + '</td><td style="text-align:right"><button class="sil-x" onclick="bOkutmaSil(' + i + ')">×</button></td></tr>';
-    }
-    html += '</table></div>';
-    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
-      + '<button class="chip" style="color:var(--green);border-color:var(--green);font-size:14px" onclick="bKaydet()">' + (uretimMi ? "✓ Stoğa Ekle" : "✓ Stoktan Düş") + " — " + bForm.okutmalar.length + " bobin · " + fmtKg(toplamKg) + ' kg</button>'
-      + '<button class="chip" onclick="bSonGeriAl()">↩ Son Okutmayı Geri Al</button>'
-      + '<button class="chip" style="color:var(--red);border-color:var(--red)" onclick="bTemizle()">Temizle</button></div>';
-    if (!uretimMi) html += '<div class="mini" style="margin-top:8px">Not: Bu ekran yalnız <b>stok ve kiloyu</b> işler. Faturayı/tahsilatı + Kayıt sekmesinden girerken <b>ürün kalemi ekleme</b> — stok burada zaten düşüldü, orada tekrar düşülmesin. Satış Kg alanına buradaki toplam kiloyu yazabilirsin.</div>';
-    html += '</div>';
-  }
-
-  const oturumlar = (data.barkodOturumlari || []).slice(-8).reverse();
-  if (oturumlar.length) {
-    html += '<div class="card"><div class="mtitle">Son Oturumlar</div>';
-    oturumlar.forEach(o => {
-      const ozet = (o.kalemler || []).map(k => esc(k.ad) + " ×" + k.adet + " (" + fmtKg(k.kg) + " kg)").join(", ");
-      html += '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #262837">'
-        + '<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:13px">' + (o.mod === "uretim" ? "📦 Üretim" : "🚚 Sevk") + " · " + fmtTarih(o.tarih) + " " + (o.saat || "") + '</div>'
-        + '<div class="mini" style="margin-top:2px">' + ozet + " — <b>" + o.toplamAdet + " bobin · " + fmtKg(o.toplamKg) + ' kg</b></div></div>'
-        + '<button class="sil-x" title="Geri al" onclick="bOturumGeriAl(\'' + o.__id + '\')">↩</button></div>';
-    });
-    html += '</div>';
+    html += '<div class="card"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="tartimSatisaAktar()">→ Satış Kaydına Aktar</button><button class="chip" style="color:var(--blue);border-color:var(--blue)" onclick="tartimStogaEkle()">➕ Stoğa Ekle (Üretim)</button><button class="chip" onclick="tartimYazdir()">🖨 A4 Yazdır / PDF</button><button class="chip" style="color:var(--red);border-color:var(--red)" onclick="tartimTemizle()">Temizle</button></div></div>';
+    html += '<div class="mini" style="margin-top:-6px;margin-bottom:12px;padding:0 4px"><b>Stoğa Ekle</b> = üretimden gelen bobinler stok adedine eklenir · <b>Satışa Aktar</b> = satış kaydına geçer, kaydedince stoktan düşer · iki durumda da liste durur, A4/PDF çıktısını alabilirsin</div>';
   }
   return html;
 }
