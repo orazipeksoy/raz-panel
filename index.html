@@ -2527,6 +2527,10 @@ function duzenleKaydet(id) {
 }
 
 // ============ TAHSİLAT (KISMİ ÖDEME DESTEKLİ) ============
+// Tahsilat modallarındaki tarih seçicilerin hedefleri — tarihSeciciHtml bu isimlerle çağırır
+function tahsilatTarihSet(iso) { window.__tahsilatTarih = iso; }
+function musteriTahsilatTarihSet(iso) { window.__musteriTahsilatTarih = iso; }
+
 // Bir satışın tahsilat durumunu hesaplar. h.tahsilatlar varsa (yeni sistem) onu kullanır;
 // yoksa eski h.odendi boolean'ından (geriye dönük uyumluluk) türetir.
 function tahsilatDurumu(h) {
@@ -2544,6 +2548,7 @@ function tahsilatModal(hId) {
   const h = data.hareketler.find(x => x.__id === hId);
   if (!h) return;
   window.__tahsilatHedefId = hId;
+  window.__tahsilatTarih = yerelTarihStr(); // modal her açılışta bugüne döner; kullanıcı geriye dönük tarih seçebilir
   const overlay = document.createElement("div");
   overlay.id = "tahsilat-modal";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto";
@@ -2572,7 +2577,9 @@ function tahsilatModalIcerik(h) {
     });
   }
   if (durum.kalan > 0.01) {
-    html += '<div style="margin-top:14px"><div class="mini" style="margin-bottom:5px">Yeni Tahsilat Tutarı (kısmi girebilirsin)</div>'
+    html += '<div style="margin-top:14px"><div class="mini" style="margin-bottom:5px">Tahsilat Tarihi — paranın hesaba geçtiği gün</div>'
+      + tarihSeciciHtml("tht", window.__tahsilatTarih || yerelTarihStr(), "tahsilatTarihSet") + '</div>';
+    html += '<div style="margin-top:10px"><div class="mini" style="margin-bottom:5px">Yeni Tahsilat Tutarı (kısmi girebilirsin)</div>'
       + '<input type="text" id="tahsilat-tutar" inputmode="decimal" value="'+String(durum.kalan.toFixed(2)).replace(".",",")+'"></div>';
     html += '<button class="btn" style="background:var(--green);margin-top:10px" onclick="tahsilatEkle()">✓ Tahsilatı Kaydet</button>';
   } else {
@@ -2594,7 +2601,7 @@ function tahsilatEkle() {
     if (!confirm("Girilen tutar ("+fmt(n)+") kalan bakiyeden ("+fmt(durum.kalan)+") fazla. Yine de kaydedilsin mi?")) return;
   }
   if (!h.tahsilatlar) h.tahsilatlar = [];
-  h.tahsilatlar.push({ tarih: yerelTarihStr(), tutar: n });
+  h.tahsilatlar.push({ tarih: window.__tahsilatTarih || yerelTarihStr(), tutar: n });
   h.odendi = tahsilatDurumu(h).tamamlandiMi;
   save();
   const modalEl = document.getElementById("tahsilat-modal");
@@ -2614,7 +2621,7 @@ function cariUygulaTekil() {
   const uygulanan = Math.min(kredi, durum.kalan);
   if (uygulanan <= 0.01) { toast("Bu faturada zaten kalan bakiye yok"); return; }
   if (!h.tahsilatlar) h.tahsilatlar = [];
-  h.tahsilatlar.push({ tarih: yerelTarihStr(), tutar: uygulanan });
+  h.tahsilatlar.push({ tarih: window.__tahsilatTarih || yerelTarihStr(), tutar: uygulanan });
   data.cariBakiyeler[anahtar] = kredi - uygulanan;
   if (data.cariBakiyeler[anahtar] < 0.01) delete data.cariBakiyeler[anahtar];
   h.odendi = tahsilatDurumu(h).tamamlandiMi;
@@ -2675,6 +2682,7 @@ function musteriTahsilatDagitimHesapla(musteriAdi, tutar) {
 
 function musteriTahsilatModal(musteriAdi) {
   window.__musteriTahsilatHedef = musteriAdi;
+  window.__musteriTahsilatTarih = yerelTarihStr();
   const overlay = document.createElement("div");
   overlay.id = "musteri-tahsilat-modal";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto";
@@ -2701,7 +2709,9 @@ function musteriTahsilatIcerik() {
   } else {
     html += '<div class="mini" style="margin-top:6px">Bu müşteride bekleyen fatura yok'+(mevcutKredi>0.01?" — girdiğin tutar tamamen cari bakiyeye eklenecek.":".")+'</div>';
   }
-  html += '<div style="margin-top:14px"><div class="mini" style="margin-bottom:5px">Alınan Toplu Ödeme Tutarı</div>'
+  html += '<div style="margin-top:14px"><div class="mini" style="margin-bottom:5px">Tahsilat Tarihi — paranın hesaba geçtiği gün</div>'
+    + tarihSeciciHtml("mtt", window.__musteriTahsilatTarih || yerelTarihStr(), "musteriTahsilatTarihSet") + '</div>';
+  html += '<div style="margin-top:10px"><div class="mini" style="margin-bottom:5px">Alınan Toplu Ödeme Tutarı</div>'
     + '<input type="text" id="musteri-tahsilat-tutar" inputmode="decimal" placeholder="ör. 40000" oninput="musteriTahsilatOnizle()"></div>';
   html += '<div id="musteri-tahsilat-onizleme"></div>';
   html += '<button class="btn" style="background:var(--green);margin-top:10px" onclick="musteriTahsilatUygula()">✓ Dağıt ve Kaydet</button>';
@@ -2736,7 +2746,7 @@ function musteriTahsilatUygula() {
   if (isNaN(n) || n <= 0) { toast("Geçerli bir tutar girin"); return; }
   const musteriAdi = window.__musteriTahsilatHedef;
   const { dagitim, kullanilmayanTutar } = musteriTahsilatDagitimHesapla(musteriAdi, n);
-  const bugun = yerelTarihStr();
+  const bugun = window.__musteriTahsilatTarih || yerelTarihStr();
   dagitim.forEach(d => {
     if (!d.h.tahsilatlar) d.h.tahsilatlar = [];
     d.h.tahsilatlar.push({ tarih: bugun, tutar: d.uygulanan });
@@ -2758,6 +2768,134 @@ function musteriTahsilatModalKapat() {
   const el = document.getElementById("musteri-tahsilat-modal");
   if (el) el.remove();
   window.__musteriTahsilatHedef = null;
+}
+
+// ============ CARİ HESAP EKSTRESİ ============
+// Muhasebeci usulü: satışlar Borç, tahsilatlar Alacak, tarih sırasında yürüyen bakiye.
+// Rakamlar Müşteriler sekmesindeki "Bekleyen" ile birebir aynı mantıktan (tahsilatDurumu) türetilir:
+// tahsilat listesi olmayan ama ödendi işaretli eski kayıtlar, satış tarihinde peşin tahsil edilmiş sayılır.
+function musteriEkstreSatirlari(musteriAdi) {
+  const norm = normMusteri(musteriAdi);
+  const satirlar = [];
+  data.hareketler.forEach(h => {
+    if (h.tur !== "GELİR" || !(h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış")) return;
+    if (normMusteri(h.aciklama) !== norm) return;
+    const durum = tahsilatDurumu(h);
+    let acik = h.kategori;
+    if (h.kg) acik += " · " + fmtKg(h.kg) + " kg";
+    if (h.not) acik += " — " + h.not;
+    satirlar.push({ tarih: h.tarih, sira: 0, aciklama: acik, borc: h.gelir || 0, alacak: 0 });
+    if (h.tahsilatlar && h.tahsilatlar.length) {
+      h.tahsilatlar.forEach(t => satirlar.push({ tarih: t.tarih, sira: 1, aciklama: "Tahsilat", borc: 0, alacak: t.tutar || 0 }));
+    } else if (durum.tamamlandiMi) {
+      satirlar.push({ tarih: h.tarih, sira: 1, aciklama: "Tahsilat (peşin)", borc: 0, alacak: h.gelir || 0 });
+    }
+  });
+  satirlar.sort((a, b) => a.tarih.localeCompare(b.tarih) || a.sira - b.sira);
+  let bakiye = 0;
+  satirlar.forEach(s => { bakiye += s.borc - s.alacak; s.bakiye = bakiye; });
+  return satirlar;
+}
+
+function musteriEkstreModal(musteriAdi) {
+  window.__ekstreHedef = musteriAdi;
+  const satirlar = musteriEkstreSatirlari(musteriAdi);
+  const tBorc = satirlar.reduce((s, x) => s + x.borc, 0);
+  const tAlacak = satirlar.reduce((s, x) => s + x.alacak, 0);
+  const bakiye = tBorc - tAlacak;
+  const kredi = data.cariBakiyeler[normMusteri(musteriAdi)] || 0;
+  let html = '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:640px;max-height:88vh;overflow:auto">';
+  html += '<div class="mtitle">📄 Cari Ekstre — ' + esc(musteriAdi) + '</div>';
+  html += '<div class="hesap-satir"><span>Toplam Borç (satışlar)</span><b>' + pg(fmt(tBorc)) + '</b></div>';
+  html += '<div class="hesap-satir"><span>Toplam Alacak (tahsilatlar)</span><b class="yesil">' + pg(fmt(tAlacak)) + '</b></div>';
+  html += '<div class="hesap-satir"><span>Bakiye</span><b class="' + (bakiye > 0.01 ? "kirmizi" : "yesil") + '">' + pg(fmt(bakiye)) + (bakiye > 0.01 ? " borçlu" : (bakiye < -0.01 ? " alacaklı" : "")) + '</b></div>';
+  if (kredi > 0.01) html += '<div class="mini" style="color:var(--green);margin-top:4px">+ ' + pg(fmt(kredi)) + ' cari bakiyesi (fazla ödeme) ayrıca duruyor — sonraki faturadan otomatik düşer.</div>';
+  if (satirlar.length) {
+    html += '<div class="scroll" style="margin-top:12px"><table><tr><th>Tarih</th><th>Açıklama</th><th class="num">Borç</th><th class="num">Alacak</th><th class="num">Bakiye</th></tr>';
+    satirlar.forEach(s => {
+      html += '<tr><td style="white-space:nowrap">' + fmtTarih(s.tarih) + '</td><td>' + esc(s.aciklama) + '</td>'
+        + '<td class="num">' + (s.borc ? pg(fmt(s.borc)) : "—") + '</td>'
+        + '<td class="num yesil">' + (s.alacak ? pg(fmt(s.alacak)) : "—") + '</td>'
+        + '<td class="num" style="font-weight:700;color:' + (s.bakiye > 0.01 ? "var(--red)" : "var(--green)") + '">' + pg(fmt(s.bakiye)) + '</td></tr>';
+    });
+    html += '</table></div>';
+  } else {
+    html += '<div class="mini" style="margin-top:10px">Bu müşteride satış kaydı yok.</div>';
+  }
+  html += '<button class="btn" style="background:var(--navy);margin-top:12px" onclick="musteriEkstreYazdir()">🖨 A4 Yazdır / PDF</button>';
+  html += '<button class="btn" style="background:#2A2C3A;margin-top:8px" onclick="musteriEkstreKapat()">Kapat</button>';
+  html += '</div>';
+  const overlay = document.createElement("div");
+  overlay.id = "ekstre-modal";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto";
+  overlay.innerHTML = html;
+  document.body.appendChild(overlay);
+}
+
+function musteriEkstreKapat() {
+  const el = document.getElementById("ekstre-modal");
+  if (el) el.remove();
+  window.__ekstreHedef = null;
+}
+
+function musteriEkstreYazdir() {
+  const musteriAdi = window.__ekstreHedef;
+  if (!musteriAdi) return;
+  const satirlar = musteriEkstreSatirlari(musteriAdi);
+  if (!satirlar.length) { toast("Bu müşteride kayıt yok"); return; }
+  const tBorc = satirlar.reduce((s, x) => s + x.borc, 0);
+  const tAlacak = satirlar.reduce((s, x) => s + x.alacak, 0);
+  const bakiye = tBorc - tAlacak;
+  const kredi = data.cariBakiyeler[normMusteri(musteriAdi)] || 0;
+  const pFmt = v => v ? "\u20BA" + Number(v).toLocaleString("tr-TR", {minimumFractionDigits: 2, maximumFractionDigits: 2}) : "";
+  let satirHtml = "";
+  satirlar.forEach(s => {
+    satirHtml += '<tr><td class="t">' + fmtTarih(s.tarih) + '</td><td class="a">' + esc(s.aciklama) + '</td>'
+      + '<td class="n">' + pFmt(s.borc) + '</td><td class="n">' + pFmt(s.alacak) + '</td>'
+      + '<td class="n b">' + "\u20BA" + Number(s.bakiye).toLocaleString("tr-TR", {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td></tr>';
+  });
+  const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Cari Ekstre</title><style>'
+    + '@page { size: A4 portrait; margin: 8mm; }'
+    + '* { box-sizing: border-box; margin: 0; padding: 0; }'
+    + 'body { font-family: Arial, sans-serif; color: #000; background: #fff; }'
+    + '.ekran-sarma { width: 100%; max-width: 190mm; margin: 0 auto; padding: 10px; }'
+    + '.yazdir-btn { display: block; width: 100%; margin-bottom: 10px; padding: 16px; font-size: 17px; font-weight: bold; cursor: pointer; background: #4A3670; color: #fff; border: none; border-radius: 10px; -webkit-appearance: none; }'
+    + '.yazdir-not { font-size: 12px; color: #666; text-align: center; margin-bottom: 14px; line-height: 1.5; }'
+    + '.baslik { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #000; padding-bottom: 2mm; margin-bottom: 2mm; flex-wrap: wrap; }'
+    + '.baslik h1 { font-size: 13pt; letter-spacing: .5px; }'
+    + '.baslik .alt { font-size: 8pt; color: #444; }'
+    + '.bilgi { display: flex; gap: 7mm; font-size: 9pt; margin-bottom: 3mm; flex-wrap: wrap; }'
+    + '.bilgi b { border-bottom: 1px solid #000; padding: 0 2mm 1px; display: inline-block; }'
+    + 'table { width: 100%; border-collapse: collapse; }'
+    + 'tr { page-break-inside: avoid; }'
+    + 'th { background: #E8E8E8; font-size: 8.5pt; padding: 1.5mm 2mm; border: 1px solid #000; text-align: left; }'
+    + 'th.n, td.n { text-align: right; }'
+    + 'td { border: 1px solid #000; padding: 1.2mm 2mm; font-size: 8.5pt; vertical-align: middle; }'
+    + 'td.t { white-space: nowrap; width: 20mm; }'
+    + 'td.n { font-variant-numeric: tabular-nums; white-space: nowrap; width: 26mm; }'
+    + 'td.b { font-weight: bold; }'
+    + '.toplam { display: flex; justify-content: flex-end; gap: 8mm; margin-top: 2mm; font-size: 10pt; border-top: 2px solid #000; padding-top: 2mm; flex-wrap: wrap; }'
+    + '.toplam b { font-size: 11.5pt; }'
+    + '.dipnot { font-size: 8pt; color: #444; margin-top: 2mm; }'
+    + '@media print { .yazdir-btn, .yazdir-not { display: none; } .ekran-sarma { max-width: none; padding: 0; } }'
+    + '</style></head><body>'
+    + '<div class="ekran-sarma">'
+    + '<button class="yazdir-btn" onclick="window.print()">🖨 Yazdır / PDF Olarak Kaydet</button>'
+    + '<div class="yazdir-not">Alttaki adres/tarih yazısı çıkarsa tarayıcının yazdırma ekranında "Üstbilgiler ve Altbilgiler" seçeneğini kapatabilirsin.</div>'
+    + '<div class="baslik"><h1>RAZ PLASTİK</h1><span class="alt">Poliwood — Cari Hesap Ekstresi</span></div>'
+    + '<div class="bilgi">'
+    + '<span>Müşteri: <b>' + esc(musteriAdi) + '</b></span>'
+    + '<span>Dönem: <b>' + fmtTarih(satirlar[0].tarih) + ' — ' + fmtTarih(satirlar[satirlar.length - 1].tarih) + '</b></span>'
+    + '<span>Düzenleme: <b>' + fmtTarih(yerelTarihStr()) + '</b></span>'
+    + '</div>'
+    + '<table><tr><th>Tarih</th><th>Açıklama</th><th class="n">Borç</th><th class="n">Alacak</th><th class="n">Bakiye</th></tr>' + satirHtml + '</table>'
+    + '<div class="toplam"><span>Borç: <b>' + pFmt(tBorc) + '</b></span><span>Alacak: <b>' + pFmt(tAlacak) + '</b></span><span>Bakiye: <b>' + "\u20BA" + Number(bakiye).toLocaleString("tr-TR", {minimumFractionDigits: 2, maximumFractionDigits: 2}) + (bakiye > 0.01 ? " borçlu" : (bakiye < -0.01 ? " alacaklı" : "")) + '</b></span></div>'
+    + (kredi > 0.01 ? '<div class="dipnot">Not: Müşterinin ' + pFmt(kredi) + ' cari bakiyesi (fazla ödemesi) vardır; bir sonraki faturadan düşülecektir.</div>' : '')
+    + '</div></body></html>';
+  const blob = new Blob([sayfa], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, "_blank");
+  if (!w) { yazdirLinkGoster(url, "Ekstre Hazır", "Cari Ekstreyi Aç"); return; }
 }
 
 // Hareketler tablosunda tahsilat sütununu (durum + tıklanabilir) üretir
@@ -4026,7 +4164,7 @@ function rMusteriler(H) {
       + (bekleyen>0.01?'<span style="color:var(--red);font-weight:800">'+pg(fmt(bekleyen))+'</span>':'<span style="color:var(--mut)">—</span>')
       + (kredi>0.01?'<div class="mini" style="color:var(--green);font-weight:700">+'+pg(fmt(kredi))+' cari</div>':'')
       + '</td>'
-      + '<td style="text-align:right">'+((bekleyen>0.01||kredi>0.01)?'<button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap" onclick="musteriTahsilatModal(\''+jsStr(ad)+'\')">💰 Tahsilat</button>':'')+'</td>'
+      + '<td style="text-align:right;white-space:nowrap"><button class="chip" style="white-space:nowrap" onclick="musteriEkstreModal(\''+jsStr(ad)+'\')">📄 Ekstre</button>'+((bekleyen>0.01||kredi>0.01)?' <button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap" onclick="musteriTahsilatModal(\''+jsStr(ad)+'\')">💰 Tahsilat</button>':'')+'</td>'
       + '</tr>';
   });
   html += '</table></div></div>';
