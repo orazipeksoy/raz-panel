@@ -1279,7 +1279,18 @@ function barkodCoz(kod) {
   if ((10 - (t % 10)) % 10 !== parseInt(s[12])) return { hata: "Barkod kontrol hanesi tutmuyor — etiketi tekrar okut" };
   return { plu: s.slice(2, 7), kg: parseInt(s.slice(7, 12)) / 100 };
 }
-let __tartimSonOkut = null; // okuyucu çift tetik koruması — kaydedilmez, sayfa yenilenince sıfırlanır
+let __tartimSonOkut = null;
+let __tartimAktifGrup = 0; // en son kullanılan grup kutusu — imleç kaçarsa okuma buraya yönlendirilir
+document.addEventListener("keydown", function(e) {
+  if (tab !== "tartim") return;
+  const t = e.target, ad = t && t.tagName;
+  if (ad === "INPUT" || ad === "TEXTAREA" || ad === "SELECT") return;
+  if (!/^[0-9]$/.test(e.key)) return;
+  // İmleç kutuda değilken okuyucu tetiklendi: ilk hane kaybolabilir ama kontrol hanesi sayesinde
+  // eksik barkod asla yanlış kilo olarak işlenmez — kutu temizlenir, ikinci okutma tam oturur.
+  const inp = document.getElementById("t-brut-" + __tartimAktifGrup) || document.getElementById("t-brut-0");
+  if (inp) inp.focus();
+}); // okuyucu çift tetik koruması — kaydedilmez, sayfa yenilenince sıfırlanır
 
 function tartimGir(gi, deger) {
   const ham = String(deger).trim();
@@ -1293,9 +1304,9 @@ function tartimGir(gi, deger) {
     const c = barkodCoz(ham);
     if (c.hata) { toast(c.hata); temizleOdakla(); return; }
     if (!(c.kg > 0)) { toast("Barkodda kilo yok (0 kg) — ağırlık varken basılan etiketi okut"); temizleOdakla(); return; }
-    // Aynı barkod 2 sn içinde ikinci kez gelirse yok say (okuyucu bazen çift gönderir; 2 sn sonrası
-    // aynı kiloda GERÇEK ikinci bir rulo olabilir, o yüzden süre kısa tutuldu)
-    if (__tartimSonOkut && __tartimSonOkut.kod === ham && (Date.now() - __tartimSonOkut.zaman) < 2000) { temizleOdakla(); return; }
+    // Çift tetik koruması: okuyucu tek tetikte aynı okumayı bazen iki kez gönderir — bu MİLİSANİYELER
+    // içinde olur. Süre 0,4 sn tutuldu ki seri okutmada aynı kiloda GERÇEK ikinci bir rulo asla yutulmasın.
+    if (__tartimSonOkut && __tartimSonOkut.kod === ham && (Date.now() - __tartimSonOkut.zaman) < 400) { temizleOdakla(); return; }
     __tartimSonOkut = { kod: ham, zaman: Date.now() };
     v = c.kg;
     toast("✓ Barkod: " + fmtKg(v) + " kg");
@@ -1305,8 +1316,29 @@ function tartimGir(gi, deger) {
   }
   tartim.gruplar[gi].satirlar.push({brut: v});
   tartimKaydet();
-  render();
+  // Seri okutmada tam render YAPILMAZ: render imleci kutudan söküyor ve ~30ms'lik boşlukta gelen
+  // okumalar kayboluyordu (cihaz öter, panel duymaz). Bunun yerine tablo/sayaçlar yerinde güncellenir,
+  // imleç kutudan hiç çıkmaz. Tablo DOM'da yoksa (beklenmedik durum) bir kez tam render'a düşülür.
+  if (!tartimSatirEkleDom(gi, v)) render();
   temizleOdakla();
+}
+
+// Yeni satırı ve toplamları ekranı yeniden çizmeden işler — başarılıysa true döner.
+function tartimSatirEkleDom(gi, v) {
+  const tbl = document.getElementById("t-tbl-" + gi);
+  if (!tbl) return false;
+  const g = tartim.gruplar[gi];
+  const i = g.satirlar.length - 1;
+  const tr = document.createElement("tr");
+  tr.innerHTML = '<td>' + (i + 1) + '</td><td class="num">' + fmtKg(v) + '</td><td style="text-align:right"><button class="sil-x" onclick="tartimSatirSil(' + gi + ',' + i + ')">×</button></td>';
+  tbl.appendChild(tr);
+  const oz = tartimOzetHesapla();
+  const eAdet = document.getElementById("t-kpi-adet"); if (eAdet) eAdet.textContent = oz.adet;
+  const eKg = document.getElementById("t-kpi-kg"); if (eKg) eKg.textContent = fmtKg(oz.brutT);
+  const goz = tartimGrupOzetHesapla(g);
+  const ePill = document.getElementById("t-gpill-" + gi); if (ePill) ePill.textContent = goz.adet + " bobin · " + fmtKg(goz.brutT) + " kg";
+  const eBtn = document.getElementById("t-aksiyon-ozet"); if (eBtn) eBtn.textContent = oz.adet + " bobin · " + fmtKg(oz.brutT) + " kg";
+  return true;
 }
 
 function tartimSatirSil(gi, i) {
@@ -1370,6 +1402,7 @@ function tartimFirmaSec(n) {
 }
 
 function tartimYazdir() {
+  if (!tartimOzetHesapla().adet) { toast("Önce kg gir ya da barkod okut"); return; }
   const oz = tartimOzetHesapla();
   if (!oz.adet) { toast("Önce tartım girin"); return; }
   const SUTUN = 5;
@@ -1470,6 +1503,7 @@ function yazdirLinkGoster(url, baslik, butonMetni) {
 }
 
 function tartimSatisaAktar() {
+  if (!tartimOzetHesapla().adet) { toast("Önce kg gir ya da barkod okut"); return; }
   const oz = tartimOzetHesapla();
   if (!oz.adet) { toast("Önce tartım girin"); return; }
   // Her ürün grubu için ayrı ayrı doğrulama — hangi grupta eksik varsa açıkça söyle.
@@ -1521,38 +1555,35 @@ function rTartim() {
   html += '</div></div>';
 
   html += '<div class="kpi-grid" style="grid-template-columns:1fr 1fr">';
-  html += '<div class="kpi"><div class="lbl">Toplam Bobin</div><div class="v">'+oz.adet+'</div></div>';
-  html += '<div class="kpi"><div class="lbl">Toplam Kg</div><div class="v yesil">'+fmtKg(oz.brutT)+'</div></div>';
+  html += '<div class="kpi"><div class="lbl">Toplam Bobin</div><div class="v" id="t-kpi-adet">'+oz.adet+'</div></div>';
+  html += '<div class="kpi"><div class="lbl">Toplam Kg</div><div class="v yesil" id="t-kpi-kg">'+fmtKg(oz.brutT)+'</div></div>';
   html += '</div>';
 
   // Her ürün grubu kendi kartında — farklı kalite/genişlikteki bobinler asla birbirine karışmıyor,
   // her grup kendi stok ürününü taşıyor, masura hesabı buna göre grup grup ayrı hesaplanıyor.
   tartim.gruplar.forEach((g, gi) => {
     const goz = tartimGrupOzetHesapla(g);
-    html += '<div class="card"><div class="mtitle">Ürün '+(gi+1)+(tartim.gruplar.length>1?' <span class="pill">'+goz.adet+' bobin · '+fmtKg(goz.brutT)+' kg</span>':'')+'<span style="flex:1"></span>'+(tartim.gruplar.length>1?'<button class="sil-x" onclick="tartimGrupSil('+gi+')">×</button>':'')+'</div>';
+    html += '<div class="card"><div class="mtitle">Ürün '+(gi+1)+' <span class="pill" id="t-gpill-'+gi+'">'+goz.adet+' bobin · '+fmtKg(goz.brutT)+' kg</span>'+'<span style="flex:1"></span>'+(tartim.gruplar.length>1?'<button class="sil-x" onclick="tartimGrupSil('+gi+')">×</button>':'')+'</div>';
     html += '<div class="formgrid">';
     html += '<div><div class="mini" style="margin-bottom:5px">Stok Ürünü <span style="color:var(--red)">*</span> — stok düşümü ve masura raporu için zorunlu</div><select onchange="tartimGrupStokSec('+gi+',this.value)"><option value="">— ürün seç —</option>'
       + data.mamul.map((m,mi) => '<option value="'+mi+'"'+(String(g.stokIdx)===String(mi)?" selected":"")+'>'+esc(m.kalite+" · "+m.tip+" · "+m.genislik+(m.gramaj!=="-"?" · "+m.gramaj:""))+' (stok: '+m.adet+')</option>').join("")
       + '</select></div>';
-    html += '<div><div class="mini" style="margin-bottom:5px">Kg yaz ya da barkod okut → Enter <span style="opacity:.7">(imleç kutudayken okuyucunun tetiğine bas)</span></div><div style="display:flex;gap:8px"><input type="text" id="t-brut-'+gi+'" inputmode="decimal" placeholder="ör. 12,4 ya da ▎ barkod" onkeydown="if(event.key===\'Enter\')tartimGir('+gi+',this.value)"><button class="chip" style="flex-shrink:0" onclick="tartimGir('+gi+',document.getElementById(\'t-brut-'+gi+'\').value)">Ekle</button></div></div>';
+    html += '<div><div class="mini" style="margin-bottom:5px">Kg yaz ya da barkod okut → Enter <span style="opacity:.7">(imleç kutudayken okuyucunun tetiğine bas)</span></div><div style="display:flex;gap:8px"><input type="text" id="t-brut-'+gi+'" inputmode="decimal" placeholder="ör. 12,4 ya da ▎ barkod" onfocus="__tartimAktifGrup='+gi+'" onkeydown="if(event.key===\'Enter\')tartimGir('+gi+',this.value)"><button class="chip" style="flex-shrink:0" onclick="tartimGir('+gi+',document.getElementById(\'t-brut-'+gi+'\').value)">Ekle</button></div></div>';
     html += '</div>';
-    if (g.satirlar.length) {
-      html += '<div class="scroll" style="margin-top:10px"><table><tr><th>#</th><th class="num">Kg</th><th></th></tr>';
-      g.satirlar.forEach((s,i) => {
-        html += '<tr><td>'+(i+1)+'</td><td class="num">'+fmtKg(s.brut)+'</td><td style="text-align:right"><button class="sil-x" onclick="tartimSatirSil('+gi+','+i+')">×</button></td></tr>';
-      });
-      html += '</table></div>';
-    }
+    // Tablo boşken de çizilir: ilk okutma dahil hiçbir okutma tam render gerektirmesin diye (imleç kutudan çıkmaz)
+    html += '<div class="scroll" style="margin-top:10px"><table><tbody id="t-tbl-'+gi+'"><tr><th>#</th><th class="num">Kg</th><th></th></tr>';
+    g.satirlar.forEach((s,i) => {
+      html += '<tr><td>'+(i+1)+'</td><td class="num">'+fmtKg(s.brut)+'</td><td style="text-align:right"><button class="sil-x" onclick="tartimSatirSil('+gi+','+i+')">×</button></td></tr>';
+    });
+    html += '</tbody></table></div>';
     html += '</div>';
   });
 
   html += '<div class="card"><button class="chip" onclick="tartimGrupEkle()">+ Farklı Ürün Ekle</button>'
     + '<div class="mini" style="margin-top:6px">Aynı tartım partisinde birden fazla ürün/genişlik varsa buradan ekle — her biri satışa ayrı kalem olarak aktarılır, masura hesabı hiçbirini karıştırmaz.</div></div>';
 
-  if (oz.adet > 0) {
-    html += '<div class="card"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="tartimSatisaAktar()">→ Satış Kaydına Aktar</button><button class="chip" style="color:var(--blue);border-color:var(--blue)" onclick="tartimStogaEkle()">➕ Stoğa Ekle (Üretim)</button><button class="chip" onclick="tartimYazdir()">🖨 A4 Yazdır / PDF</button><button class="chip" style="color:var(--red);border-color:var(--red)" onclick="tartimTemizle()">Temizle</button></div></div>';
+    html += '<div class="card"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="tartimSatisaAktar()">→ Satış Kaydına Aktar</button><button class="chip" style="color:var(--blue);border-color:var(--blue)" onclick="tartimStogaEkle()">➕ Stoğa Ekle (Üretim) — <span id="t-aksiyon-ozet">'+oz.adet+' bobin · '+fmtKg(oz.brutT)+' kg</span></button><button class="chip" onclick="tartimYazdir()">🖨 A4 Yazdır / PDF</button><button class="chip" style="color:var(--red);border-color:var(--red)" onclick="tartimTemizle()">Temizle</button></div></div>';
     html += '<div class="mini" style="margin-top:-6px;margin-bottom:12px;padding:0 4px"><b>Stoğa Ekle</b> = üretimden gelen bobinler stok adedine eklenir · <b>Satışa Aktar</b> = satış kaydına geçer, kaydedince stoktan düşer · iki durumda da liste durur, A4/PDF çıktısını alabilirsin</div>';
-  }
   return html;
 }
 
