@@ -2162,6 +2162,222 @@ function karlilikAyOzeti(ayKey) {
   return { toplamGelir, toplamMaliyet, toplamKar, karMarji, toplamKg, urunTipiKirilim, satisSayisi: satislar.length };
 }
 
+// ============ EXCEL'DEN ÜRETİM AKTARMA ============
+// Ustaların tuttuğu ÜRETİM_TAKİP.xlsx tarzı vardiya çizelgelerini okur:
+// başlıkları (Tarih / Başlangıç / Bitiş / PERSONEL / ÜRÜN / ADET // KG / Notlar / FİRE) her sayfada arar,
+// tarih boş satırlarda bir üstteki tarihi devralır (gece vardiyaları çoğu zaman tarihsiz yazılıyor),
+// "20cm 75gr/25cm" + "30 adet /113 adet" gibi tek hücreye sıkışmış çoklu ürünleri ayırır,
+// "15 adet 277,5 kg" içinden gerçek kiloyu çeker. Adet yazılmamış satırlar aktarılamaz, ayrıca listelenir.
+function xlsImportAc() {
+  const overlay = document.createElement("div");
+  overlay.id = "xls-modal";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.8);z-index:500;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto";
+  overlay.innerHTML = '<div id="xls-icerik" style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:760px;margin:auto 0">'
+    + '<div class="mtitle">📥 Excel\'den Üretim Aktar</div>'
+    + '<div class="mini" style="margin-bottom:10px">Üretim takip Excel dosyanı seç (Tarih / Personel / Ürün / Adet sütunlu vardiya çizelgesi). Satırları okuyup önce sana göstereceğim — hiçbir şey onayından önce kaydedilmez.</div>'
+    + '<input type="file" accept=".xlsx,.xls" onchange="xlsDosyaSecildi(event)" style="width:100%;padding:12px;background:var(--bg);border:1.5px dashed var(--line);border-radius:10px;color:var(--ink)">'
+    + '<button class="btn" style="background:#2A2C3A;margin-top:12px" onclick="xlsKapat()">Kapat</button></div>';
+  document.body.appendChild(overlay);
+}
+function xlsKapat() { const el = document.getElementById("xls-modal"); if (el) el.remove(); window.__xi = null; }
+
+function xlsSheetJsYukle(cb) {
+  if (window.XLSX) { cb(); return; }
+  const s = document.createElement("script");
+  s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+  s.onload = cb;
+  s.onerror = () => toast("Excel okuyucu yüklenemedi — internet bağlantısını kontrol et");
+  document.head.appendChild(s);
+}
+
+function xlsDosyaSecildi(ev) {
+  const dosya = ev.target.files && ev.target.files[0];
+  if (!dosya) return;
+  xlsSheetJsYukle(() => {
+    const okuyucu = new FileReader();
+    okuyucu.onload = e => {
+      try {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: "array", cellDates: true });
+        xlsAyristir(wb);
+      } catch (hata) { console.error(hata); toast("Dosya okunamadı: " + hata.message); }
+    };
+    okuyucu.readAsArrayBuffer(dosya);
+  });
+}
+
+function xlsHucre(v) { return (v == null) ? "" : String(v).trim(); }
+
+function xlsAyristir(wb) {
+  const satirlar = [], atlanan = [];
+  wb.SheetNames.forEach(sayfaAdi => {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sayfaAdi], { header: 1, defval: null });
+    let hdr = -1, kolon = [];
+    for (let i = 0; i < Math.min(6, rows.length); i++) {
+      const r = (rows[i] || []).map(xlsHucre);
+      if (r.some(x => x === "Tarih") && r.some(x => x.toUpperCase().indexOf("ÜRÜN") >= 0)) { hdr = i; kolon = r; break; }
+    }
+    if (hdr < 0) return; // bu sayfa üretim çizelgesi değil
+    const bul = a => { for (let j = 0; j < kolon.length; j++) if (kolon[j].toLowerCase().indexOf(a.toLowerCase()) >= 0) return j; return -1; };
+    const iT = bul("Tarih"), iB = bul("Başlangıç"), iBit = bul("Bitiş"), iP = bul("PERSONEL"), iU = bul("ÜRÜN"), iA = bul("ADET"), iN = bul("Not"), iF = bul("FİRE");
+    let sonTarih = null;
+    for (let r = hdr + 1; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const tarihH = iT >= 0 ? row[iT] : null;
+      if (tarihH instanceof Date && !isNaN(tarihH)) sonTarih = yerelTarihStr(tarihH);
+      const urun = iU >= 0 ? xlsHucre(row[iU]) : "";
+      const adetH = iA >= 0 ? xlsHucre(row[iA]) : "";
+      if (!urun && !adetH) continue;
+      if (!sonTarih) continue;
+      const coklu = urun.indexOf("/") >= 0 && adetH.indexOf("/") >= 0;
+      let uParc = coklu ? urun.split("/").map(s => s.trim()) : [urun];
+      let aParc = coklu ? adetH.split("/").map(s => s.trim()) : [adetH];
+      if (uParc.length !== aParc.length) { uParc = [urun]; aParc = [adetH]; }
+      const basM = /^(\d{1,2})/.exec(iB >= 0 ? xlsHucre(row[iB]) : "");
+      const bitM = /^(\d{1,2})/.exec(iBit >= 0 ? xlsHucre(row[iBit]) : "");
+      const basSaat = basM ? parseInt(basM[1]) : null;
+      const vardiya = (basSaat != null && (basSaat >= 19 || basSaat < 6)) ? "Gece" : "Gündüz";
+      let saat = 12;
+      if (basM && bitM) { const f = (parseInt(bitM[1]) - parseInt(basM[1]) + 24) % 24; if (f > 0) saat = f; }
+      const usta = iP >= 0 ? xlsHucre(row[iP]) : "";
+      let notlar = iN >= 0 ? xlsHucre(row[iN]) : "";
+      const fire = iF >= 0 ? xlsHucre(row[iF]) : "";
+      if (fire) notlar = (notlar ? notlar + " · " : "") + "Fire: " + fire;
+      for (let k = 0; k < uParc.length; k++) {
+        const uTxt = uParc[k]; if (!uTxt) continue;
+        const aTxt = aParc[k] || "";
+        const kgM = /([\d.]+,?\d*)\s*kg/i.exec(aTxt);
+        const kg = kgM ? parseFloat(kgM[1].replace(/\./g, "").replace(",", ".")) : null;
+        const aTemiz = aTxt.replace(/([\d.]+,?\d*)\s*kg/ig, "");
+        const adM = /(\d+)/.exec(aTemiz);
+        const adet = adM ? parseInt(adM[1]) : null;
+        if (adet > 0) satirlar.push({ tarih: sonTarih, vardiya, usta, saat, urunTxt: uTxt, adet, kg, not: notlar || null, dahil: true });
+        else atlanan.push({ tarih: sonTarih, urunTxt: uTxt });
+      }
+    }
+  });
+  if (!satirlar.length) { toast("Dosyada aktarılabilir satır bulunamadı (adet yazılı satır yok)"); return; }
+  satirlar.sort((a, b) => a.tarih.localeCompare(b.tarih));
+  const urunler = [...new Set(satirlar.map(s => s.urunTxt))].sort();
+  const esleme = {};
+  urunler.forEach(u => { esleme[u] = xlsUrunTahmin(u); });
+  window.__xi = { satirlar, atlanan, urunler, esleme, makine: MAKINELER[0], stokGuncelle: false };
+  xlsOnizlemeCiz();
+}
+
+// Serbest metinden ürün tahmini: genişlik (cm) eşleşmesi şart; gramaj ve kalite eşleşmesi puanı artırır.
+function xlsUrunTahmin(txt) {
+  const t = trFold(txt);
+  const genM = /(\d+)\s*cm/.exec(t);
+  if (!genM) return "";
+  const gen = genM[1];
+  const grM = /(\d+)\s*gr/.exec(t);
+  const ikinciMi = /2\s*\.?\s*kalite/.test(t);
+  let enIyi = "", enIyiPuan = 0;
+  data.mamul.forEach((m, mi) => {
+    const mGen = /(\d+)/.exec(m.genislik || "");
+    if (!mGen || mGen[1] !== gen) return;
+    let puan = 2;
+    const mGr = /(\d+)/.exec(m.gramaj || "");
+    if (grM && mGr && mGr[1] === grM[1]) puan += 2;
+    if (grM && (!mGr)) puan -= 0.5;
+    if (ikinciMi && (m.kalite || "").indexOf("2") === 0) puan += 2;
+    if (!ikinciMi && (m.kalite || "").indexOf("2") === 0) puan -= 1;
+    if (puan > enIyiPuan) { enIyiPuan = puan; enIyi = String(mi); }
+  });
+  return enIyi;
+}
+
+function xlsEsle(ui, v) { window.__xi.esleme[window.__xi.urunler[ui]] = v; xlsOnizlemeCiz(); }
+function xlsDahil(i, v) { window.__xi.satirlar[i].dahil = v; xlsOnizlemeCiz(); }
+function xlsMakine(v) { window.__xi.makine = v; }
+function xlsStok(v) { window.__xi.stokGuncelle = v; }
+
+function xlsOnizlemeCiz() {
+  const xi = window.__xi; const kap = document.getElementById("xls-icerik");
+  if (!xi || !kap) return;
+  const aktarilacak = xi.satirlar.filter(s => s.dahil && xi.esleme[s.urunTxt] !== "");
+  const topAdet = aktarilacak.reduce((s, x) => s + x.adet, 0);
+  let html = '<div class="mtitle">📥 Excel\'den Üretim Aktar <span class="pill">' + xi.satirlar.length + ' satır okundu</span></div>';
+  html += '<div class="mini" style="font-weight:800;margin-bottom:6px">1) Ürün Eşleştirme — Excel\'deki her yazım, stok listendeki hangi ürün?</div>';
+  xi.urunler.forEach((u, ui) => {
+    html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">'
+      + '<span style="min-width:150px;font-size:13px;font-weight:700">' + esc(u) + '</span>'
+      + '<select style="flex:1;min-width:200px;margin:0" onchange="xlsEsle(' + ui + ', this.value)">'
+      + '<option value=""' + (xi.esleme[u] === "" ? " selected" : "") + '>— aktarma (bu ürünü atla) —</option>'
+      + data.mamul.map((m, mi) => '<option value="' + mi + '"' + (String(xi.esleme[u]) === String(mi) ? " selected" : "") + '>' + esc(m.kalite + " · " + m.tip + " · " + m.genislik + (m.gramaj !== "-" ? " · " + m.gramaj : "")) + '</option>').join("")
+      + '</select></div>';
+  });
+  html += '<div class="mini" style="font-weight:800;margin:12px 0 6px">2) Satırlar</div>';
+  html += '<div class="scroll" style="max-height:300px;overflow-y:auto"><table><tr><th></th><th>Tarih</th><th>Vardiya</th><th>Usta</th><th>Ürün</th><th class="num">Adet</th><th class="num">Kg</th></tr>';
+  xi.satirlar.forEach((s, i) => {
+    const eslendi = xi.esleme[s.urunTxt] !== "";
+    html += '<tr style="' + (!eslendi ? "opacity:.4" : "") + '">'
+      + '<td><input type="checkbox" ' + (s.dahil ? "checked" : "") + ' onchange="xlsDahil(' + i + ', this.checked)" style="width:auto"></td>'
+      + '<td style="white-space:nowrap">' + fmtTarih(s.tarih) + '</td><td>' + s.vardiya + '</td>'
+      + '<td style="font-size:12px">' + esc(s.usta || "—") + '</td><td style="font-size:12px">' + esc(s.urunTxt) + '</td>'
+      + '<td class="num">' + s.adet + '</td><td class="num">' + (s.kg ? fmtKg(s.kg) : '<span class="mini">ort.</span>') + '</td></tr>';
+  });
+  html += '</table></div>';
+  if (xi.atlanan.length) {
+    html += '<div class="mini" style="margin-top:8px;color:var(--amber)">⚠ ' + xi.atlanan.length + ' satırda adet yazılmadığı için aktarılamıyor: '
+      + xi.atlanan.slice(0, 6).map(a => fmtTarih(a.tarih) + " " + esc(a.urunTxt)).join(", ") + (xi.atlanan.length > 6 ? "…" : "")
+      + ' — istersen bunları elle Üretim sekmesinden girersin.</div>';
+  }
+  html += '<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">'
+    + '<span class="mini">Makine:</span><select style="width:auto;margin:0" onchange="xlsMakine(this.value)">'
+    + MAKINELER.map(m => '<option' + (xi.makine === m ? " selected" : "") + '>' + esc(m) + '</option>').join("") + '</select></div>';
+  html += '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:13px;cursor:pointer">'
+    + '<input type="checkbox" ' + (xi.stokGuncelle ? "checked" : "") + ' onchange="xlsStok(this.checked)" style="width:auto;margin-top:2px">'
+    + '<span><b>Stok adetlerini de artır.</b> Paneldeki mevcut stok sayıları bu üretimleri ZATEN içeriyorsa KAPALI bırak — yoksa stok iki kez şişer. Bu içe aktarma normalde sadece üretim geçmişi/raporlar içindir.</span></label>';
+  html += '<button class="btn" style="background:var(--green);margin-top:12px" onclick="xlsIceAktar()">✓ ' + aktarilacak.length + ' satırı içe aktar (' + topAdet + ' bobin)</button>';
+  html += '<button class="btn" style="background:#2A2C3A;margin-top:8px" onclick="xlsKapat()">Vazgeç</button>';
+  kap.innerHTML = html;
+}
+
+function xlsIceAktar() {
+  const xi = window.__xi; if (!xi) return;
+  const aktarilacak = xi.satirlar.filter(s => s.dahil && xi.esleme[s.urunTxt] !== "");
+  if (!aktarilacak.length) { toast("Aktarılacak satır yok — en az bir ürünü eşleştir"); return; }
+  if (!data.uretimler) data.uretimler = [];
+  // Aynı vardiyanın ürünleri tek üretim kaydında toplanır (panelin normal kayıt şekli)
+  const gruplar = {};
+  aktarilacak.forEach(s => {
+    const anahtar = s.tarih + "|" + s.vardiya + "|" + trFold(s.usta);
+    if (!gruplar[anahtar]) gruplar[anahtar] = { tarih: s.tarih, vardiya: s.vardiya, usta: s.usta, saat: s.saat, notlar: [], urunler: [] };
+    const g = gruplar[anahtar];
+    g.saat = Math.max(g.saat, s.saat);
+    if (s.not && g.notlar.indexOf(s.not) < 0) g.notlar.push(s.not);
+    const m = data.mamul[parseInt(xi.esleme[s.urunTxt])];
+    if (!m) return;
+    g.urunler.push({ key: m.kalite + "|" + m.tip + "|" + m.genislik + "|" + m.gramaj, ad: m.kalite + " " + m.tip + " " + m.genislik, adet: s.adet, kg: (s.kg != null ? s.kg : s.adet * (m.kgBobin || 0)), mamulIdx: parseInt(xi.esleme[s.urunTxt]) });
+  });
+  let eklenen = 0, zatenVar = 0, stokEklenenAdet = 0;
+  Object.keys(gruplar).forEach(anahtar => {
+    const g = gruplar[anahtar];
+    // Mükerrer koruması: aynı tarih+vardiya+usta ile daha önce Excel'den aktarılmış kayıt varsa atla
+    const varMi = data.uretimler.some(u => u.kaynak === "excel" && u.tarih === g.tarih && u.vardiya === g.vardiya && trFold(u.usta) === trFold(g.usta));
+    if (varMi) { zatenVar++; return; }
+    const uretilenKg = g.urunler.reduce((s, x) => s + x.kg, 0);
+    data.uretimler.push({
+      __id: "u_xls_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+      kaynak: "excel",
+      tarih: g.tarih, vardiya: g.vardiya, makine: xi.makine, usta: g.usta,
+      saat: g.saat, not: g.notlar.length ? g.notlar.join(" · ") : "Excel'den aktarıldı",
+      urunler: g.urunler.map(u => ({ key: u.key, ad: u.ad, adet: u.adet, kg: Math.round(u.kg * 100) / 100 })),
+      hammaddeler: [], uretilenKg: Math.round(uretilenKg * 100) / 100, hammaddeKg: 0, verimlilik: null
+    });
+    if (xi.stokGuncelle) g.urunler.forEach(u => { const m = data.mamul[u.mamulIdx]; if (m) { m.adet += u.adet; stokEklenenAdet += u.adet; } });
+    eklenen++;
+  });
+  save();
+  xlsKapat();
+  render();
+  let mesaj = "✓ " + eklenen + " üretim kaydı aktarıldı";
+  if (zatenVar) mesaj += " · " + zatenVar + " vardiya zaten aktarılmıştı, atlandı";
+  if (stokEklenenAdet) mesaj += " · stoğa +" + stokEklenenAdet + " bobin";
+  toast(mesaj);
+}
+
 function rUretim() {
   const oz = uretimAyOzeti(buAyKey());
   const masAn = masuraAnaliziAy(buAyKey());
@@ -2288,7 +2504,7 @@ function rUretim() {
   const kirpildi = liste.length > 300;
   if (kirpildi) liste = liste.slice(0, 300);
 
-  html += '<div class="card"><div class="mtitle">Üretim Geçmişi <span class="pill">'+uToplamSayi+' kayıt</span></div>';
+  html += '<div class="card"><div class="mtitle">Üretim Geçmişi <span class="pill">'+uToplamSayi+' kayıt</span><span style="flex:1"></span><button class="chip" style="white-space:nowrap" onclick="xlsImportAc()">📥 Excel\'den Aktar</button></div>';
   html += '<div class="chips">'+filtreler.map(f => '<button class="chip'+(uFiltre===f[0]?" on":"")+'" onclick="uFiltre=\''+f[0]+'\';render()">'+f[1]+'</button>').join("")+'</div>';
   if (kirpildi) html += '<div class="mini" style="margin-bottom:8px">En son 300 kayıt gösteriliyor. Daha eskisini görmek için Excel/Aylık Rapor\'dan indir.</div>';
   html += '<div class="scroll"><table><tr><th>Tarih</th><th>Vardiya</th><th>Makine</th><th>Usta</th><th class="num">Saat</th><th>Ürünler</th><th>Hammadde</th><th class="num">Verim</th><th></th></tr>';
@@ -2896,6 +3112,87 @@ function musteriEkstreYazdir() {
   const url = URL.createObjectURL(blob);
   const w = window.open(url, "_blank");
   if (!w) { yazdirLinkGoster(url, "Ekstre Hazır", "Cari Ekstreyi Aç"); return; }
+}
+
+// ============ AÇIK CARİLER RAPORU ============
+// Bekleyen bakiyesi olan bütün müşterileri tek A4 listede toplar: açık fatura sayısı,
+// en eski açık faturanın tarihi ve yaşı (gün), bekleyen tutar; en çok bekleyenden aza sıralı.
+function acikCarilerYazdir() {
+  const adlar = new Set();
+  data.hareketler.forEach(h => {
+    if (h.tur === "GELİR" && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış")) adlar.add(normMusteri(h.aciklama));
+  });
+  const bugunMs = new Date(yerelTarihStr() + "T12:00:00").getTime();
+  const satirlar = [];
+  adlar.forEach(ad => {
+    const faturalar = musteriBekleyenFaturalar(ad);
+    if (!faturalar.length) return;
+    const bekleyen = faturalar.reduce((s, x) => s + x.durum.kalan, 0);
+    if (bekleyen <= 0.01) return;
+    const enEski = faturalar[0].h.tarih; // musteriBekleyenFaturalar eskiden yeniye sıralı döner
+    const gun = Math.max(0, Math.round((bugunMs - new Date(enEski + "T12:00:00").getTime()) / 86400000));
+    satirlar.push({ ad, adet: faturalar.length, enEski, gun, bekleyen });
+  });
+  if (!satirlar.length) { toast("Açık carisi olan müşteri yok 🎉"); return; }
+  satirlar.sort((a, b) => b.bekleyen - a.bekleyen);
+  const toplam = satirlar.reduce((s, x) => s + x.bekleyen, 0);
+  const pFmt = v => "\u20BA" + Number(v).toLocaleString("tr-TR", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  let satirHtml = "";
+  satirlar.forEach((s, i) => {
+    satirHtml += '<tr><td class="no">' + (i + 1) + '</td><td><b>' + esc(s.ad) + '</b></td>'
+      + '<td class="n">' + s.adet + '</td>'
+      + '<td class="t">' + fmtTarih(s.enEski) + '</td>'
+      + '<td class="n' + (s.gun > 60 ? " krmz" : "") + '">' + s.gun + ' gün</td>'
+      + '<td class="n b">' + pFmt(s.bekleyen) + '</td></tr>';
+  });
+  // Fazla ödemesi (cari alacağı) olanlar ayrı küçük bölümde — açık bakiyeyle karışmasın
+  let krediHtml = "";
+  const krediler = Object.entries(data.cariBakiyeler || {}).filter(([, v]) => v > 0.01);
+  if (krediler.length) {
+    krediHtml = '<div class="ara-baslik">Fazla Ödemesi Olanlar (bir sonraki faturadan düşülecek)</div><table>'
+      + krediler.map(([ad, v]) => '<tr><td><b>' + esc(ad) + '</b></td><td class="n b">' + pFmt(v) + '</td></tr>').join("")
+      + '</table>';
+  }
+  const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Açık Cariler</title><style>'
+    + '@page { size: A4 portrait; margin: 8mm; }'
+    + '* { box-sizing: border-box; margin: 0; padding: 0; }'
+    + 'body { font-family: Arial, sans-serif; color: #000; background: #fff; }'
+    + '.ekran-sarma { width: 100%; max-width: 190mm; margin: 0 auto; padding: 10px; }'
+    + '.yazdir-btn { display: block; width: 100%; margin-bottom: 10px; padding: 16px; font-size: 17px; font-weight: bold; cursor: pointer; background: #4A3670; color: #fff; border: none; border-radius: 10px; -webkit-appearance: none; }'
+    + '.yazdir-not { font-size: 12px; color: #666; text-align: center; margin-bottom: 14px; line-height: 1.5; }'
+    + '.baslik { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #000; padding-bottom: 2mm; margin-bottom: 2mm; flex-wrap: wrap; }'
+    + '.baslik h1 { font-size: 13pt; letter-spacing: .5px; }'
+    + '.baslik .alt { font-size: 8pt; color: #444; }'
+    + '.bilgi { font-size: 9pt; margin-bottom: 3mm; }'
+    + '.bilgi b { border-bottom: 1px solid #000; padding: 0 2mm 1px; display: inline-block; }'
+    + 'table { width: 100%; border-collapse: collapse; margin-bottom: 3mm; }'
+    + 'tr { page-break-inside: avoid; }'
+    + 'th { background: #E8E8E8; font-size: 8.5pt; padding: 1.5mm 2mm; border: 1px solid #000; text-align: left; }'
+    + 'th.n { text-align: right; }'
+    + 'td { border: 1px solid #000; padding: 1.5mm 2mm; font-size: 9pt; vertical-align: middle; }'
+    + 'td.no { width: 8mm; background: #E8E8E8; font-weight: bold; text-align: center; font-size: 7.5pt; }'
+    + 'td.t { white-space: nowrap; width: 24mm; }'
+    + 'td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }'
+    + 'td.b { font-weight: bold; }'
+    + 'td.krmz { color: #B00000; font-weight: bold; }'
+    + '.toplam { display: flex; justify-content: flex-end; gap: 8mm; margin-top: 1mm; font-size: 10.5pt; border-top: 2px solid #000; padding-top: 2mm; }'
+    + '.toplam b { font-size: 12pt; }'
+    + '.ara-baslik { font-size: 9.5pt; font-weight: bold; background: #E8E8E8; padding: 1.5mm 2mm; border-radius: 1.5mm; margin: 4mm 0 1.5mm; }'
+    + '@media print { .yazdir-btn, .yazdir-not { display: none; } .ekran-sarma { max-width: none; padding: 0; } }'
+    + '</style></head><body>'
+    + '<div class="ekran-sarma">'
+    + '<button class="yazdir-btn" onclick="window.print()">🖨 Yazdır / PDF Olarak Kaydet</button>'
+    + '<div class="yazdir-not">Alttaki adres/tarih yazısı çıkarsa tarayıcının yazdırma ekranında "Üstbilgiler ve Altbilgiler" seçeneğini kapatabilirsin.</div>'
+    + '<div class="baslik"><h1>RAZ PLASTİK</h1><span class="alt">Poliwood — Açık Cariler Raporu</span></div>'
+    + '<div class="bilgi"><span>Rapor Tarihi: <b>' + fmtTarih(yerelTarihStr()) + '</b></span>&nbsp;&nbsp;<span>Açık Carisi Olan Müşteri: <b>' + satirlar.length + '</b></span></div>'
+    + '<table><tr><th></th><th>Müşteri</th><th class="n">Açık Fatura</th><th>En Eski Fatura</th><th class="n">Yaşı</th><th class="n">Bekleyen</th></tr>' + satirHtml + '</table>'
+    + '<div class="toplam"><span>Toplam Bekleyen: <b>' + pFmt(toplam) + '</b></span></div>'
+    + krediHtml
+    + '</div></body></html>';
+  const blob = new Blob([sayfa], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, "_blank");
+  if (!w) { yazdirLinkGoster(url, "Rapor Hazır", "Açık Cariler Raporunu Aç"); return; }
 }
 
 // Hareketler tablosunda tahsilat sütununu (durum + tıklanabilir) üretir
@@ -4152,7 +4449,7 @@ function rMusteriler(H) {
     + '<div class="kpi"><div class="lbl">Toplam Bekleyen</div><div class="v" style="color:'+(genelBekleyen>0?"var(--red)":"var(--green)")+'">'+pg(fmtK(genelBekleyen))+'</div></div>'
     + (genelCari>0.01 ? '<div class="kpi"><div class="lbl">Toplam Cari Bakiye</div><div class="v yesil">+'+pg(fmtK(genelCari))+'</div><span class="mini">bir sonraki faturalardan otomatik düşer</span></div>' : '')
     + '</div>';
-  html += '<div class="card"><div class="mtitle">Müşteri Analizi <span class="pill">satış gelirleri</span></div><div class="scroll"><table><tr><th>Müşteri</th><th class="num">Toplam</th><th class="num">İşlem</th><th>Son Satış</th><th class="num">Bekleyen</th><th></th></tr>';
+  html += '<div class="card"><div class="mtitle">Müşteri Analizi <span class="pill">satış gelirleri</span><span style="flex:1"></span><button class="chip" style="white-space:nowrap" onclick="acikCarilerYazdir()">🖨 Açık Cariler Raporu</button></div><div class="scroll"><table><tr><th>Müşteri</th><th class="num">Toplam</th><th class="num">İşlem</th><th>Son Satış</th><th class="num">Bekleyen</th><th></th></tr>';
   girdiler.forEach(([ad, m]) => {
     const bekleyen = musteriBekleyenToplam(ad);
     const kredi = data.cariBakiyeler[normMusteri(ad)] || 0;
