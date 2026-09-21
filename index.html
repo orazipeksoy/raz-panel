@@ -190,127 +190,6 @@ tr { transition: background-color .1s ease; }
 </div>
 
 <script>
-window.addEventListener("error", function(e) {
-  if (e && e.target && e.target.tagName === "SCRIPT") {
-    window.__fbDurum = "Script yüklenemedi: " + (e.target.src || "?") + " (ağ engeli olabilir)";
-  }
-  // Ana script'te ölümcül bir JS hatası olursa siyah ekranı önle: hatayı göster
-  if (e && e.message && !e.target) {
-    window.__jsHata = e.message + (e.filename ? " ("+e.filename+":"+e.lineno+")" : "");
-  }
-}, true);
-
-// BOOT WATCHDOG — bağımsız çalışır. Uygulama 6 sn içinde açılmazsa
-// (ne kilit ekranı görünür ne içerik çizilir) kullanıcıyı siyah ekranda bırakma.
-window.__bootOK = false;
-setTimeout(function() {
-  try {
-    if (window.__bootOK) return;
-    var kilit = document.getElementById("kilit-ekrani");
-    var ic = document.getElementById("app-icerik");
-    var kilitGorunur = kilit && kilit.style.display !== "none";
-    var icerikGorunur = ic && ic.style.display && ic.style.display !== "none";
-    // Kilit de içerik de görünmüyorsa → boot patlamış demektir
-    if (!kilitGorunur && !icerikGorunur) {
-      if (ic) ic.style.display = "block";
-      var main = document.getElementById("main");
-      if (main) {
-        var mesaj = window.__jsHata ? ("Teknik detay: " + window.__jsHata) : "Uygulama başlatılamadı.";
-        main.innerHTML = '<div style="margin:20px;padding:18px;background:#2A1518;border:1px solid #4A2328;border-radius:12px;color:#FB8585;font-size:14px;line-height:1.5">'
-          + '<b style="font-size:16px">⚠️ Açılış sorunu</b><br><br>'
-          + 'Uygulama tam yüklenemedi. İnternet bağlantını kontrol edip sayfayı <b>yenile</b> (aşağıdaki butona bas).<br><br>'
-          + '<span style="color:#A9ADC4;font-size:12px">' + mesaj + '</span><br><br>'
-          + '<button onclick="location.reload(true)" style="background:#8B7FE8;color:#fff;border:none;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:700;cursor:pointer">↻ Sayfayı Yenile</button>'
-          + '</div>';
-      }
-    }
-  } catch(err) {}
-}, 6000);
-</script>
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-import { initializeFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
-const firebaseConfig = {
-  apiKey: "AIzaSyDPgL-ogKfzX_a2kwlXRnQUbmBqIPtSqpY",
-  authDomain: "raz-plastik.firebaseapp.com",
-  projectId: "raz-plastik",
-  storageBucket: "raz-plastik.firebasestorage.app",
-  messagingSenderId: "643452674106",
-  appId: "1:643452674106:web:6dd8f5d0eb1bb5083e1503",
-  measurementId: "G-HN3V212J1S"
-};
-const app = initializeApp(firebaseConfig);
-const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
-  useFetchStreams: false
-});
-const DOC_REF = doc(db, "raz", "data");
-window.__fbLoad = async function() {
-  try {
-    const s = await getDoc(DOC_REF);
-    window.__fbDurum = "OK";
-    return { ok: true, payload: s.exists() ? s.data().payload : null };
-  }
-  catch(e) {
-    const kod = (e && e.code) ? e.code : "?";
-    const msj = (e && e.message) ? e.message : String(e);
-    window.__fbDurum = kod + " — " + msj;
-    console.error("Firebase okuma hatası:", kod, msj, e);
-    return { ok: false, error: kod + ": " + msj };
-  }
-};
-window.__fbSave = async function(j) {
-  try {
-    window.__lastLocalWrite = j;
-    await setDoc(DOC_REF, { payload: j, updatedAt: new Date().toISOString() });
-    return true;
-  }
-  catch(e) { console.error(e); return false; }
-};
-// ============ OTOMATİK GÜNLÜK YEDEKLEME ============
-window.__fbYedekAl = async function(gunKey, payload) {
-  try {
-    const yedekRef = doc(db, "raz_yedekler", gunKey);
-    const mevcut = await getDoc(yedekRef);
-    if (!mevcut.exists()) {
-      await setDoc(yedekRef, { payload, savedAt: new Date().toISOString() });
-    }
-    return true;
-  } catch(e) { console.error("Yedekleme hatası:", e); return false; }
-};
-window.__fbYedekleriListele = async function() {
-  try {
-    const q = query(collection(db, "raz_yedekler"), orderBy("savedAt", "desc"), limit(30));
-    const snap = await getDocs(q);
-    const liste = [];
-    snap.forEach(d => liste.push({ id: d.id, savedAt: d.data().savedAt }));
-    return liste;
-  } catch(e) { console.error("Yedek listeleme hatası:", e); return []; }
-};
-window.__fbYedekGetir = async function(gunKey) {
-  try {
-    const yedekRef = doc(db, "raz_yedekler", gunKey);
-    const snap = await getDoc(yedekRef);
-    return snap.exists() ? snap.data().payload : null;
-  } catch(e) { console.error("Yedek getirme hatası:", e); return null; }
-};
-window.__fbListen = function(callback) {
-  try {
-    onSnapshot(DOC_REF, (snap) => {
-      if (snap.exists()) {
-        const p = snap.data().payload;
-        // Kendi yazdığımız veriyi tekrar işleme (döngüyü önle)
-        if (p !== window.__lastLocalWrite) callback(p);
-      }
-    }, (err) => console.error("Dinleme hatası:", err));
-  } catch(e) { console.error(e); }
-};
-// Tüm Firebase fonksiyonları tanımlandı — şimdi hazır sinyalini ver
-window.__fbReady = true;
-if (window.__onFbReady) { try { window.__onFbReady(); } catch(e) { console.error(e); } }
-</script>
-
-<script>
 const SEED = {"hareketler":[{"tarih":"2025-12-16","tur":"GELİR","aciklama":"Başlangıç Sermayesi","kategori":"Sermaye","gelir":2586000,"gider":null,"not":"Hasan tarafından konulan başlangıç sermayesi"},{"tarih":"2025-12-17","tur":"GİDER","aciklama":"Maksipan Balonlu Naylon KDV","kategori":"Hammadde","gelir":null,"gider":760000,"not":null},{"tarih":"2025-12-18","tur":"GİDER","aciklama":"Nortek Pompa K.K.","kategori":"Genel Gider","gelir":null,"gider":10300,"not":null},{"tarih":"2025-12-22","tur":"GİDER","aciklama":"Gençler Elektronik-Dozajlama Makinesi","kategori":"Genel Gider","gelir":null,"gider":926339.57,"not":null},{"tarih":"2025-12-22","tur":"GİDER","aciklama":"Uğur Örnek İlave","kategori":"Ekipman/Malzeme","gelir":null,"gider":900,"not":null},{"tarih":"2025-12-23","tur":"GİDER","aciklama":"Hisse Devri Noter Masrafı-Selma Ziyrek","kategori":"Genel Gider","gelir":null,"gider":3396.66,"not":null},{"tarih":"2025-12-23","tur":"GELİR","aciklama":"Denizbank Taşıt Kredi-İveco","kategori":"Kredi Kullanımı","gelir":1700000,"gider":null,"not":null},{"tarih":"2025-12-24","tur":"GİDER","aciklama":"Müge Erdem EFT-Devir Ticaret Sicil","kategori":"Genel Gider","gelir":null,"gider":12000,"not":null},{"tarih":"2025-12-24","tur":"GİDER","aciklama":"Müge Erdem İlave","kategori":"Personel","gelir":null,"gider":500,"not":null},{"tarih":"2025-12-25","tur":"GİDER","aciklama":"Müge Erdem EFT-Ticaret Sicil","kategori":"Genel Gider","gelir":null,"gider":45000,"not":null},{"tarih":"2025-12-26","tur":"GİDER","aciklama":"PTT KEP Ücreti","kategori":"Genel Gider","gelir":null,"gider":500,"not":null},{"tarih":"2025-12-26","tur":"GİDER","aciklama":"Orjin Kasa İveco Kasa Bedeli-Resmi","kategori":"Araç/Yakıt","gelir":null,"gider":100000,"not":null},{"tarih":"2025-12-26","tur":"GİDER","aciklama":"Aytok Otomotiv Kredi ile Ödeme","kategori":"Kredi Ödemesi","gelir":null,"gider":1680365.01,"not":null},{"tarih":"2025-12-29","tur":"GİDER","aciklama":"İveco Araç Bedeli-Aytok Otomotiv","kategori":"Araç/Yakıt","gelir":null,"gider":399635,"not":null},{"tarih":"2025-12-29","tur":"GİDER","aciklama":"Kapasite Raporu Bedeli","kategori":"Genel Gider","gelir":null,"gider":14700,"not":null},{"tarih":"2026-01-01","tur":"GİDER","aciklama":"Uğur Örnek Sulama K.K.","kategori":"Genel Gider","gelir":null,"gider":33085,"not":null},{"tarih":"2026-01-12","tur":"GİDER","aciklama":"Beser Kağıt Ambalaj","kategori":"Hammadde","gelir":null,"gider":49140,"not":null},{"tarih":"2026-01-12","tur":"GİDER","aciklama":"Beser Kağıt Ambalaj","kategori":"Hammadde","gelir":null,"gider":51012,"not":null},{"tarih":"2026-01-23","tur":"GİDER","aciklama":"Poliwood Denizbank İveco Kredi","kategori":"Kredi Ödemesi","gelir":null,"gider":104741.29,"not":null},{"tarih":"2026-01-26","tur":"GİDER","aciklama":"KDV Poliwood","kategori":"Vergi/SGK","gelir":null,"gider":791,"not":null},{"tarih":"2026-01-27","tur":"GİDER","aciklama":"Uğur Çelik Tartı K.K.","kategori":"Genel Gider","gelir":null,"gider":3500,"not":null},{"tarih":"2026-01-30","tur":"GİDER","aciklama":"Oraz İpeksoy Avans","kategori":"Personel","gelir":null,"gider":15000,"not":null},{"tarih":"2026-02-02","tur":"GİDER","aciklama":"Orjin Kasa İveco Kasa Bedeli-Resmi","kategori":"Araç/Yakıt","gelir":null,"gider":35000,"not":null},{"tarih":"2026-02-02","tur":"GİDER","aciklama":"SGK Poliwood","kategori":"Vergi/SGK","gelir":null,"gider":1043.32,"not":null},{"tarih":"2026-02-03","tur":"GİDER","aciklama":"Uğur Örnek Sulama","kategori":"Genel Gider","gelir":null,"gider":1895,"not":null},{"tarih":"2026-02-04","tur":"GİDER","aciklama":"Uğur Çelik Tartı K.K.","kategori":"Genel Gider","gelir":null,"gider":38380,"not":null},{"tarih":"2026-02-13","tur":"GİDER","aciklama":"Atasim-RYS-Kablo Kalemi (2 adet)","kategori":"Genel Gider","gelir":null,"gider":30178.81,"not":null},{"tarih":"2026-02-18","tur":"GİDER","aciklama":"Orjin Kasa İveco Kasa Bedeli-Resmi","kategori":"Araç/Yakıt","gelir":null,"gider":70000,"not":null},{"tarih":"2026-02-18","tur":"GİDER","aciklama":"Orjin Kasa İveco Kasa Bedeli-Resmi","kategori":"Araç/Yakıt","gelir":null,"gider":15000,"not":null},{"tarih":"2026-02-19","tur":"GİDER","aciklama":"Türk Patent K.K.","kategori":"Genel Gider","gelir":null,"gider":3100,"not":null},{"tarih":"2026-02-19","tur":"GİDER","aciklama":"Elas Plastik - Balonlu Naylon 1. Kalite","kategori":"Hammadde","gelir":null,"gider":159662.58,"not":null},{"tarih":"2026-02-19","tur":"GİDER","aciklama":"İzyol Lojistik (Elas Plastik Torba Nakliye)","kategori":"Nakliye","gelir":null,"gider":8400,"not":null,"kg":null},{"tarih":"2026-02-20","tur":"GİDER","aciklama":"İveco Takipci-Aktur Muayene ve Giderler","kategori":"Araç/Yakıt","gelir":null,"gider":14260,"not":null},{"tarih":"2026-02-20","tur":"GİDER","aciklama":"Kredi Kullandırım Ücreti-Lavera 2. Kredi","kategori":"Kredi Ödemesi","gelir":null,"gider":21439,"not":null},{"tarih":"2026-02-20","tur":"GİDER","aciklama":"Lavera Kimya Hammadde 1. Kredi 24.750 KG [SATILDI]","kategori":"Hammadde-Satılan","gelir":null,"gider":1353874.5,"not":null},{"tarih":"2026-02-20","tur":"GELİR","aciklama":"Kuveyt Türk Kredi-Hammadde-Maksipan","kategori":"Kredi Kullanımı","gelir":1353874.5,"gider":null,"not":null},{"tarih":"2026-02-23","tur":"GİDER","aciklama":"Deniz Bank Kredi-Aytok Otomotiv İveco","kategori":"Kredi Ödemesi","gelir":null,"gider":104741.29,"not":null},{"tarih":"2026-02-23","tur":"GİDER","aciklama":"Selma Ziyrek-Noter Masraf","kategori":"Genel Gider","gelir":null,"gider":1954.28,"not":null},{"tarih":"2026-02-23","tur":"GİDER","aciklama":"Aktur Araç Muayene","kategori":"Araç/Yakıt","gelir":null,"gider":3288,"not":null},{"tarih":"2026-02-25","tur":"GİDER","aciklama":"İveco 35 CYR 894 Motorin","kategori":"Araç/Yakıt","gelir":null,"gider":3650.71,"not":null},{"tarih":"2026-02-26","tur":"GİDER","aciklama":"KDV Poliwood","kategori":"Vergi/SGK","gelir":null,"gider":791,"not":null},{"tarih":"2026-02-26","tur":"GİDER","aciklama":"Oğuz Seyhan Akıncılar Nakliye-Yeşilova Petkim","kategori":"Nakliye","gelir":null,"gider":14616,"not":null,"kg":null},{"tarih":"2026-02-26","tur":"GİDER","aciklama":"Uçak Bileti-Adana","kategori":"Genel Gider","gelir":null,"gider":3920,"not":null},{"tarih":"2026-02-26","tur":"GİDER","aciklama":"Mesai Yemek-Gençler","kategori":"Genel Gider","gelir":null,"gider":2405,"not":null},{"tarih":"2026-02-26","tur":"GİDER","aciklama":"Tevkifat-24 Oğuz Seyhan Akıncılar","kategori":"Vergi/SGK","gelir":null,"gider":504,"not":null},{"tarih":"2026-02-27","tur":"GİDER","aciklama":"Yeşileko Ham Madde-Kuveyt Kredi 25.500 KG [SATILDI]","kategori":"Hammadde-Satılan","gelir":null,"gider":1583566.89,"not":null},{"tarih":"2026-02-27","tur":"GELİR","aciklama":"Kuveyt Türk Kredi-Hammadde-Maksipan","kategori":"Kredi Kullanımı","gelir":1583566.89,"gider":null,"not":null},{"tarih":"2026-03-02","tur":"GİDER","aciklama":"SGK Poliwood","kategori":"Vergi/SGK","gelir":null,"gider":1775.35,"not":null},{"tarih":"2026-03-03","tur":"GİDER","aciklama":"Uçak Bileti-Adana","kategori":"Genel Gider","gelir":null,"gider":2750,"not":null},{"tarih":"2026-03-04","tur":"GİDER","aciklama":"Kredi Tahsis Ücreti-Aytok Otomotiv-Denizbank","kategori":"Kredi Ödemesi","gelir":null,"gider":19635,"not":null},{"tarih":"2026-03-04","tur":"GİDER","aciklama":"Kredi Tahsis Ücreti-Lavera Kimya-Kuveyt Türk","kategori":"Kredi Ödemesi","gelir":null,"gider":12510,"not":null},{"tarih":"2026-03-04","tur":"GİDER","aciklama":"Kredi Tahsis Ücreti-Yeşileko Hammadde-Kuveyt Türk","kategori":"Kredi Ödemesi","gelir":null,"gider":18290,"not":null},{"tarih":"2026-03-04","tur":"GİDER","aciklama":"Hammadde Karıştırıcı-Muratmak Mak","kategori":"Genel Gider","gelir":null,"gider":180000,"not":null},{"tarih":"2026-03-04","tur":"GİDER","aciklama":"Zafer Civata-Koli Bandı ZFP202600000664","kategori":"Genel Gider","gelir":null,"gider":2505,"not":null},{"tarih":"2026-03-04","tur":"GİDER","aciklama":"Uğur Çelik Tartı K.K.","kategori":"Genel Gider","gelir":null,"gider":1900,"not":null},{"tarih":"2026-03-05","tur":"GİDER","aciklama":"Poliwood K2 Yetki Belgesi-Takipci Süleyman","kategori":"Genel Gider","gelir":null,"gider":41503,"not":null},{"tarih":"2026-03-06","tur":"GİDER","aciklama":"İmza Sirküleri","kategori":"Genel Gider","gelir":null,"gider":1954.28,"not":null},{"tarih":"2026-03-06","tur":"GİDER","aciklama":"Yusuf İnci ve Ortakları-UTTS Montaj","kategori":"Genel Gider","gelir":null,"gider":2724,"not":null},{"tarih":"2026-03-06","tur":"GİDER","aciklama":"Sanayi Sicil Ücreti","kategori":"Genel Gider","gelir":null,"gider":500,"not":null},{"tarih":"2026-03-10","tur":"GİDER","aciklama":"Özmüşler OZM2026 FT - 2.310 KG","kategori":"Hammadde","gelir":null,"gider":97020,"not":null},{"tarih":"2026-03-12","tur":"GİDER","aciklama":"Kasko-İveco","kategori":"Araç/Yakıt","gelir":null,"gider":25491.27,"not":null},{"tarih":"2026-03-12","tur":"GİDER","aciklama":"Trafik Sigortası-İveco","kategori":"Araç/Yakıt","gelir":null,"gider":25247,"not":null},{"tarih":"2026-03-13","tur":"GİDER","aciklama":"AD Blue-Yakıt Katkı","kategori":"Araç/Yakıt","gelir":null,"gider":480,"not":null},{"tarih":"2026-03-13","tur":"GİDER","aciklama":"Lavera Kimya Hammadde 2. Kredi 24.750 KG [SATILDI]","kategori":"Hammadde-Satılan","gelir":null,"gider":1856250,"not":null},{"tarih":"2026-03-13","tur":"GİDER","aciklama":"CMYK Kimya Plastik - 90 KG","kategori":"Hammadde","gelir":null,"gider":8867.57,"not":null},{"tarih":"2026-03-13","tur":"GELİR","aciklama":"Kuveyt Türk Kredi-Hammadde-Maksipan","kategori":"Kredi Kullanımı","gelir":1856250,"gider":null,"not":null},{"tarih":"2026-03-23","tur":"GİDER","aciklama":"Deniz Bank Taşıt Kredi-İveco","kategori":"Kredi Ödemesi","gelir":null,"gider":104741.29,"not":null},{"tarih":"2026-03-25","tur":"GİDER","aciklama":"Özmüşler - 13.570 KG","kategori":"Hammadde","gelir":null,"gider":586224,"not":null},{"tarih":"2026-03-25","tur":"GELİR","aciklama":"Perakende Satış-Osman Bey","kategori":"Perakende Satış","gelir":17000,"gider":null,"not":null},{"tarih":"2026-03-26","tur":"GİDER","aciklama":"Poliwood Muhtasar","kategori":"Vergi/SGK","gelir":null,"gider":939.7,"not":null},{"tarih":"2026-04-02","tur":"GİDER","aciklama":"İşnet Kontör Bedeli","kategori":"Genel Gider","gelir":null,"gider":1750,"not":null},{"tarih":"2026-04-02","tur":"GELİR","aciklama":"Phoenix Polimer Gelen EFT","kategori":"Hammadde Satışı","gelir":3147914.71,"gider":null,"not":null},{"tarih":"2026-04-02","tur":"GELİR","aciklama":"Vakıfbank Maksipan Hesabına TL","kategori":"Hammadde Satışı","gelir":3881779.58,"gider":null,"not":null},{"tarih":"2026-04-03","tur":"GİDER","aciklama":"Orjin Kasa İveco Kasa Bedeli-Resmi","kategori":"Araç/Yakıt","gelir":null,"gider":50000,"not":null},{"tarih":"2026-04-07","tur":"GİDER","aciklama":"Oraz İpeksoy Maaş","kategori":"Personel","gelir":null,"gider":50000,"not":null},{"tarih":"2026-04-07","tur":"GİDER","aciklama":"Arzu Başpınar Maaş","kategori":"Personel","gelir":null,"gider":50000,"not":null},{"tarih":"2026-04-07","tur":"GİDER","aciklama":"Murat Gürpınar Maaş","kategori":"Personel","gelir":null,"gider":28000,"not":null},{"tarih":"2026-04-07","tur":"GİDER","aciklama":"Murat Gürpınar Maaş (2)","kategori":"Personel","gelir":null,"gider":18200,"not":null},{"tarih":"2026-04-07","tur":"GİDER","aciklama":"Poliwood SGK","kategori":"Vergi/SGK","gelir":null,"gider":1775,"not":null},{"tarih":"2026-04-08","tur":"GİDER","aciklama":"Ertas Plastik 3.063 KG","kategori":"Hammadde","gelir":null,"gider":147024,"not":null},{"tarih":"2026-04-08","tur":"GİDER","aciklama":"Ertas Plastik 2.208 KG","kategori":"Hammadde","gelir":null,"gider":105984,"not":null},{"tarih":"2026-04-08","tur":"GİDER","aciklama":"İveco Makas Bedeli","kategori":"Araç/Yakıt","gelir":null,"gider":14500,"not":null},{"tarih":"2026-04-10","tur":"GİDER","aciklama":"Ertas Plastik 3.228 KG","kategori":"Hammadde","gelir":null,"gider":154944,"not":null},{"tarih":"2026-04-13","tur":"GİDER","aciklama":"Ticaret Odası Faaliyet Belgesi","kategori":"Genel Gider","gelir":null,"gider":50,"not":null},{"tarih":"2026-04-16","tur":"GİDER","aciklama":"İveco 35 CRY 894 Motorin","kategori":"Araç/Yakıt","gelir":null,"gider":3618.11,"not":null},{"tarih":"2026-04-16","tur":"GİDER","aciklama":"Ertas Plastik - 2.184 KG","kategori":"Hammadde","gelir":null,"gider":104832,"not":null},{"tarih":"2026-04-16","tur":"GİDER","aciklama":"Koçer Polimer KPE202600000442 - 375 KG","kategori":"Hammadde","gelir":null,"gider":44675,"not":null},{"tarih":"2026-04-16","tur":"GİDER","aciklama":"İveco 35 CRY 894 Motorin (2)","kategori":"Araç/Yakıt","gelir":null,"gider":3618.11,"not":null},{"tarih":"2026-04-17","tur":"GİDER","aciklama":"Eral Compound Boya - 75 KG","kategori":"Hammadde","gelir":null,"gider":15669.72,"not":null},{"tarih":"2026-04-20","tur":"GELİR","aciklama":"Perakende Satış-Özcan Bozkurt","kategori":"Perakende Satış","gelir":12000,"gider":null,"not":null},{"tarih":"2026-04-22","tur":"GİDER","aciklama":"Lastik Tamir-İveco","kategori":"Araç/Yakıt","gelir":null,"gider":450,"not":null},{"tarih":"2026-04-22","tur":"GİDER","aciklama":"Ertas Plastik - 3.391 KG (Mavi)","kategori":"Hammadde","gelir":null,"gider":187183.2,"not":"Mavi - düzeltildi"},{"tarih":"2026-04-22","tur":"GELİR","aciklama":"Özcan Bozkurt","kategori":"Satış-Fatura","gelir":20000,"gider":null,"not":null,"kg":100},{"tarih":"2026-04-24","tur":"GİDER","aciklama":"Deniz Bank Taşıt Kredi-İveco","kategori":"Kredi Ödemesi","gelir":null,"gider":104741.29,"not":null},{"tarih":"2026-04-24","tur":"GİDER","aciklama":"HGS İveco","kategori":"Araç/Yakıt","gelir":null,"gider":1275,"not":null},{"tarih":"2026-04-24","tur":"GELİR","aciklama":"Rekor Plastik","kategori":"Satış-Fatura","gelir":56000,"gider":null,"not":null,"kg":320},{"tarih":"2026-04-24","tur":"GELİR","aciklama":"İzmir Emek Plastik","kategori":"Satış-Fatura","gelir":40867.2,"gider":null,"not":null,"kg":378.4},{"tarih":"2026-04-27","tur":"GİDER","aciklama":"Poliwood Muhtasar","kategori":"Vergi/SGK","gelir":null,"gider":939.7,"not":null},{"tarih":"2026-04-27","tur":"GİDER","aciklama":"İveco 35 CRY 894 Motorin","kategori":"Araç/Yakıt","gelir":null,"gider":3864,"not":null},{"tarih":"2026-04-27","tur":"GİDER","aciklama":"Ertas Plastik - 3.166 KG (Mavi)","kategori":"Hammadde","gelir":null,"gider":174763.2,"not":"Mavi - düzeltildi"},{"tarih":"2026-04-27","tur":"GELİR","aciklama":"Özcan Bozkurt","kategori":"Satış-Fatura","gelir":20000,"gider":null,"not":null,"kg":100},{"tarih":"2026-04-28","tur":"GİDER","aciklama":"Ofuro Otel Antepli Melih Konaklama","kategori":"Genel Gider","gelir":null,"gider":6000,"not":null},{"tarih":"2026-04-28","tur":"GİDER","aciklama":"Antepli Melih Harçlık","kategori":"Genel Gider","gelir":null,"gider":12000,"not":null},{"tarih":"2026-04-28","tur":"GİDER","aciklama":"Antepli Yemek","kategori":"Genel Gider","gelir":null,"gider":2040,"not":null},{"tarih":"2026-04-28","tur":"GİDER","aciklama":"Poliwood KDV","kategori":"Vergi/SGK","gelir":null,"gider":761,"not":null},{"tarih":"2026-04-28","tur":"GİDER","aciklama":"Ertas Plastik 1.328 KG Mavi","kategori":"Hammadde","gelir":null,"gider":73305.6,"not":null},{"tarih":"2026-04-30","tur":"GİDER","aciklama":"Poliwood SGK","kategori":"Vergi/SGK","gelir":null,"gider":12363.61,"not":null},{"tarih":"2026-04-30","tur":"GİDER","aciklama":"Ertas Plastik 3.021 KG Mavi","kategori":"Hammadde","gelir":null,"gider":166759.2,"not":null},{"tarih":"2026-04-30","tur":"GİDER","aciklama":"Balonlu Naylon Fab. Maliyet Gideri-Nis (1.821,50 KGx13)","kategori":"Genel Gider","gelir":null,"gider":23680,"not":null},{"tarih":"2026-04-30","tur":"GELİR","aciklama":"Sevinç Gürbüz Turhan","kategori":"Satış-Fatura","gelir":7193.4,"gider":null,"not":null,"kg":63.1},{"tarih":"2026-05-04","tur":"GİDER","aciklama":"Asetadlı Kalem","kategori":"Genel Gider","gelir":null,"gider":197,"not":null},{"tarih":"2026-05-04","tur":"GELİR","aciklama":"A Yangın Güvenlik","kategori":"Satış-Fatura","gelir":25428,"gider":null,"not":null,"kg":211.9},{"tarih":"2026-05-05","tur":"GİDER","aciklama":"İveco 35 CRY 894 Motorin","kategori":"Araç/Yakıt","gelir":null,"gider":3445.91,"not":null},{"tarih":"2026-05-05","tur":"GİDER","aciklama":"Koçer Polimer - 375 KG+250 KG","kategori":"Hammadde","gelir":null,"gider":68640,"not":null},{"tarih":"2026-05-06","tur":"GİDER","aciklama":"Ertas Plastik 2.180 KG Mavi","kategori":"Hammadde","gelir":null,"gider":120336,"not":null},{"tarih":"2026-05-06","tur":"GELİR","aciklama":"Rekor Plastik","kategori":"Satış-Fatura","gelir":16884,"gider":null,"not":null,"kg":90},{"tarih":"2026-05-06","tur":"GELİR","aciklama":"Rekor Plastik","kategori":"Satış-Fatura","gelir":37500,"gider":null,"not":null,"kg":200},{"tarih":"2026-05-08","tur":"GİDER","aciklama":"Oraz İpeksoy Maaş","kategori":"Personel","gelir":null,"gider":50000,"not":null},{"tarih":"2026-05-08","tur":"GİDER","aciklama":"Arzu Başpınar Maaş","kategori":"Personel","gelir":null,"gider":50000,"not":null},{"tarih":"2026-05-08","tur":"GİDER","aciklama":"Murat Gürpınar Maaş","kategori":"Personel","gelir":null,"gider":59550,"not":null},{"tarih":"2026-05-14","tur":"GİDER","aciklama":"Koçer Polimer-521 Fatura Fiyat Farkı","kategori":"Hammadde","gelir":null,"gider":4875,"not":null},{"tarih":"2026-05-18","tur":"GİDER","aciklama":"Poliwood Geçici Vergi","kategori":"Vergi/SGK","gelir":null,"gider":1085.2,"not":null},{"tarih":"2026-05-18","tur":"GİDER","aciklama":"İveco 35 CRY 894 Motorin","kategori":"Araç/Yakıt","gelir":null,"gider":3083.1,"not":null},{"tarih":"2026-05-18","tur":"GELİR","aciklama":"Perakende Satış-Emre Apak","kategori":"Perakende Satış","gelir":2000,"gider":null,"not":null,"kg":126},{"tarih":"2026-05-18","tur":"GELİR","aciklama":"Rekor Plastik","kategori":"Satış-Fatura","gelir":45000,"gider":null,"not":null,"kg":170},{"tarih":"2026-05-18","tur":"GELİR","aciklama":"A Yangın Güvenlik","kategori":"Satış-Fatura","gelir":50400,"gider":null,"not":null,"kg":420},{"tarih":"2026-05-21","tur":"GİDER","aciklama":"İveco 35 CRY 894 Motorin","kategori":"Araç/Yakıt","gelir":null,"gider":2170.68,"not":null},{"tarih":"2026-05-21","tur":"GELİR","aciklama":"Perakende Satış-Aziz Ağtaş","kategori":"Perakende Satış","gelir":10750,"gider":null,"not":null,"kg":15},{"tarih":"2026-05-21","tur":"GELİR","aciklama":"Rekor Plastik","kategori":"Satış-Fatura","gelir":37500,"gider":null,"not":null},{"tarih":"2026-05-22","tur":"GİDER","aciklama":"Motorlu Taşıtlar Vergisi 35 CYR 894","kategori":"Vergi/SGK","gelir":null,"gider":6244,"not":null},{"tarih":"2026-05-25","tur":"GİDER","aciklama":"Deniz Bank Taşıt Kredi-İveco","kategori":"Kredi Ödemesi","gelir":null,"gider":104741.29,"not":null},{"tarih":"2026-05-31","tur":"GİDER","aciklama":"Balonlu Naylon Fab. Maliyet Gideri-May (1.572,90 KGx13)","kategori":"Genel Gider","gelir":null,"gider":20447.7,"not":null},{"tarih":"2026-06-01","tur":"GİDER","aciklama":"Torbalı Belediye-Çevre Temizlik Vergisi","kategori":"Vergi/SGK","gelir":null,"gider":1312.5,"not":null},{"tarih":"2026-06-02","tur":"GELİR","aciklama":"Özcan Bozkurt","kategori":"Satış-Fatura","gelir":45000,"gider":null,"not":null},{"tarih":"2026-06-03","tur":"GİDER","aciklama":"Poliwood Muhtasar","kategori":"Vergi/SGK","gelir":null,"gider":3192.96,"not":null},{"tarih":"2026-06-04","tur":"GELİR","aciklama":"Perakende Satış-Muhittin Budak","kategori":"Perakende Satış","gelir":1500,"gider":null,"not":null,"kg":14},{"tarih":"2026-06-05","tur":"GİDER","aciklama":"Poliwood SGK","kategori":"Vergi/SGK","gelir":null,"gider":17705.8,"not":null},{"tarih":"2026-06-05","tur":"GİDER","aciklama":"Oraz İpeksoy Maaş","kategori":"Personel","gelir":null,"gider":50000,"not":null},{"tarih":"2026-06-05","tur":"GİDER","aciklama":"Arzu Başpınar Maaş","kategori":"Personel","gelir":null,"gider":50000,"not":null},{"tarih":"2026-06-05","tur":"GİDER","aciklama":"Murat Gürpınar Maaş","kategori":"Personel","gelir":null,"gider":70350,"not":null},{"tarih":"2026-06-05","tur":"GİDER","aciklama":"Mustafa Akay Hammadde Nakliye EFT-Adana","kategori":"Nakliye","gelir":null,"gider":48000,"not":null,"kg":null},{"tarih":"2026-06-08","tur":"GİDER","aciklama":"Atlantik Ambalaj 25.740 KGx33 TL","kategori":"Hammadde","gelir":null,"gider":1019304,"not":null},{"tarih":"2026-06-08","tur":"GİDER","aciklama":"Tokat Hammadde Nakliye","kategori":"Nakliye","gelir":null,"gider":15000,"not":null,"kg":null},{"tarih":"2026-06-08","tur":"GİDER","aciklama":"Tokat Hammadde Yusuf Bey 5.245 KGx30 TL","kategori":"Hammadde","gelir":null,"gider":157350,"not":null},{"tarih":"2026-06-10","tur":"GİDER","aciklama":"Zafer Civata-Koli Bandı ZFP202600002335","kategori":"Genel Gider","gelir":null,"gider":2520,"not":null},{"tarih":"2026-06-10","tur":"GELİR","aciklama":"Gözükırmızı Nalburiye","kategori":"Satış-Fatura","gelir":82263.72,"gider":null,"not":null,"kg":1246.42},{"tarih":"2026-06-10","tur":"GELİR","aciklama":"Gözükırmızı Nalburiye","kategori":"Satış-Fatura","gelir":87856.56,"gider":null,"not":null,"kg":1331.16},{"tarih":"2026-06-11","tur":"GİDER","aciklama":"35 CYR 894 Motorin","kategori":"Araç/Yakıt","gelir":null,"gider":2000,"not":null},{"tarih":"2026-06-11","tur":"GİDER","aciklama":"Beser Kağıt-Karbon Bobin 2.030 KGx30 TL","kategori":"Hammadde","gelir":null,"gider":73080,"not":null},{"tarih":"2026-06-12","tur":"GELİR","aciklama":"Perakende Satış","kategori":"Perakende Satış","gelir":2100,"gider":null,"not":null,"kg":15},{"tarih":"2026-06-12","tur":"GELİR","aciklama":"Perakende Satış-Mehmet Işıkkent","kategori":"Perakende Satış","gelir":33800,"gider":null,"not":null,"kg":400},{"tarih":"2026-06-12","tur":"GELİR","aciklama":"İzmir Emek Plastik","kategori":"Satış-Fatura","gelir":74117.76,"gider":null,"not":null,"kg":1159.08},{"tarih":"2026-06-16","tur":"GİDER","aciklama":"35 CYR 894 Motorin","kategori":"Araç/Yakıt","gelir":null,"gider":2969.26,"not":null},{"tarih":"2026-06-16","tur":"GELİR","aciklama":"SRK Prefabrik","kategori":"Satış-Fatura","gelir":25444.94,"gider":null,"not":null,"kg":504.86},{"tarih":"2026-06-16","tur":"GELİR","aciklama":"Çınar Ambalaj-Mevlüt Keser","kategori":"Satış-Fatura","gelir":8364.84,"gider":null,"not":null,"kg":126.74},{"tarih":"2026-06-16","tur":"GELİR","aciklama":"Bizim Ambalaj-Emine Keser","kategori":"Satış-Fatura","gelir":8294.88,"gider":null,"not":null,"kg":125.68},{"tarih":"2026-06-16","tur":"GELİR","aciklama":"Rekor Plastik","kategori":"Satış-Fatura","gelir":33319.99,"gider":null,"not":null,"kg":196},{"tarih":"2026-06-17","tur":"GELİR","aciklama":"Perakende Satış-Aydın Yolda","kategori":"Perakende Satış","gelir":1900,"gider":null,"not":null,"kg":14},{"tarih":"2026-06-17","tur":"GELİR","aciklama":"Gözükırmızı Nakliye Bedeli","kategori":"Satış-Fatura","gelir":7000,"gider":null,"not":null},{"tarih":"2026-06-17","tur":"GELİR","aciklama":"Gözükırmızı Nalburiye","kategori":"Satış-Fatura","gelir":24095.28,"gider":null,"not":null,"kg":365.08},{"tarih":"2026-06-17","tur":"GELİR","aciklama":"Çınar Ambalaj-Mevlüt Keser","kategori":"Satış-Fatura","gelir":33385.44,"gider":null,"not":null,"kg":505.84},{"tarih":"2026-06-17","tur":"GELİR","aciklama":"İzmir Emek Plastik","kategori":"Satış-Fatura","gelir":39089.16,"gider":null,"not":null,"kg":592.26},{"tarih":"2026-06-18","tur":"GİDER","aciklama":"35 CYR 894 Motorin","kategori":"Araç/Yakıt","gelir":null,"gider":3150.2,"not":null},{"tarih":"2026-06-18","tur":"GİDER","aciklama":"Türk Patent K.K.-RAZ Plastik Marka Tescil","kategori":"Genel Gider","gelir":null,"gider":7010,"not":null},{"tarih":"2026-06-22","tur":"GELİR","aciklama":"Akta Plastik","kategori":"Satış-Fatura","gelir":24500,"gider":null,"not":"70 adet 1. Kalite 100cm","kg":140},{"tarih":"2026-06-22","tur":"GİDER","aciklama":"Kredi Ödeme-Lavera Kuveyt Maksipan","kategori":"Kredi Ödemesi","gelir":null,"gider":200247.52,"not":"KALAN 9/8 TAKSİT"},{"tarih":"2026-06-23","tur":"GİDER","aciklama":"Deniz Bank Taşıt Kredi-Iveco","kategori":"Kredi Ödemesi","gelir":null,"gider":104741.29,"not":"KALAN 24/18 TAKSİT"},{"tarih":"2026-06-23","tur":"GİDER","aciklama":"Koçer Polimer LDPE+LLDPE 1.000 KG","kategori":"Hammadde","gelir":null,"gider":92730,"not":"KPE2026000000720 — LDPE 500kgx79,79 + LLDPE 500kgx74,75"},{"tarih":"2026-06-23","tur":"GELİR","aciklama":"Poliwood Nakliye-Ömer Bey Kısık","kategori":"Nakliye","gelir":1200,"gider":null,"not":"1.000₺ pazar, kalan 200₺","kg":null},{"tarih":"2026-06-26","tur":"GELİR","aciklama":"Nakit Satış","kategori":"Perakende Satış","gelir":670,"gider":null,"not":"2. Kalite Mavi 120cm — 1 bobin nakit","kg":12.2},{"tarih":"2026-06-26","tur":"GELİR","aciklama":"Rekor Plastik","kategori":"Satış-Fatura","gelir":39000,"gider":null,"not":"80 adet 1. Kalite 100cm + 100 adet 1. Kalite 50cm","kg":260},{"tarih":"2026-06-26","tur":"GELİR","aciklama":"Çınar Ambalaj","kategori":"Satış-Fatura","gelir":13500,"gider":null,"not":"30 adet 1. Kalite 3 Katlı 100cm 60gr/m²","kg":90},{"tarih":"2026-06-26","tur":"GİDER","aciklama":"Poliwood Muhtasar","kategori":"Vergi/SGK","gelir":null,"gider":3192.96,"not":null},{"tarih":"2026-06-26","tur":"GİDER","aciklama":"35 CYR 894 Motorin","kategori":"Araç/Yakıt","gelir":null,"gider":3210.16,"not":null},{"tarih":"2026-06-26","tur":"GİDER","aciklama":"Koçer Polimer G3 Katkı 250 KG","kategori":"Hammadde","gelir":null,"gider":24000,"not":"KPE2026000000738"},{"tarih":"2026-06-26","tur":"GELİR","aciklama":"Muhammed Tutun","kategori":"Satış-Fatura","gelir":3600,"gider":null,"not":"PLW2026000000026","kg":20},{"tarih":"2026-06-26","tur":"GELİR","aciklama":"Erhan Ataş","kategori":"Satış-Fatura","gelir":2230,"gider":null,"not":"PLW2026000000029","kg":14},{"tarih":"2026-06-29","tur":"GELİR","aciklama":"Gözükırmızı","kategori":"Satış-Fatura","gelir":71833.08,"gider":null,"not":"89 adet 2. Kalite Bal Köpüğü 120cm (1.088,38 kg)","kg":1088.38},{"tarih":"2026-06-29","tur":"GİDER","aciklama":"AD Blue-Yakıt Katkı","kategori":"Araç/Yakıt","gelir":null,"gider":420.43,"not":null},{"tarih":"2026-06-29","tur":"GİDER","aciklama":"Ticaret Odası Yıllık Aidat","kategori":"Genel Gider","gelir":null,"gider":6047.39,"not":null},{"tarih":"2026-06-29","tur":"GİDER","aciklama":"Yeşileko Kredi-Kuveyt Maksipan","kategori":"Kredi Ödemesi","gelir":null,"gider":234220.64,"not":"KALAN 9/8 TAKSİT"},{"tarih":"2026-06-30","tur":"GELİR","aciklama":"Çınar Ambalaj","kategori":"Satış-Fatura","gelir":9750,"gider":null,"not":"30 adet 1. Kalite 100cm 40gr (PLW2026000000032)","kg":60},{"tarih":"2026-06-30","tur":"GELİR","aciklama":"Bizim Ambalaj (Emine Keser)","kategori":"Satış-Fatura","gelir":6500,"gider":null,"not":"20 adet 1. Kalite 100cm 40gr 3 Katlı (PLW2026000000033)","kg":40},{"tarih":"2026-06-30","tur":"GELİR","aciklama":"Mehmet Işıkkent","kategori":"Satış-Fatura","gelir":18000,"gider":null,"not":"30 adet ECO-1 150cm","kg":210},{"tarih":"2026-06-30","tur":"GİDER","aciklama":"SGK Poliwood","kategori":"Vergi/SGK","gelir":null,"gider":17282.5,"not":null},{"tarih":"2026-07-01","tur":"GELİR","aciklama":"Erhan Ataş","kategori":"Satış-Fatura","gelir":61520,"gider":null,"not":"111 adet 1. Kalite 100cm 40gr 2kat + 49 adet 1. Kalite 100cm 40gr 3kat","kg":320},{"tarih":"2026-07-01","tur":"GİDER","aciklama":"35 CYR 894 Motorin","kategori":"Araç/Yakıt","gelir":null,"gider":2462.51,"not":null},{"tarih":"2026-07-02","tur":"GELİR","aciklama":"Gözükırmızı","kategori":"Satış-Fatura","gelir":81565.44,"gider":null,"not":"109 adet 2. Kalite Bal Köpüğü 120cm (1.235,84 kg)","kg":1235.84}],"mamul":[{"kalite":"2. Kalite","tip":"Mavi","genislik":"145 cm","gramaj":"-","adet":201,"kgBobin":16},{"kalite":"2. Kalite","tip":"Mavi","genislik":"120 cm","gramaj":"-","adet":377,"kgBobin":12.4},{"kalite":"2. Kalite","tip":"Bal Köpüğü","genislik":"160 cm","gramaj":"-","adet":70,"kgBobin":16},{"kalite":"2. Kalite","tip":"Bal Köpüğü","genislik":"120 cm","gramaj":"-","adet":0,"kgBobin":12},{"kalite":"1. Kalite","tip":"Standart","genislik":"100 cm","gramaj":"40 gr/m²","adet":0,"kgBobin":2},{"kalite":"1. Kalite","tip":"Standart","genislik":"150 cm","gramaj":"40 gr/m²","adet":35,"kgBobin":3},{"kalite":"1. Kalite","tip":"Standart","genislik":"50 cm","gramaj":"40 gr/m²","adet":300,"kgBobin":1},{"kalite":"1. Kalite","tip":"3 Katlı","genislik":"100 cm","gramaj":"60 gr/m²","adet":44,"kgBobin":3},{"kalite":"1. Kalite","tip":"3 Katlı","genislik":"100 cm","gramaj":"40 gr/m²","adet":145,"kgBobin":2},{"kalite":"ECO-1","tip":"Standart","genislik":"100 cm","gramaj":"-","adet":110,"kgBobin":5},{"kalite":"ECO-1","tip":"Standart","genislik":"150 cm","gramaj":"-","adet":48,"kgBobin":7},{"kalite":"ECO-1","tip":"Standart","genislik":"200 cm","gramaj":"-","adet":10,"kgBobin":10}],"hammadde":[{"tedarikci":"Ertas Plastik","aciklama":"Mavi","alinan":23769,"kalan":13020,"not":null},{"tedarikci":"Ertas Plastik","aciklama":"Diğer","alinan":null,"kalan":10775,"not":null},{"tedarikci":"Koçer Polimer","aciklama":"-","alinan":2250,"kalan":2250,"not":null},{"tedarikci":"Özmüşler","aciklama":"-","alinan":15880,"kalan":10026.16,"not":null},{"tedarikci":"Atlantik Ambalaj","aciklama":"-","alinan":25740,"kalan":16000,"not":null},{"tedarikci":"Tokat/Yusuf Bey","aciklama":"-","alinan":5245,"kalan":0,"not":null},{"tedarikci":"Ertas Plastik","aciklama":"Kaliteli Bal Köpüğü","alinan":null,"kalan":3990,"not":"Fatura bekleniyor"}],"fiyatlar":[{"urun":"2. Kalite (Mavi & Bal Köpüğü)","kdvHaric":55,"kdvOran":0.2},{"urun":"1. Kalite (tüm tipler)","kdvHaric":125,"kdvOran":0.2},{"urun":"ECO-1","kdvHaric":80,"kdvOran":0.2},{"urun":"Hammadde — Ertas Plastik (Mavi)","kdvHaric":43,"kdvOran":0.2},{"urun":"Hammadde — Ertas Plastik (Diğer)","kdvHaric":43,"kdvOran":0.2},{"urun":"Hammadde — Ertas Plastik (Kaliteli Bal Köpüğü)","kdvHaric":43,"kdvOran":0.2},{"urun":"Hammadde — Koçer Polimer","kdvHaric":79.7733,"kdvOran":0.2},{"urun":"Hammadde — Özmüşler","kdvHaric":43,"kdvOran":0.2},{"urun":"Hammadde — Atlantik Ambalaj","kdvHaric":32,"kdvOran":0.2},{"urun":"Hammadde — Tokat/Yusuf Bey","kdvHaric":43,"kdvOran":0.2}],"krediler":[{"id":"k1","ad":"Deniz Bank Taşıt Kredisi (İveco)","taksitSayisi":24,"taksitTutari":104741.29,"anahtar":"iveco","ilkTarih":"2026-01-23"},{"id":"k2","ad":"Lavera Kimya Kredisi","taksitSayisi":9,"taksitTutari":200247.52,"anahtar":"lavera","ilkTarih":"2026-06-22"},{"id":"k3","ad":"Yeşileko Hammadde Kredisi","taksitSayisi":9,"taksitTutari":234220.64,"anahtar":"yeşileko","ilkTarih":"2026-06-29"}],"notlar":[{"id":"n1","metin":"Ertaş Kaliteli Bal Köpüğü 3.990 kg faturası bekleniyor","tamamlandi":false,"tarih":"2026-06-26"}]};
 
 const AYLAR = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
@@ -359,11 +238,17 @@ Object.keys(MASURALAR).forEach(k => { const n = genislikNormalize(k); MASURALAR_
 // Doğrudan eşleşmezse, kullanıcının tanımladığı kalıcı "eşleme" tablosuna bakar — ör. "70-50" gibi
 // stokta AYRI bir ürün olarak kalması gereken ama hesaplamada 120cm masurasını kullanması gereken
 // bir genişlik için. Stoktaki ürün ayrı kalır, sadece hangi masura sabitini kullanacağı öğretilir.
-function masuraBul(genislik) {
+// Artık KALİTE BAZLI — aynı genişlik farklı kalitelerde farklı masura ağırlığına sahip olabilir
+// (ör. 1. Kalite'nin kendi masurası, 2. Kalite'ninkinden farklı ağırlıkta). Önce o kalitenin kendi
+// masura tablosuna (data.masuraTablosu[kalite]) bakar, sonra kalite bazlı eşleme tablosuna düşer.
+function masuraBul(kalite, genislik) {
+  const tablo = (data.masuraTablosu && data.masuraTablosu[kalite]) || {};
   const norm = genislikNormalize(genislik);
-  if (MASURALAR_NORM[norm]) return MASURALAR_NORM[norm];
-  const eslenik = data.genislikEslenikleri && data.genislikEslenikleri[norm];
-  return eslenik ? (MASURALAR_NORM[genislikNormalize(eslenik)] || null) : null;
+  for (const k in tablo) { if (genislikNormalize(k) === norm) return tablo[k]; }
+  const kaliteEslenik = data.genislikEslenikleri && data.genislikEslenikleri[kalite];
+  const eslenik = kaliteEslenik && kaliteEslenik[norm];
+  if (eslenik) { for (const k in tablo) { if (genislikNormalize(k) === genislikNormalize(eslenik)) return tablo[k]; } }
+  return null;
 }
 const STOK_ESIK = 30; // bu adetin altı uyarı
 const MAKINELER = ["1. Kalite Makinası", "2. Kalite Makinası"];
@@ -371,13 +256,14 @@ const VARDIYALAR = ["Gündüz", "Gece"];
 
 let data = null;
 let tab = "ozet";
+let stokArama = ""; // Stok ekranındaki mamul listesi arama kutusu
 let gizliMod = false; // görünürken parasal rakamları gizleme modu — sadece bu cihazda hatırlanır
 let digerAcik = false;
 let form = null;
 let duzenleIdx = null;
 let arama = "";
 let hFiltre = "buay";
-let maliyet = { urun: "1. Kalite", genislik: "120 cm", hamFiyat: "", satisFiyat: "", bobinKg: "", masuraKg: "" };
+let maliyet = { urun: "1. Kalite", genislik: "120 cm", hamFiyat: "", satisFiyat: "", bobinKg: "", masuraKg: "", masurali: null };
 let uForm = null;
 let uFiltre = "buay";
 
@@ -453,7 +339,32 @@ function saglaId(d) {
   if (!d.sayimlar) d.sayimlar = [];
   if (!d.cariBakiyeler) d.cariBakiyeler = {}; // müşteri fazla ödemesi (kredi) — bir sonraki faturaya otomatik düşer
   if (!d.personeller) d.personeller = []; // maaş bordrosu — Krediler'deki gibi tek dokunuşla ödeme kaydı
-  if (!d.genislikEslenikleri) d.genislikEslenikleri = {}; // özel genişlik etiketi -> gerçek masura genişliği (stok ayrı kalır)
+  // Genişlik eşlemeleri artık KALİTE BAZLI ({kalite: {normGenislik: hedefGenislik}}) — çünkü aynı özel
+  // etiket (ör. "70-50") farklı kalitelerde farklı masuraya karşılık gelebilir. Eski (tek seviyeli) format
+  // varsa hepsi "2. Kalite" altına taşınır — o zamanki sistem zaten sadece 2. Kalite'yi kontrol ediyordu.
+  if (!d.genislikEslenikleri) d.genislikEslenikleri = {};
+  {
+    const ilkDeger = Object.values(d.genislikEslenikleri)[0];
+    if (ilkDeger != null && typeof ilkDeger === "string") {
+      d.genislikEslenikleri = { "2. Kalite": d.genislikEslenikleri };
+    }
+  }
+  // Masura ağırlıkları artık KALİTE BAZLI, düzenlenebilir bir tablo. 2. Kalite mevcut sabit değerlerle
+  // dolu başlar (geriye dönük uyumluluk); 1. Kalite boş başlar, kullanıcı kendi rakamlarını girer.
+  if (!d.masuraTablosu) {
+    d.masuraTablosu = { "2. Kalite": JSON.parse(JSON.stringify(MASURALAR)), "1. Kalite": {}, "ECO-1": {} };
+  }
+  ["1. Kalite","2. Kalite","ECO-1"].forEach(k => { if (!d.masuraTablosu[k]) d.masuraTablosu[k] = {}; });
+  // Ürün kaydına yeni alanlar: katSayisi, masurali. "tip" alanına gömülmüş "3 Katlı" gibi ifadeler varsa
+  // ayrıştırılıp kendi alanına taşınır — mevcut ürün kimliği (key) bozulmadan.
+  (d.mamul||[]).forEach(m => {
+    if (m.katSayisi == null) {
+      const katEslesme = String(m.tip||"").match(/(\d)\s*katl[ıi]/i);
+      if (katEslesme) { m.katSayisi = katEslesme[1] + " Katlı"; }
+      else { m.katSayisi = ""; }
+    }
+    if (m.masurali == null) m.masurali = (m.kalite === "2. Kalite"); // eski davranışla tutarlı varsayılan
+  });
   if (!d.ayarlar) d.ayarlar = {};
   // İşçilik artık ürün tipine göre ayrı ayrı: 1.Kalite 25₺, 2.Kalite 15₺, ECO-1 20₺ (net plastik kg başına, masura hariç).
   // Eski tek-sayı formatındaysa (bu güncellemeden önce kaydedilmişse) yeni doğru değerlerle değiştirilir.
@@ -1136,7 +1047,7 @@ function kaydet() {
   kalemDusum.forEach(({m, kg, dusulecekAdet, kgGercekMi}) => {
     if (m && dusulecekAdet > 0) {
       m.adet -= dusulecekAdet;
-      const satir = {key: m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj, adet: dusulecekAdet, ad: m.kalite+" "+m.tip+" "+m.genislik};
+      const satir = {key: m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj, adet: dusulecekAdet, ad: m.kalite+" "+m.tip+" "+m.genislik, masurali: !!m.masurali};
       // Sadece GERÇEKTEN tartılıp girilen net kg saklanır — ileride "ortalama kg/bobin" hesaplarında
       // katalog tahmini yerine senin girdiğin gerçek değerler kullanılabilsin diye.
       if (kgGercekMi) satir.kg = kg;
@@ -1824,12 +1735,15 @@ function tumZamanlarTanimsizGenislikler() {
   data.hareketler.forEach(h => {
     if (!(h.gelir && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış"))) return;
     (h.kalemler||[]).forEach(k => {
+      // Masuralı olup olmadığı artık kalemin kendi üzerine damgalanmış (satış anındaki ürün durumu) —
+      // masurasız bir ürünün genişliği hiç kontrol edilmez, çünkü masura hesabına zaten girmiyor.
+      if (!k.masurali) return;
       const parcalar = String(k.key||"").split("|");
       const kalite = parcalar[0], genislik = parcalar[2];
-      if (kalite !== "2. Kalite") return;
-      if (masuraBul(genislik)) return; // zaten eşleşiyor, sorun yok
-      if (!sonuc[genislik]) sonuc[genislik] = {adet:0, ad:k.ad||("2. Kalite · "+genislik)};
-      sonuc[genislik].adet += (k.adet||0);
+      if (masuraBul(kalite, genislik)) return; // zaten eşleşiyor, sorun yok
+      const anahtar = kalite + "|" + genislik;
+      if (!sonuc[anahtar]) sonuc[anahtar] = {adet:0, ad:k.ad||(kalite+" · "+genislik), kalite, genislik};
+      sonuc[anahtar].adet += (k.adet||0);
     });
   });
   return sonuc;
@@ -1841,18 +1755,21 @@ function masuraAnaliziAy(ayKey) {
   const eksikSatislar = tumSatislar.filter(h => !h.kalemler || !h.kalemler.length);
 
   let toplamBobin = 0, toplamBobinKg = 0, toplamMasuraKg = 0, tanimsizBobin = 0;
-  const genislikKirilim = {};
-  const tanimsizKirilim = {}; // genişlik -> {adet, ad} — hangi ürün(ler) eşleşmedi, açıkça göstermek için
+  const genislikKirilim = {}; // "Kalite · Genişlik" -> {adet, masuraKg, bobinKg} (kalite ayrı gösterilir, ağırlıkları farklı olabilir)
+  const tanimsizKirilim = {}; // "kalite|genişlik" -> {adet, ad, kalite, genislik} — hangi ürün(ler) eşleşmedi
   satislar.forEach(h => {
     (h.kalemler||[]).forEach(k => {
+      // Masuralı mı — kalemin kendi üzerine satış anında damgalanmış (eski kayıtlarda yoksa kaliteden tahmin).
+      const masuraliMi = k.masurali != null ? k.masurali : (String(k.key||"").split("|")[0] === "2. Kalite");
+      if (!masuraliMi) return;
       const parcalar = String(k.key||"").split("|");
       const kalite = parcalar[0], genislik = parcalar[2];
-      if (kalite !== "2. Kalite") return;
-      const mas = masuraBul(genislik);
+      const mas = masuraBul(kalite, genislik);
       if (!mas) {
         tanimsizBobin += (k.adet||0);
-        if (!tanimsizKirilim[genislik]) tanimsizKirilim[genislik] = {adet:0, ad:k.ad||("2. Kalite · "+genislik)};
-        tanimsizKirilim[genislik].adet += (k.adet||0);
+        const anahtar = kalite + "|" + genislik;
+        if (!tanimsizKirilim[anahtar]) tanimsizKirilim[anahtar] = {adet:0, ad:k.ad||(kalite+" · "+genislik), kalite, genislik};
+        tanimsizKirilim[anahtar].adet += (k.adet||0);
         return;
       }
       const adet = k.adet||0;
@@ -1861,15 +1778,18 @@ function masuraAnaliziAy(ayKey) {
       toplamBobin += adet;
       toplamMasuraKg += masuraKg;
       toplamBobinKg += bobinKg;
-      // Kırılım tablosunda gerçek masura genişliğine göre grupla — "70-50" gibi eşlenmiş bir etiket
-      // varsa, ait olduğu "120 cm" satırının altında toplanır (stoktaki ürün ayrı kalmaya devam eder,
-      // bu sadece raporlama gruplaması).
+      // Kırılım tablosunda kalite+gerçek masura genişliğine göre grupla — "70-50" gibi eşlenmiş bir
+      // etiket varsa, ait olduğu "120 cm" satırının altında toplanır (stoktaki ürün ayrı kalmaya
+      // devam eder, bu sadece raporlama gruplaması). Farklı kaliteler ayrı satırlarda kalır.
       const norm = genislikNormalize(genislik);
-      const gercekGenislik = MASURALAR_NORM[norm] ? MASURALAR_KANONIK[norm] : ((data.genislikEslenikleri && data.genislikEslenikleri[norm]) || genislik);
-      if (!genislikKirilim[gercekGenislik]) genislikKirilim[gercekGenislik] = {adet:0, masuraKg:0, bobinKg:0};
-      genislikKirilim[gercekGenislik].adet += adet;
-      genislikKirilim[gercekGenislik].masuraKg += masuraKg;
-      genislikKirilim[gercekGenislik].bobinKg += bobinKg;
+      const kaliteMasuraTablo = (data.masuraTablosu && data.masuraTablosu[kalite]) || {};
+      let gercekGenislik = genislik;
+      for (const gk in kaliteMasuraTablo) { if (genislikNormalize(gk) === norm) { gercekGenislik = gk; break; } }
+      const kirilimAnahtar = kalite + " · " + gercekGenislik;
+      if (!genislikKirilim[kirilimAnahtar]) genislikKirilim[kirilimAnahtar] = {adet:0, masuraKg:0, bobinKg:0};
+      genislikKirilim[kirilimAnahtar].adet += adet;
+      genislikKirilim[kirilimAnahtar].masuraKg += masuraKg;
+      genislikKirilim[kirilimAnahtar].bobinKg += bobinKg;
     });
   });
   const netPlastikKg = toplamBobinKg - toplamMasuraKg;
@@ -1931,7 +1851,7 @@ function urunEslestirModal(hId) {
   let baslangicStokIdx = "";
   let tekEslesme = false;
   if (tahminGenislik) {
-    const eslesenler = data.mamul.map((m,i) => ({m,i})).filter(x => x.m.kalite === "2. Kalite" && genislikNormalize(x.m.genislik) === genislikNormalize(tahminGenislik));
+    const eslesenler = data.mamul.map((m,i) => ({m,i})).filter(x => x.m.masurali && genislikNormalize(x.m.genislik) === genislikNormalize(tahminGenislik));
     if (eslesenler.length === 1) { baslangicStokIdx = String(eslesenler[0].i); tekEslesme = true; }
   }
   window.__urunEslestirKalemler = [{stokIdx: baslangicStokIdx, adet: tahminAdet ? String(tahminAdet) : ""}];
@@ -1992,7 +1912,7 @@ function urunEslestirKaydet() {
   if (!gecerli.length) { toast("En az bir ürün ve adet girin"); return; }
   const kalemKayit = gecerli.map(k => {
     const m = data.mamul[parseInt(k.stokIdx)];
-    return { key: m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj, adet: parseTL(k.adet), ad: m.kalite+" "+m.tip+" "+m.genislik };
+    return { key: m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj, adet: parseTL(k.adet), ad: m.kalite+" "+m.tip+" "+m.genislik, masurali: !!m.masurali };
   });
   h.kalemler = kalemKayit;
   const kaliteler = new Set(kalemKayit.map(k => k.key.split("|")[0]));
@@ -2015,18 +1935,20 @@ function urunEslestirModalKapat() {
 // Bir genişlik yanlış/not-amaçlı girilmişse (ör. "70-50" aslında 120cm masurası), hem stoktaki
 // ürünü hem de bununla yapılmış TÜM geçmiş satışları tek seferde doğru genişliğe taşır.
 // Stok miktarı ve satış tutarları hiç değişmez — sadece hangi genişliğe ait olduğu düzelir.
-function genislikDuzeltModal(eskiGenislik) {
+function genislikDuzeltModal(kalite, eskiGenislik) {
   const overlay = document.createElement("div");
   overlay.id = "genislik-duzelt-modal";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px";
-  const hedefler = Object.keys(MASURALAR);
+  const hedefler = Object.keys((data.masuraTablosu && data.masuraTablosu[kalite]) || {});
   overlay.innerHTML =
     '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:20px;width:100%;max-width:380px">'
-    + '<div class="mtitle">🔗 "'+esc(eskiGenislik)+'" Hangi Masurayı Kullanıyor?</div>'
-    + '<div class="mini" style="margin-bottom:12px">Stoktaki "'+esc(eskiGenislik)+'" ürünü AYRI bir ürün olarak kalmaya devam eder — kendi stok miktarını, kendi adını korur, hiçbir şey birleşmez/silinmez. Sadece masura hesaplamasında hangi masura sabitini (120/145/160 cm) kullanacağını öğretmiş oluyoruz.</div>'
-    + '<div style="display:flex;flex-direction:column;gap:8px">'
-    + hedefler.map(g => '<button class="btn" style="background:var(--blue)" onclick="genislikDuzeltUygula(\''+jsStr(eskiGenislik)+'\',\''+jsStr(g)+'\')">→ '+g+' masurası</button>').join("")
-    + '</div>'
+    + '<div class="mtitle">🔗 "'+esc(eskiGenislik)+'" ('+esc(kalite)+') Hangi Masurayı Kullanıyor?</div>'
+    + '<div class="mini" style="margin-bottom:12px">Stoktaki "'+esc(eskiGenislik)+'" ürünü AYRI bir ürün olarak kalmaya devam eder — kendi stok miktarını, kendi adını korur, hiçbir şey birleşmez/silinmez. Sadece masura hesaplamasında '+esc(kalite)+'\'nin hangi masura sabitini kullanacağını öğretmiş oluyoruz.</div>'
+    + (hedefler.length
+        ? '<div style="display:flex;flex-direction:column;gap:8px">'
+          + hedefler.map(g => '<button class="btn" style="background:var(--blue)" onclick="genislikDuzeltUygula(\''+jsStr(kalite)+'\',\''+jsStr(eskiGenislik)+'\',\''+jsStr(g)+'\')">→ '+esc(g)+' masurası</button>').join("")
+          + '</div>'
+        : '<div class="mini" style="color:var(--amber)">'+esc(kalite)+' için henüz hiç masura ağırlığı tanımlanmamış. Önce Maliyet sekmesinden "Masura Ağırlıkları" bölümüne bu kalite için en az bir genişlik+ağırlık ekle, sonra buraya dönüp eşle.</div>')
     + '<button class="chip" style="margin-top:12px" onclick="genislikDuzeltModalKapat()">İptal</button>'
     + '</div>';
   document.body.appendChild(overlay);
@@ -2035,17 +1957,18 @@ function genislikDuzeltModalKapat() {
   const el = document.getElementById("genislik-duzelt-modal");
   if (el) el.remove();
 }
-function genislikDuzeltUygula(eskiGenislik, hedefGenislik) {
+function genislikDuzeltUygula(kalite, eskiGenislik, hedefGenislik) {
   try {
     if (!data.genislikEslenikleri) data.genislikEslenikleri = {};
-    data.genislikEslenikleri[genislikNormalize(eskiGenislik)] = hedefGenislik;
+    if (!data.genislikEslenikleri[kalite]) data.genislikEslenikleri[kalite] = {};
+    data.genislikEslenikleri[kalite][genislikNormalize(eskiGenislik)] = hedefGenislik;
     save();
   } catch (e) {
     alert("Bir hata oluştu, eşleme kaydedilemedi: " + (e && e.message ? e.message : e));
     return;
   }
   genislikDuzeltModalKapat();
-  toast('✓ "' + eskiGenislik + '" artık ' + hedefGenislik + ' masurası olarak hesaplanacak — stok ayrı kaldı, hiçbir şey birleşmedi');
+  toast('✓ "' + eskiGenislik + '" (' + kalite + ') artık ' + hedefGenislik + ' masurası olarak hesaplanacak — stok ayrı kaldı, hiçbir şey birleşmedi');
   try { render(); } catch (e) { /* eşleme zaten kaydedildi, render hatası bunu etkilemez */ }
 }
 
@@ -2100,9 +2023,12 @@ function satisKarHesapla(h) {
         kg = (k.adet||0) * (m ? (m.kgBobin||0) : 0);
       }
       toplamKg += kg;
-      const mas = masuraBul(genislik);
-      // Masura SADECE 2. Kalite'de var — 1. Kalite ve ECO-1 masurasız.
-      const buKalemMasuraKg = (kalite === "2. Kalite" && mas) ? (k.adet||0) * mas.masura : 0;
+      // Masuralı olup olmadığı kalemin kendi üzerine (satış anında) damgalanmış — kaliteden bağımsız,
+      // her ürün için ayrı ayrı belirlenir. Eski kayıtlarda bu alan yoksa (geriye dönük uyumluluk)
+      // eski davranışla tutarlı şekilde sadece 2. Kalite'nin masuralı sayılmasına düşer.
+      const masuraliMi = k.masurali != null ? k.masurali : (kalite === "2. Kalite");
+      const mas = masuraliMi ? masuraBul(kalite, genislik) : null;
+      const buKalemMasuraKg = mas ? (k.adet||0) * mas.masura : 0;
       masuraKg += buKalemMasuraKg;
       const netPlastikBuKalem = Math.max(0, kg - buKalemMasuraKg);
       // İşçilik masura kilosuna VERİLMEZ — sadece net plastik kg üzerinden, o kalemin kendi kalitesinin oranıyla.
@@ -2424,12 +2350,12 @@ function rUretim() {
   if (Object.keys(tumZamanTanimsiz).length) {
     const toplamTanimsizBobin = Object.values(tumZamanTanimsiz).reduce((s,v) => s+v.adet, 0);
     html += '<div class="card" style="border:1.5px solid var(--red)">'
-      + '<div class="mtitle">🔴 Genişliği Eşleşmeyen 2. Kalite Satışları <span class="pill">'+toplamTanimsizBobin+' bobin, tüm zamanlar</span></div>'
-      + '<div class="mini" style="margin-bottom:10px">Bu ürünlerin genişliği (120/145/160 cm) masura tablosuyla eşleşmiyor. Eğer bu gerçekten farklı bir stok ürünüyse ama bir masura sabitini kullanıyorsa, "Eşle" ile hangi masurayı kullandığını öğret — stoktaki ürün AYRI kalmaya devam eder, hiçbir şey birleşmez/silinmez, sadece hesaplama artık doğru masura sabitini kullanır.</div>';
-    Object.entries(tumZamanTanimsiz).forEach(([genislik, v]) => {
+      + '<div class="mtitle">🔴 Masurası Eşleşmeyen Satışlar <span class="pill">'+toplamTanimsizBobin+' bobin, tüm zamanlar</span></div>'
+      + '<div class="mini" style="margin-bottom:10px">Bu ürünler "masuralı" olarak işaretli ama genişlikleri o kalitenin masura tablosuyla eşleşmiyor. Eğer bu gerçekten farklı bir stok ürünüyse ama bir masura sabitini kullanıyorsa, "Eşle" ile hangi masurayı kullandığını öğret — stoktaki ürün AYRI kalmaya devam eder, hiçbir şey birleşmez/silinmez, sadece hesaplama artık doğru masura sabitini kullanır.</div>';
+    Object.values(tumZamanTanimsiz).forEach(v => {
       html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #262837;font-size:13px">'
-        + '<span><b>'+esc(v.ad)+'</b> <span class="mini">(genişlik: "'+esc(genislik)+'")</span> — '+v.adet+' bobin</span>'
-        + '<button class="chip" style="color:var(--blue);border-color:var(--blue);white-space:nowrap;flex-shrink:0" onclick="genislikDuzeltModal(\''+jsStr(genislik)+'\')">🔗 Eşle</button>'
+        + '<span><b>'+esc(v.ad)+'</b> <span class="mini">('+esc(v.kalite)+' — genişlik: "'+esc(v.genislik)+'")</span> — '+v.adet+' bobin</span>'
+        + '<button class="chip" style="color:var(--blue);border-color:var(--blue);white-space:nowrap;flex-shrink:0" onclick="genislikDuzeltModal(\''+jsStr(v.kalite)+'\',\''+jsStr(v.genislik)+'\')">🔗 Eşle</button>'
         + '</div>';
     });
     html += '</div>';
@@ -3850,8 +3776,8 @@ function aylikRaporIndir(secilenAyKey) {
   }
   if (masAn.tanimsizBobin > 0) {
     s1.push(xlsxSatir(r, [xT("⚠ Masura verisi tanımsız genişlikte satılan bobin",XS.metinBorder), xM(masAn.tanimsizBobin,XS.adetBorder)])); r++;
-    Object.entries(masAn.tanimsizKirilim).forEach(([genislik, v]) => {
-      s1.push(xlsxSatir(r, [xT("   → "+v.ad+" (genişlik: \""+genislik+"\")",XS.metinBorder), xM(v.adet,XS.adetBorder)])); r++;
+    Object.values(masAn.tanimsizKirilim).forEach(v => {
+      s1.push(xlsxSatir(r, [xT("   → "+v.ad+" (kalite: \""+v.kalite+"\", genişlik: \""+v.genislik+"\")",XS.metinBorder), xM(v.adet,XS.adetBorder)])); r++;
     });
   }
   r++;
@@ -4019,16 +3945,28 @@ function rStok() {
     + '</div>';
   html += '<div class="card"><button class="chip" style="color:var(--blue);border-color:var(--blue)" onclick="sayimKarsilastirModal()">📋 Stok Sayım Karşılaştır</button><div class="mini" style="margin-top:6px">Muhasebe/depo ay sonunda sayım verdiğinde, panelin izlediği rakamla karşılaştır.</div></div>';
 
-  html += '<div class="card"><div class="mtitle">Mamul Stok <span class="pill">bobin</span></div><div class="scroll"><table><tr><th>Ürün</th><th class="num">Adet</th><th class="num">Kg/Bobin</th><th class="num">Toplam Kg</th><th class="num">Değer</th><th></th></tr>';
+  html += '<div class="card"><div class="mtitle">Mamul Stok <span class="pill">bobin</span></div>'
+    + '<input type="text" value="'+esc(stokArama)+'" oninput="stokArama=this.value;renderKorumali()" placeholder="🔍 Ürün ara (kalite, tip, genişlik...)" style="margin-bottom:10px">'
+    + '<div class="scroll"><table><tr><th>Ürün</th><th class="num">Adet</th><th class="num">Kg/Bobin</th><th class="num">Toplam Kg</th><th class="num">Değer</th><th></th></tr>';
   let topKg = 0;
-  data.mamul.forEach((m,i) => {
+  const aramaNorm = trFold(stokArama.trim());
+  const mamulGosterilecek = data.mamul
+    .map((m,i) => ({m,i}))
+    .filter(({m}) => !aramaNorm || trFold(m.kalite+" "+m.tip+" "+m.genislik+" "+m.gramaj+" "+(m.katSayisi||"")).includes(aramaNorm));
+  if (stokArama.trim() && !mamulGosterilecek.length) {
+    html += '<tr><td colspan="6" style="text-align:center;color:var(--mut);padding:14px">"'+esc(stokArama)+'" ile eşleşen ürün yok</td></tr>';
+  }
+  mamulGosterilecek.forEach(({m,i}) => {
     const kg = (m.adet||0) * (m.kgBobin||0);
     topKg += kg;
     const deger = kg * fiyatBul(m.kalite) * 1.2;
     const renk = m.adet <= 0 ? "kirmizi" : (m.adet < STOK_ESIK ? "" : "yesil");
     const barRenk = m.adet <= 0 ? "var(--red)" : (m.adet < STOK_ESIK ? "var(--amber)" : "var(--green)");
-    const eslenikGosterge = (data.genislikEslenikleri && data.genislikEslenikleri[genislikNormalize(m.genislik)]) ? '<div class="notrow">🔗 masura: '+esc(data.genislikEslenikleri[genislikNormalize(m.genislik)])+'</div>' : '';
-    html += '<tr><td><b>'+esc(m.kalite)+'</b> '+esc(m.tip)+' · '+esc(m.genislik)+(m.gramaj!=="-"?' · '+esc(m.gramaj):"")+eslenikGosterge+'<div class="notrow"><span class="adet-edit" onclick="mamulDuzenle('+i+')">✎ ürünü düzenle</span></div></td>'
+    const kaliteEslenikleri = data.genislikEslenikleri && data.genislikEslenikleri[m.kalite];
+    const eslenikHedef = kaliteEslenikleri && kaliteEslenikleri[genislikNormalize(m.genislik)];
+    const eslenikGosterge = eslenikHedef ? '<div class="notrow">🔗 masura: '+esc(eslenikHedef)+'</div>' : '';
+    const ozellikRozeti = '<div class="notrow">'+(m.katSayisi?esc(m.katSayisi)+' · ':'')+(m.masurali?'<span style="color:var(--blue)">masuralı</span>':'masurasız')+'</div>';
+    html += '<tr><td><b>'+esc(m.kalite)+'</b> '+esc(m.tip)+' · '+esc(m.genislik)+(m.gramaj!=="-"?' · '+esc(m.gramaj):"")+ozellikRozeti+eslenikGosterge+'<div class="notrow"><span class="adet-edit" onclick="mamulDuzenle('+i+')">✎ ürünü düzenle</span></div></td>'
       + '<td class="num" style="min-width:56px"><span class="adet-edit '+renk+'" onclick="adetDuzenle('+i+')">'+m.adet+'</span>'+doluCubuk(m.adet, STOK_ESIK*3, barRenk)+'</td>'
       + '<td class="num"><span class="adet-edit" onclick="kgBobinDuzenle('+i+')">'+fmtKg(m.kgBobin)+'</span></td>'
       + '<td class="num">'+fmtKg(kg)+'</td>'
@@ -4188,22 +4126,25 @@ function kgBobinDuzenle(i) {
 }
 
 // Yeni ürün ekleme / düzenleme — mobil dostu modal form
-function urunModal(idx) {
-  const d = idx != null ? data.mamul[idx] : {kalite:"", tip:"", genislik:"", gramaj:"-", adet:0, kgBobin:""};
+// Ürün formunun (ekleme/düzenleme) ortak içeriği — hem ilk açılışta hem "Kalite: Diğer…" seçilip
+// yeniden çizildiğinde aynı fonksiyon kullanılır, tekrar/uyumsuzluk riski olmadan.
+function urunFormIcerik(idx, d, serbestAcik) {
   const kaliteler = ["1. Kalite","2. Kalite","ECO-1"];
-  const overlay = document.createElement("div");
-  overlay.id = "urun-modal";
-  overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px";
-  overlay.innerHTML =
-    '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:420px;max-height:90vh;overflow:auto">'
-    + '<div class="mtitle">'+(idx!=null?"Ürünü Düzenle":"Yeni Ürün")+'</div>'
+  const kalite1Mi = (serbestAcik ? "" : d.kalite) === "1. Kalite";
+  const masuraliDeger = d.masurali === true ? "evet" : (d.masurali === false ? "hayir" : "");
+  return '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:420px;max-height:90vh;overflow:auto">'
+    + '<div class="mtitle">'+(idx!=null&&idx>=0?"Ürünü Düzenle":"Yeni Ürün")+'</div>'
     + '<div class="formgrid">'
-    + '<div><div class="mini" style="margin-bottom:5px">Kalite</div><select id="um-kalite">'+kaliteler.map(k=>'<option'+(d.kalite===k?" selected":"")+'>'+k+'</option>').join("")+'<option value="__diger"'+(kaliteler.indexOf(d.kalite)<0&&d.kalite?" selected":"")+'>Diğer…</option></select></div>'
-    + (kaliteler.indexOf(d.kalite)<0&&d.kalite ? '<div><div class="mini" style="margin-bottom:5px">Kalite (serbest)</div><input type="text" id="um-kalite-serbest" value="'+esc(d.kalite)+'"></div>' : '')
-    + '<div><div class="mini" style="margin-bottom:5px">Tip (ör. Mavi, Bal Köpüğü, Standart, 3 Katlı)</div><input type="text" id="um-tip" value="'+esc(d.tip)+'" placeholder="Standart"></div>'
+    + '<div><div class="mini" style="margin-bottom:5px">Kalite</div><select id="um-kalite">'+kaliteler.map(k=>'<option'+(d.kalite===k?" selected":"")+'>'+k+'</option>').join("")+'<option value="__diger"'+(serbestAcik?" selected":"")+'>Diğer…</option></select></div>'
+    + (serbestAcik ? '<div><div class="mini" style="margin-bottom:5px">Kalite (serbest)</div><input type="text" id="um-kalite-serbest" value="'+esc(d.kalite)+'" placeholder="ör. Özel"></div>' : '')
+    + '<div><div class="mini" style="margin-bottom:5px">Tip (ör. Mavi, Bal Köpüğü, Standart)</div><input type="text" id="um-tip" value="'+esc(d.tip)+'" placeholder="Standart"></div>'
     + '<div class="row2">'
     + '<div><div class="mini" style="margin-bottom:5px">Genişlik</div><input type="text" id="um-genislik" value="'+esc(d.genislik)+'" placeholder="100 cm"></div>'
-    + '<div><div class="mini" style="margin-bottom:5px">Gramaj (yoksa −)</div><input type="text" id="um-gramaj" value="'+esc(d.gramaj)+'" placeholder="40 gr/m²"></div>'
+    + '<div><div class="mini" style="margin-bottom:5px">Gramaj (gr/m²)'+(kalite1Mi?' <span style="color:var(--red)">*</span>':' (yoksa −)')+'</div><input type="text" id="um-gramaj" value="'+esc(d.gramaj)+'" placeholder="ör. 40"></div>'
+    + '</div>'
+    + '<div class="row2">'
+    + '<div><div class="mini" style="margin-bottom:5px">Kat Sayısı'+(kalite1Mi?' <span style="color:var(--red)">*</span>':' (varsa)')+'</div><select id="um-kat"><option value=""'+(!d.katSayisi?" selected":"")+'>— seç —</option><option value="2 Katlı"'+(d.katSayisi==="2 Katlı"?" selected":"")+'>2 Katlı</option><option value="3 Katlı"'+(d.katSayisi==="3 Katlı"?" selected":"")+'>3 Katlı</option></select></div>'
+    + '<div><div class="mini" style="margin-bottom:5px">Masuralı mı? <span style="color:var(--red)">*</span></div><select id="um-masurali"><option value=""'+(!masuraliDeger?" selected":"")+'>— seç —</option><option value="evet"'+(masuraliDeger==="evet"?" selected":"")+'>Evet, masuralı</option><option value="hayir"'+(masuraliDeger==="hayir"?" selected":"")+'>Hayır, masurasız</option></select></div>'
     + '</div>'
     + '<div class="row2">'
     + '<div><div class="mini" style="margin-bottom:5px">Başlangıç Adet</div><input type="number" id="um-adet" value="'+esc(d.adet)+'" min="0"></div>'
@@ -4211,43 +4152,34 @@ function urunModal(idx) {
     + '</div>'
     + '<div style="display:flex;gap:8px;margin-top:6px"><button class="btn" style="background:var(--green)" onclick="urunKaydet('+(idx!=null?idx:-1)+')">Kaydet</button><button class="btn" style="background:#2A2C3A" onclick="urunModalKapat()">İptal</button></div>'
     + '</div></div>';
+}
+function urunModal(idx) {
+  const d = idx != null ? data.mamul[idx] : {kalite:"", tip:"", genislik:"", gramaj:"-", adet:0, kgBobin:"", katSayisi:"", masurali:null};
+  const kaliteler = ["1. Kalite","2. Kalite","ECO-1"];
+  const overlay = document.createElement("div");
+  overlay.id = "urun-modal";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px";
+  overlay.innerHTML = urunFormIcerik(idx, d, kaliteler.indexOf(d.kalite)<0 && !!d.kalite);
   document.body.appendChild(overlay);
-  // Kalite "Diğer" seçilince serbest alan çıksın diye dinleyici
+  // Kalite değişince (özellikle "Diğer…" ya da "1. Kalite" giriş/çıkışında Gramaj/Kat Sayısı
+  // zorunluluk göstergesi güncellensin diye) formu aynı verilerle yeniden çiz.
   const sel = document.getElementById("um-kalite");
   if (sel) sel.addEventListener("change", function() {
     urunModalKapat();
-    const tmp = {kalite: this.value === "__diger" ? "" : this.value, tip: gv("um-tip"), genislik: gv("um-genislik"), gramaj: gv("um-gramaj"), adet: gv("um-adet"), kgBobin: gv("um-kgbobin")};
+    const tmp = {kalite: this.value === "__diger" ? "" : this.value, tip: gv("um-tip"), genislik: gv("um-genislik"), gramaj: gv("um-gramaj"), adet: gv("um-adet"), kgBobin: gv("um-kgbobin"), katSayisi: gv("um-kat"), masurali: gv("um-masurali")==="evet"?true:(gv("um-masurali")==="hayir"?false:null)};
     urunModalYeniden(idx, tmp, this.value === "__diger");
   });
 }
 function gv(id){ const e = document.getElementById(id); return e ? e.value : ""; }
 function urunModalYeniden(idx, taslak, serbestAcik) {
-  // Diğer seçilince serbest kalite alanıyla yeniden çiz
-  const kaliteler = ["1. Kalite","2. Kalite","ECO-1"];
   const overlay = document.createElement("div");
   overlay.id = "urun-modal";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px";
-  overlay.innerHTML =
-    '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:420px;max-height:90vh;overflow:auto">'
-    + '<div class="mtitle">'+(idx!=null&&idx>=0?"Ürünü Düzenle":"Yeni Ürün")+'</div>'
-    + '<div class="formgrid">'
-    + '<div><div class="mini" style="margin-bottom:5px">Kalite</div><select id="um-kalite">'+kaliteler.map(k=>'<option'+(taslak.kalite===k?" selected":"")+'>'+k+'</option>').join("")+'<option value="__diger"'+(serbestAcik?" selected":"")+'>Diğer…</option></select></div>'
-    + (serbestAcik ? '<div><div class="mini" style="margin-bottom:5px">Kalite (serbest)</div><input type="text" id="um-kalite-serbest" value="'+esc(taslak.kalite)+'" placeholder="ör. Özel"></div>' : '')
-    + '<div><div class="mini" style="margin-bottom:5px">Tip</div><input type="text" id="um-tip" value="'+esc(taslak.tip)+'" placeholder="Standart"></div>'
-    + '<div class="row2">'
-    + '<div><div class="mini" style="margin-bottom:5px">Genişlik</div><input type="text" id="um-genislik" value="'+esc(taslak.genislik)+'" placeholder="100 cm"></div>'
-    + '<div><div class="mini" style="margin-bottom:5px">Gramaj (yoksa −)</div><input type="text" id="um-gramaj" value="'+esc(taslak.gramaj)+'" placeholder="40 gr/m²"></div>'
-    + '</div>'
-    + '<div class="row2">'
-    + '<div><div class="mini" style="margin-bottom:5px">Başlangıç Adet</div><input type="number" id="um-adet" value="'+esc(taslak.adet)+'" min="0"></div>'
-    + '<div><div class="mini" style="margin-bottom:5px">Kg / Bobin</div><input type="text" id="um-kgbobin" inputmode="decimal" value="'+esc(taslak.kgBobin)+'" placeholder="ör. 12,4"></div>'
-    + '</div>'
-    + '<div style="display:flex;gap:8px;margin-top:6px"><button class="btn" style="background:var(--green)" onclick="urunKaydet('+(idx!=null?idx:-1)+')">Kaydet</button><button class="btn" style="background:#2A2C3A" onclick="urunModalKapat()">İptal</button></div>'
-    + '</div></div>';
+  overlay.innerHTML = urunFormIcerik(idx, taslak, serbestAcik);
   document.body.appendChild(overlay);
   const sel = document.getElementById("um-kalite");
   if (sel) sel.addEventListener("change", function() {
-    const tmp = {kalite: this.value === "__diger" ? "" : this.value, tip: gv("um-tip"), genislik: gv("um-genislik"), gramaj: gv("um-gramaj"), adet: gv("um-adet"), kgBobin: gv("um-kgbobin")};
+    const tmp = {kalite: this.value === "__diger" ? "" : this.value, tip: gv("um-tip"), genislik: gv("um-genislik"), gramaj: gv("um-gramaj"), adet: gv("um-adet"), kgBobin: gv("um-kgbobin"), katSayisi: gv("um-kat"), masurali: gv("um-masurali")==="evet"?true:(gv("um-masurali")==="hayir"?false:null)};
     urunModalKapat();
     urunModalYeniden(idx, tmp, this.value === "__diger");
   });
@@ -4266,12 +4198,23 @@ function urunKaydet(idx) {
   const tip = gv("um-tip").trim() || "Standart";
   const genislik = gv("um-genislik").trim();
   const gramaj = gv("um-gramaj").trim() || "-";
+  const katSayisi = gv("um-kat");
+  const masuraliRaw = gv("um-masurali");
   const adet = parseInt(gv("um-adet"));
   const kgBobin = parseTL(gv("um-kgbobin"));
   if (!kalite) { toast("Kalite gerekli"); return; }
   if (!genislik) { toast("Genişlik gerekli"); return; }
   if (isNaN(kgBobin) || kgBobin <= 0) { toast("Kg/Bobin gerekli"); return; }
-  const kayit = {kalite, tip, genislik, gramaj, adet: isNaN(adet)?0:adet, kgBobin};
+  // Masuralı/masurasız her ürün için zorunlu — kaliteden bağımsız, her ürün kendi başına belirlenir.
+  if (masuraliRaw !== "evet" && masuraliRaw !== "hayir") { toast("Masuralı mı, masurasız mı olduğunu seçmen gerekiyor"); return; }
+  const masurali = masuraliRaw === "evet";
+  // Kat sayısı ve gramaj, 1. Kalite'de zorunlu (kat farkı fiilen sadece orada görülüyor) — diğer
+  // kalitelerde bilgi amaçlı, boş bırakılabilir.
+  if (kalite === "1. Kalite") {
+    if (!katSayisi) { toast("1. Kalite için Kat Sayısı (2 veya 3) seçmen gerekiyor"); return; }
+    if (!gramaj || gramaj === "-" || !/\d/.test(gramaj)) { toast("1. Kalite için Gramaj (gr/m²) girmen gerekiyor"); return; }
+  }
+  const kayit = {kalite, tip, genislik, gramaj, adet: isNaN(adet)?0:adet, kgBobin, katSayisi, masurali};
   if (idx != null && idx >= 0) {
     data.mamul[idx] = kayit;
     toast("✓ Ürün güncellendi");
@@ -4742,10 +4685,12 @@ async function yedekGeriYukle(gunKey) {
 function mSet(k,v) { maliyet[k] = v; }
 
 function rMaliyet() {
-  const kaliteMasuraKullanir = maliyet.urun === "2. Kalite"; // sadece 2. Kalite'de masura var
-  const mas = kaliteMasuraKullanir ? (masuraBul(maliyet.genislik) || {masura:0, bobin:0}) : {masura:0, bobin:0};
+  // maliyet.masurali henüz hiç seçilmediyse, seçili ürünün 2.Kalite olup olmamasına göre makul bir varsayılanla başlar.
+  const masuraliMi = maliyet.masurali != null ? maliyet.masurali : (maliyet.urun === "2. Kalite");
+  const kaliteGenislikleri = Object.keys((data.masuraTablosu && data.masuraTablosu[maliyet.urun]) || {});
+  const mas = (masuraliMi && kaliteGenislikleri.length) ? (masuraBul(maliyet.urun, maliyet.genislik) || {masura:0, bobin:0}) : {masura:0, bobin:0};
   const bobinKg = maliyet.bobinKg !== "" ? parseTL(maliyet.bobinKg) : mas.bobin;
-  const masuraKg = kaliteMasuraKullanir ? (maliyet.masuraKg !== "" ? parseTL(maliyet.masuraKg) : mas.masura) : 0;
+  const masuraKg = masuraliMi ? (maliyet.masuraKg !== "" ? parseTL(maliyet.masuraKg) : mas.masura) : 0;
   const hamF = parseTL(maliyet.hamFiyat);
   const iscilikOrani = (data.ayarlar.iscilik && data.ayarlar.iscilik[maliyet.urun] != null) ? data.ayarlar.iscilik[maliyet.urun] : 0;
   // Satış fiyatı boşsa üründen liste fiyatını al
@@ -4764,12 +4709,12 @@ function rMaliyet() {
     const kar = gelirBobin - toplamMaliyet;
     const marj = gelirBobin > 0 ? (kar / gelirBobin * 100) : 0;
     sonucHtml = '<div class="card"><div class="mtitle">Sonuç <span class="pill">1 bobin</span></div>'
-      + (kaliteMasuraKullanir
+      + (masuraliMi
         ? '<div class="hesap-satir"><span>Net plastik ('+fmtKg(bobinKg)+' − '+fmtKg(masuraKg)+' masura)</span><b>'+fmtKg(netPlastik)+' kg</b></div>'
         : '<div class="hesap-satir"><span>Net plastik ('+esc(maliyet.urun)+' — masurasız)</span><b>'+fmtKg(netPlastik)+' kg</b></div>')
       + '<div class="hesap-satir"><span>Hammadde ('+fmtKg(netPlastik)+' × '+String(hamF).replace(".",",")+'₺)</span><b>'+fmt(hamMaliyet)+'</b></div>'
       + '<div class="hesap-satir"><span>İşçilik ('+esc(maliyet.urun)+', '+fmtKg(netPlastik)+' × <span class="adet-edit" onclick="event.stopPropagation();ayarDuzenle(\'iscilik_'+maliyet.urun+'\')">'+iscilikOrani+'₺</span>)</span><b>'+fmt(iscilik)+'</b></div>'
-      + (kaliteMasuraKullanir ? '<div class="hesap-satir"><span>Masura ('+fmtKg(masuraKg)+' × <span class="adet-edit" onclick="event.stopPropagation();ayarDuzenle(\'masuraFiyat\')">'+data.ayarlar.masuraFiyat+'₺</span>)</span><b>'+fmt(masuraMaliyet)+'</b></div>' : '')
+      + (masuraliMi ? '<div class="hesap-satir"><span>Masura ('+fmtKg(masuraKg)+' × <span class="adet-edit" onclick="event.stopPropagation();ayarDuzenle(\'masuraFiyat\')">'+data.ayarlar.masuraFiyat+'₺</span>)</span><b>'+fmt(masuraMaliyet)+'</b></div>' : '')
       + '<div class="hesap-satir"><span><b>Toplam maliyet / bobin</b></span><b class="kirmizi">'+fmt(toplamMaliyet)+'</b></div>'
       + '<div class="hesap-satir"><span>Birim maliyet</span><b>'+fmt(birimMaliyet)+'/kg</b></div>'
       + '<div class="hesap-satir"><span>Satış geliri ('+fmtKg(bobinKg)+' × '+String(satisF).replace(".",",")+'₺ KDV hariç)</span><b class="yesil">'+fmt(gelirBobin)+'</b></div>'
@@ -4779,28 +4724,91 @@ function rMaliyet() {
     sonucHtml = '<div class="card"><div class="mini">Hammadde fiyatını gir — sonuç otomatik hesaplanır. Bobin/masura kg boş bırakılırsa genişlik varsayılanları kullanılır.</div></div>';
   }
 
-  return '<div class="card"><div class="mtitle">Maliyet Hesaplayıcı <span class="pill">bobin başına</span></div><div class="formgrid">'
+  let hesapKarti = '<div class="card"><div class="mtitle">Maliyet Hesaplayıcı <span class="pill">bobin başına</span></div><div class="formgrid">'
     + '<div class="row2">'
-    + '<div><div class="mini" style="margin-bottom:5px">Ürün</div><select onchange="mSet(\'urun\',this.value);render()">'+["1. Kalite","2. Kalite","ECO-1"].map(u => '<option'+(maliyet.urun===u?" selected":"")+'>'+u+'</option>').join("")+'</select></div>'
-    + (kaliteMasuraKullanir
-      ? '<div><div class="mini" style="margin-bottom:5px">Genişlik</div><select onchange="mSet(\'genislik\',this.value);render()">'+Object.keys(MASURALAR).map(g => '<option'+(maliyet.genislik===g?" selected":"")+'>'+g+'</option>').join("")+'</select></div>'
-      : '<div><div class="mini" style="margin-bottom:5px">&nbsp;</div><div class="mini" style="padding-top:12px">Masurasız (genişlik gerekmiyor)</div></div>')
+    + '<div><div class="mini" style="margin-bottom:5px">Ürün</div><select onchange="mSet(\'urun\',this.value);mSet(\'masurali\',null);render()">'+["1. Kalite","2. Kalite","ECO-1"].map(u => '<option'+(maliyet.urun===u?" selected":"")+'>'+u+'</option>').join("")+'</select></div>'
+    + '<div><div class="mini" style="margin-bottom:5px">Masuralı mı?</div><div style="display:flex;gap:6px"><button type="button" class="chip" style="flex:1;'+(masuraliMi?'background:var(--blue);color:#fff;border-color:var(--blue)':'')+'" onclick="mSet(\'masurali\',true);render()">Evet</button><button type="button" class="chip" style="flex:1;'+(!masuraliMi?'background:var(--blue);color:#fff;border-color:var(--blue)':'')+'" onclick="mSet(\'masurali\',false);render()">Hayır</button></div></div>'
     + '</div>'
+    + (masuraliMi
+      ? (kaliteGenislikleri.length
+          ? '<div><div class="mini" style="margin-bottom:5px">Genişlik</div><select onchange="mSet(\'genislik\',this.value);render()">'+kaliteGenislikleri.map(g => '<option'+(maliyet.genislik===g?" selected":"")+'>'+g+'</option>').join("")+'</select></div>'
+          : '<div class="mini" style="color:var(--amber)">"'+esc(maliyet.urun)+'" için henüz masura ağırlığı tanımlanmamış — aşağıdaki "Masura Ağırlıkları" bölümünden ekle, ya da kg\'leri elle gir.</div>')
+      : '')
     + '<div class="row2">'
     + '<div><div class="mini" style="margin-bottom:5px">Hammadde ₺/kg (KDV hariç)</div><input type="text" id="m-ham" inputmode="decimal" value="'+esc(maliyet.hamFiyat)+'" oninput="mSet(\'hamFiyat\',this.value);renderKorumali()" placeholder="ör. 43"></div>'
     + '<div><div class="mini" style="margin-bottom:5px">Satış ₺/kg (boş = liste)</div><input type="text" id="m-satis" inputmode="decimal" value="'+esc(maliyet.satisFiyat)+'" oninput="mSet(\'satisFiyat\',this.value);renderKorumali()" placeholder="'+String(fiyatBul(maliyet.urun)).replace(".",",")+'"></div>'
     + '</div>'
     + '<div class="row2">'
-    + '<div><div class="mini" style="margin-bottom:5px">Bobin kg'+(kaliteMasuraKullanir?' (boş = varsayılan '+fmtKg(mas.bobin)+')':'')+'</div><input type="text" id="m-bobin" inputmode="decimal" value="'+esc(maliyet.bobinKg)+'" oninput="mSet(\'bobinKg\',this.value);renderKorumali()" placeholder="'+(kaliteMasuraKullanir?"":"ör. 20")+'"></div>'
-    + (kaliteMasuraKullanir
-      ? '<div><div class="mini" style="margin-bottom:5px">Masura kg (boş = varsayılan '+String(mas.masura).replace(".",",")+')</div><input type="text" id="m-masura" inputmode="decimal" value="'+esc(maliyet.masuraKg)+'" oninput="mSet(\'masuraKg\',this.value);renderKorumali()"></div>'
+    + '<div><div class="mini" style="margin-bottom:5px">Bobin kg'+(masuraliMi&&kaliteGenislikleri.length?' (boş = varsayılan '+fmtKg(mas.bobin)+')':'')+'</div><input type="text" id="m-bobin" inputmode="decimal" value="'+esc(maliyet.bobinKg)+'" oninput="mSet(\'bobinKg\',this.value);renderKorumali()" placeholder="'+(masuraliMi?"":"ör. 20")+'"></div>'
+    + (masuraliMi
+      ? '<div><div class="mini" style="margin-bottom:5px">Masura kg'+(kaliteGenislikleri.length?' (boş = varsayılan '+String(mas.masura).replace(".",",")+')':'')+'</div><input type="text" id="m-masura" inputmode="decimal" value="'+esc(maliyet.masuraKg)+'" oninput="mSet(\'masuraKg\',this.value);renderKorumali()"></div>'
       : '<div></div>')
     + '</div>'
     + '<div class="mini">İşçilik (dokunarak değiştir, net plastik kg başına): '
     + ["1. Kalite","2. Kalite","ECO-1"].map(u => '<span class="adet-edit" onclick="ayarDuzenle(\'iscilik_'+u+'\')" style="margin-right:8px">'+u+': '+data.ayarlar.iscilik[u]+'₺</span>').join("")
     + '</div>'
-    + '<div class="mini" style="margin-top:4px">Masura fiyatı (sadece 2. Kalite): <span class="adet-edit" onclick="ayarDuzenle(\'masuraFiyat\')">'+data.ayarlar.masuraFiyat+'₺/kg</span></div>'
+    + '<div class="mini" style="margin-top:4px">Masura fiyatı (işçiliği kaplayan malzeme bedeli, tüm kaliteler ortak): <span class="adet-edit" onclick="ayarDuzenle(\'masuraFiyat\')">'+data.ayarlar.masuraFiyat+'₺/kg</span></div>'
     + '</div></div>' + sonucHtml;
+
+  // ---- Masura Ağırlıkları — kalite bazlı, düzenlenebilir tablo. Burada girdiğin rakamlar
+  // TÜM satış/üretim raporlarındaki masura hesaplarında otomatik kullanılır.
+  let masuraAyarKarti = '<div class="card"><div class="mtitle">⚙️ Masura Ağırlıkları <span class="pill">kalite bazlı</span></div>'
+    + '<div class="mini" style="margin-bottom:10px">Her kalitenin masurası farklı ağırlıkta olabilir — burada kalite başına genişlik + ağırlık tanımlarsın, hesaplamalar otomatik bunu kullanır.</div>';
+  ["1. Kalite","2. Kalite","ECO-1"].forEach(kalite => {
+    const tablo = (data.masuraTablosu && data.masuraTablosu[kalite]) || {};
+    const genislikler = Object.keys(tablo);
+    masuraAyarKarti += '<div class="mini" style="font-weight:800;margin:10px 0 4px">'+esc(kalite)+'</div>';
+    if (!genislikler.length) {
+      masuraAyarKarti += '<div class="mini" style="color:var(--mut);margin-bottom:4px">Henüz tanımlı değil</div>';
+    } else {
+      genislikler.forEach(g => {
+        const v = tablo[g];
+        masuraAyarKarti += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:13px;border-bottom:1px solid #262837">'
+          + '<span class="adet-edit" onclick="masuraAgirlikDuzenle(\''+jsStr(kalite)+'\',\''+jsStr(g)+'\')">'+esc(g)+' — masura '+String(v.masura).replace(".",",")+' kg, bobin '+String(v.bobin).replace(".",",")+' kg</span>'
+          + '<button class="sil-x" onclick="masuraAgirlikSil(\''+jsStr(kalite)+'\',\''+jsStr(g)+'\')">×</button>'
+          + '</div>';
+      });
+    }
+    masuraAyarKarti += '<button class="chip" style="margin-top:6px" onclick="masuraAgirlikEkle(\''+jsStr(kalite)+'\')">+ '+esc(kalite)+' İçin Genişlik Ekle</button>';
+  });
+  masuraAyarKarti += '</div>';
+
+  return hesapKarti + masuraAyarKarti;
+}
+
+// Masura ağırlıkları tablosunu düzenleme araçları (kalite bazlı)
+function masuraAgirlikEkle(kalite) {
+  const genislik = prompt(kalite + " için yeni genişlik adı (ör. 120 cm):");
+  if (!genislik || !genislik.trim()) return;
+  const masuraKg = parseTL(prompt("Masura ağırlığı (kg):", "") || "");
+  if (isNaN(masuraKg) || masuraKg < 0) { toast("Geçerli bir masura kg girin"); return; }
+  const bobinKg = parseTL(prompt("Standart bobin ağırlığı (kg) — masura dahil toplam:", "") || "");
+  if (isNaN(bobinKg) || bobinKg <= 0) { toast("Geçerli bir bobin kg girin"); return; }
+  if (!data.masuraTablosu) data.masuraTablosu = {};
+  if (!data.masuraTablosu[kalite]) data.masuraTablosu[kalite] = {};
+  data.masuraTablosu[kalite][genislik.trim()] = { masura: masuraKg, bobin: bobinKg };
+  save(); render();
+  toast("✓ " + kalite + " — " + genislik.trim() + " masurası eklendi");
+}
+function masuraAgirlikDuzenle(kalite, genislik) {
+  const mevcut = (data.masuraTablosu[kalite]||{})[genislik];
+  if (!mevcut) return;
+  const masuraKgStr = prompt(kalite + " " + genislik + " — masura ağırlığı (kg):", String(mevcut.masura).replace(".", ","));
+  if (masuraKgStr === null) return;
+  const masuraKg = parseTL(masuraKgStr);
+  if (isNaN(masuraKg) || masuraKg < 0) { toast("Geçerli bir değer girin"); return; }
+  const bobinKgStr = prompt(kalite + " " + genislik + " — bobin ağırlığı (kg):", String(mevcut.bobin).replace(".", ","));
+  if (bobinKgStr === null) return;
+  const bobinKg = parseTL(bobinKgStr);
+  if (isNaN(bobinKg) || bobinKg <= 0) { toast("Geçerli bir değer girin"); return; }
+  data.masuraTablosu[kalite][genislik] = { masura: masuraKg, bobin: bobinKg };
+  save(); render();
+  toast("✓ Güncellendi");
+}
+function masuraAgirlikSil(kalite, genislik) {
+  if (!confirm(kalite + " " + genislik + " masura ağırlığı silinsin mi?")) return;
+  delete data.masuraTablosu[kalite][genislik];
+  save(); render();
 }
 
 // ============ AYLIK ============
