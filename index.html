@@ -333,10 +333,10 @@ function kalemlerOzet(kalemler) {
 function editKalemlerHtml() {
   let h2 = '<div class="mini" style="font-weight:800;margin:8px 0 4px">Satılan Ürünler</div>';
   (window.__editKalemler||[]).forEach((k,ki) => {
-    const mevcutIdx = k.key ? keyToMamulIdx(k.key) : -1;
+    const mevcutIdx = k.key ? keyToMamulIdx(k.key, k.masurali) : -1;
     h2 += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'
       + '<select style="flex:2" onchange="editKalemUrunSec('+ki+',this.value);renderKorumali()"><option value="">— ürün seç —</option>'
-      + data.mamul.map((mm,mi) => '<option value="'+mi+'"'+(mevcutIdx===mi?" selected":"")+'>'+esc(mm.kalite+" · "+mm.tip+" · "+mm.genislik+(mm.gramaj!=="-"?" · "+mm.gramaj:""))+'</option>').join("")
+      + data.mamul.map((mm,mi) => '<option value="'+mi+'"'+(mevcutIdx===mi?" selected":"")+'>'+esc(mamulEtiket(mm))+'</option>').join("")
       + '</select>'
       + '<input type="text" style="flex:1;min-width:50px" inputmode="decimal" placeholder="adet" value="'+esc(k.adet)+'" oninput="editKalemSet('+ki+',\'adet\',this.value)">'
       + '<input type="text" style="flex:1;min-width:60px" inputmode="decimal" placeholder="net kg" value="'+esc(k.kg||"")+'" oninput="editKalemSet('+ki+',\'kg\',this.value)">'
@@ -436,7 +436,9 @@ const MUSTERI_NORM = {
   "Perakende Satış-Özcan Bozkurt": "Özcan Bozkurt",
   "Perakende Satış-Mehmet Işıkkent": "Mehmet Işıkkent"
 };
-function normMusteri(ad) { return MUSTERI_NORM[ad] || ad; }
+// Sabit (kod içi) eşlemelerin yanı sıra, kullanıcının panelden eklediği kalıcı eşlemelere de bakar —
+// böylece yeni fark edilen bir yazım tutarsızlığı için kod değişikliği gerekmeden düzeltme yapılabilir.
+function normMusteri(ad) { return (data.musteriEslenikleri && data.musteriEslenikleri[ad]) || MUSTERI_NORM[ad] || ad; }
 function parseTL(s) { s = String(s).trim(); if (s.indexOf(",") >= 0) s = s.split(".").join("").replace(",","."); return parseFloat(s); }
 
 function saglaId(d) {
@@ -464,6 +466,7 @@ function saglaId(d) {
   // etiket (ör. "70-50") farklı kalitelerde farklı masuraya karşılık gelebilir. Eski (tek seviyeli) format
   // varsa hepsi "2. Kalite" altına taşınır — o zamanki sistem zaten sadece 2. Kalite'yi kontrol ediyordu.
   if (!d.genislikEslenikleri) d.genislikEslenikleri = {};
+  if (!d.musteriEslenikleri) d.musteriEslenikleri = {}; // "eski yazım" -> "standart isim" — kullanıcı panelden ekler
   {
     const ilkDeger = Object.values(d.genislikEslenikleri)[0];
     if (ilkDeger != null && typeof ilkDeger === "string") {
@@ -924,7 +927,7 @@ function rYeni() {
       html += '<div style="background:#1B1D28;border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px">'
         + '<div style="display:flex;gap:8px;align-items:center">'
         + '<select style="flex:1" onchange="kalemStokSec('+ki+',this.value)"><option value="">— ürün seç —</option>'
-        + data.mamul.map((mm,mi) => '<option value="'+mi+'"'+(String(kal.stokIdx)===String(mi)?" selected":"")+'>'+esc(mm.kalite+" · "+mm.tip+" · "+mm.genislik+(mm.gramaj!=="-"?" · "+mm.gramaj:""))+' (stok: '+mm.adet+')</option>').join("")
+        + data.mamul.map((mm,mi) => '<option value="'+mi+'"'+(String(kal.stokIdx)===String(mi)?" selected":"")+'>'+esc(mamulEtiket(mm))+' (stok: '+mm.adet+')</option>').join("")
         + '<option value="__yeni">+ yeni ürün oluştur…</option>'
         + '</select>'
         + '<button class="sil-x" onclick="kalemSil('+ki+')">×</button>'
@@ -1598,7 +1601,7 @@ function rTartim() {
     html += '<div class="card"><div class="mtitle">Ürün '+(gi+1)+' <span class="pill" id="t-gpill-'+gi+'">'+goz.adet+' bobin · '+fmtKg(goz.brutT)+' kg</span>'+'<span style="flex:1"></span>'+(tartim.gruplar.length>1?'<button class="sil-x" onclick="tartimGrupSil('+gi+')">×</button>':'')+'</div>';
     html += '<div class="formgrid">';
     html += '<div><div class="mini" style="margin-bottom:5px">Stok Ürünü <span style="color:var(--red)">*</span> — stok düşümü ve masura raporu için zorunlu</div><select onchange="tartimGrupStokSec('+gi+',this.value)"><option value="">— ürün seç —</option>'
-      + data.mamul.map((m,mi) => '<option value="'+mi+'"'+(String(g.stokIdx)===String(mi)?" selected":"")+'>'+esc(m.kalite+" · "+m.tip+" · "+m.genislik+(m.gramaj!=="-"?" · "+m.gramaj:""))+' (stok: '+m.adet+')</option>').join("")
+      + data.mamul.map((m,mi) => '<option value="'+mi+'"'+(String(g.stokIdx)===String(mi)?" selected":"")+'>'+esc(mamulEtiket(m))+' (stok: '+m.adet+')</option>').join("")
       + '</select></div>';
     html += '<div><div class="mini" style="margin-bottom:5px">Kg yaz ya da barkod okut → Enter <span style="opacity:.7">(imleç kutudayken okuyucunun tetiğine bas)</span></div><div style="display:flex;gap:8px"><input type="text" id="t-brut-'+gi+'" inputmode="decimal" placeholder="ör. 12,4 ya da ▎ barkod" onfocus="__tartimAktifGrup='+gi+'" onkeydown="if(event.key===\'Enter\')tartimGir('+gi+',this.value)"><button class="chip" style="flex-shrink:0" onclick="tartimGir('+gi+',document.getElementById(\'t-brut-'+gi+'\').value)">Ekle</button></div></div>';
     html += '</div>';
@@ -1749,7 +1752,7 @@ function uretimKaydet() {
     const adet = parseTL(u.adet);
     if (m && adet > 0) {
       m.adet += adet;
-      urunKayit.push({ key: m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj, ad: m.kalite+" "+m.tip+" "+m.genislik, adet, kg: adet * (m.kgBobin||0) });
+      urunKayit.push({ key: m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj, ad: m.kalite+" "+m.tip+" "+m.genislik, adet, kg: adet * (m.kgBobin||0), masurali: !!m.masurali });
     }
   });
   const hamKayit = [];
@@ -1796,7 +1799,7 @@ function uretimSil(idx) {
     ).join("\n");
     if (confirm("Bu kayıtta stok değişiklikleri var:\n"+ozet+"\n\nStoklar geri alınsın mı? (Üretilen bobinler stoktan düşülür, kullanılan hammadde geri eklenir)")) {
       (u.urunler||[]).forEach(x => {
-        const m = data.mamul.find(m => m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj === x.key);
+        const m = mamulBulKeyIle(x.key, x.masurali);
         if (m) m.adet -= x.adet;
       });
       (u.hammaddeler||[]).forEach(x => {
@@ -1935,7 +1938,7 @@ function urunSatisAyOzeti(ayKey) {
       if (k.kg != null) {
         urunler[k.key].kg += k.kg;
       } else {
-        const m = data.mamul.find(mm => mm.kalite+"|"+mm.tip+"|"+mm.genislik+"|"+mm.gramaj === k.key);
+        const m = mamulBulKeyIle(k.key, k.masurali);
         urunler[k.key].kg += adet * (m ? (m.kgBobin||0) : 0);
       }
       urunler[k.key].islemSayisi += 1;
@@ -1998,7 +2001,7 @@ function urunEslestirIcerik() {
   (window.__urunEslestirKalemler||[]).forEach((k,ki) => {
     html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">'
       + '<select style="flex:2" onchange="urunEslestirSet('+ki+',\'stokIdx\',this.value)"><option value="">— ürün seç —</option>'
-      + data.mamul.map((mm,mi) => '<option value="'+mi+'"'+(String(k.stokIdx)===String(mi)?" selected":"")+'>'+esc(mm.kalite+" · "+mm.tip+" · "+mm.genislik+(mm.gramaj!=="-"?" · "+mm.gramaj:""))+'</option>').join("")
+      + data.mamul.map((mm,mi) => '<option value="'+mi+'"'+(String(k.stokIdx)===String(mi)?" selected":"")+'>'+esc(mamulEtiket(mm))+'</option>').join("")
       + '</select>'
       + '<input type="text" style="flex:1" inputmode="decimal" placeholder="adet" value="'+esc(k.adet)+'" oninput="urunEslestirSet('+ki+',\'adet\',this.value)">'
       + '<button class="sil-x" onclick="urunEslestirSil('+ki+')">×</button>'
@@ -2140,7 +2143,7 @@ function satisKarHesapla(h) {
       const kalite = parcalar[0], genislik = parcalar[2];
       let kg = k.kg;
       if (kg == null) {
-        const m = data.mamul.find(mm => mm.kalite+"|"+mm.tip+"|"+mm.genislik+"|"+mm.gramaj === k.key);
+        const m = mamulBulKeyIle(k.key, k.masurali);
         kg = (k.adet||0) * (m ? (m.kgBobin||0) : 0);
       }
       toplamKg += kg;
@@ -2253,6 +2256,200 @@ function xlsDosyaSecildi(ev) {
 }
 
 function xlsHucre(v) { return (v == null) ? "" : String(v).trim(); }
+
+// ============ MUHASEBE DOSYASIYLA KARŞILAŞTIRMA ============
+// Muhasebecinin Excel'inde "...GİDER" ve "...GELİR" adlı sayfaları arar (ORAZ GİDER hariç — o ayrı bir
+// ortağın kişisel giderleri, Poliwood'un değil). Muhasebecinin GELİR sayfası fatura tarihini değil
+// TAHSİLAT (paranın geldiği) tarihini tutar — bu yüzden panelin kendi tahsilat kayıtlarıyla (satış
+// tarihiyle değil) eşleştirilir. Seçilen ay için her iki tarafta da olmayan kayıtları listeler.
+function muhasebeKarsilastirAc() {
+  const overlay = document.createElement("div");
+  overlay.id = "muh-karsilastir-modal";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.8);z-index:500;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto";
+  overlay.innerHTML = '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:800px;margin:auto 0;max-height:90vh;overflow:auto" id="muh-karsilastir-icerik">'
+    + '<div class="mtitle">📊 Muhasebe Dosyasıyla Karşılaştır</div>'
+    + '<div class="mini" style="margin-bottom:10px">Muhasebecinin Excel dosyasını seç — "...GİDER" ve "...GELİR" adlı sayfaları otomatik bulup, seçtiğin aydaki kayıtları panelinle karşılaştırırım. Hiçbir şey otomatik değişmez, sadece fark listesi gösterilir.</div>'
+    + '<div style="margin-bottom:10px"><div class="mini" style="margin-bottom:5px">Hangi ay?</div><input type="month" id="muh-ay" value="'+buAyKey()+'"></div>'
+    + '<input type="file" accept=".xlsx,.xls" onchange="muhasebeDosyaSecildi(event)" style="width:100%;padding:12px;background:var(--bg);border:1.5px dashed var(--line);border-radius:10px;color:var(--ink)">'
+    + '<button class="btn" style="background:#2A2C3A;margin-top:12px" onclick="muhasebeKarsilastirKapat()">Kapat</button>'
+    + '<div id="muh-sonuc"></div>'
+    + '</div>';
+  document.body.appendChild(overlay);
+}
+function muhasebeKarsilastirKapat() { const el = document.getElementById("muh-karsilastir-modal"); if (el) el.remove(); }
+
+function muhasebeDosyaSecildi(ev) {
+  const dosya = ev.target.files && ev.target.files[0];
+  if (!dosya) return;
+  const secilenAy = gv("muh-ay");
+  xlsSheetJsYukle(() => {
+    const okuyucu = new FileReader();
+    okuyucu.onload = e => {
+      try {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: "array", cellDates: true });
+        muhasebeAyristirVeKarsilastir(wb, secilenAy);
+      } catch (hata) { console.error(hata); toast("Dosya okunamadı: " + hata.message); }
+    };
+    okuyucu.readAsArrayBuffer(dosya);
+  });
+}
+
+// Başlık satırında, aranan kelimeyi İÇEREN ilk sütunu bulur (boşluk/büyük-küçük harf toleranslı).
+function muhBaslikBul(kolonlar, aranan) {
+  for (let j = 0; j < kolonlar.length; j++) {
+    if (String(kolonlar[j]||"").toUpperCase().trim().indexOf(aranan.toUpperCase()) >= 0) return j;
+  }
+  return -1;
+}
+function muhSayfaOku(sheet, ayKey, tarihBaslik, aciklamaBaslik, tutarBaslik) {
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
+  if (!rows.length) return [];
+  const kolon = (rows[0]||[]).map(xlsHucre);
+  const iT = muhBaslikBul(kolon, tarihBaslik), iA = muhBaslikBul(kolon, aciklamaBaslik), iTutar = muhBaslikBul(kolon, tutarBaslik);
+  const sonuc = [];
+  if (iT < 0 || iTutar < 0) return sonuc;
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r] || [];
+    const tarih = row[iT];
+    if (!(tarih instanceof Date) || isNaN(tarih)) continue;
+    const tarihStr = yerelTarihStr(tarih);
+    if (tarihStr.slice(0,7) !== ayKey) continue;
+    const tutar = row[iTutar];
+    if (tutar == null || isNaN(tutar) || tutar === 0) continue;
+    sonuc.push({ tarih: tarihStr, aciklama: xlsHucre(iA>=0?row[iA]:""), tutar: parseFloat(tutar) });
+  }
+  return sonuc;
+}
+
+function panelGiderleriAy(ayKey) {
+  return data.hareketler.filter(h => h.gider && h.tarih && h.tarih.slice(0,7)===ayKey)
+    .map(h => ({ tarih: h.tarih, aciklama: h.aciklama, tutar: h.gider }));
+}
+// Muhasebeci GELİR'i tahsilat anını takip ettiği için, panelin fatura tarihi (h.tarih) değil,
+// kendi tahsilat kayıtlarının (h.tahsilatlar[]) tarihiyle eşleştirilir.
+function panelTahsilatlariAy(ayKey) {
+  const sonuc = [];
+  data.hareketler.forEach(h => {
+    (h.tahsilatlar||[]).forEach(t => {
+      if (t.tarih && t.tarih.slice(0,7)===ayKey) sonuc.push({ tarih: t.tarih, aciklama: h.aciklama, tutar: t.tutar });
+    });
+  });
+  return sonuc;
+}
+// İki liste arasında tutar bazlı (±0,5₺ tolerans, yuvarlama farkları için) eşleştirme yapar.
+function muhEslestir(muhListesi, panelListesi) {
+  const panelKullanildi = new Array(panelListesi.length).fill(false);
+  const eksik = []; // muhasebecide var, panelde yok
+  muhListesi.forEach(m => {
+    const idx = panelListesi.findIndex((p,i) => !panelKullanildi[i] && Math.abs(p.tutar-m.tutar) < 0.5);
+    if (idx >= 0) panelKullanildi[idx] = true; else eksik.push(m);
+  });
+  const fazla = panelListesi.filter((p,i) => !panelKullanildi[i]); // panelde var, muhasebecide yok
+  return { eksik, fazla };
+}
+function muhasebeAyristirVeKarsilastir(wb, ayKey) {
+  const giderSayfaAdi = wb.SheetNames.find(a => a.toUpperCase().indexOf("GİDER") >= 0 && a.toUpperCase().indexOf("ORAZ") < 0);
+  const gelirSayfaAdi = wb.SheetNames.find(a => a.toUpperCase().indexOf("GELİR") >= 0);
+  if (!giderSayfaAdi && !gelirSayfaAdi) {
+    document.getElementById("muh-sonuc").innerHTML = '<div class="mini" style="color:var(--red);margin-top:10px">Dosyada "GİDER" ya da "GELİR" adında bir sayfa bulunamadı. Sayfa adları: ' + wb.SheetNames.join(", ") + '</div>';
+    return;
+  }
+  const muhGiderler = giderSayfaAdi ? muhSayfaOku(wb.Sheets[giderSayfaAdi], ayKey, "TARİH", "AÇIKLAMA", "TUTAR") : [];
+  const muhGelirler = gelirSayfaAdi ? muhSayfaOku(wb.Sheets[gelirSayfaAdi], ayKey, "TARİH", "ÖDEME YAPAN", "TUTAR") : [];
+  const panelGiderler = panelGiderleriAy(ayKey);
+  const panelTahsilatlar = panelTahsilatlariAy(ayKey);
+  const giderFark = muhEslestir(muhGiderler, panelGiderler);
+  const gelirFark = muhEslestir(muhGelirler, panelTahsilatlar);
+
+  // Eklenebilir ("eksik") satırları global dizilerde tut — "Ekle" butonu bu index'lerle çağrılır.
+  window.__muhEksikGider = giderFark.eksik;
+  window.__muhEksikGelir = gelirFark.eksik;
+
+  const eksikSatirHtml = (liste, tur) => liste.length
+    ? liste.map((x,i) => muhSatirHtml(tur, i, x, (tur==="gider"?GIDER_KAT:GELIR_KAT)[0])).join("")
+    : '<div class="mini" style="color:var(--mut)">Fark yok</div>';
+
+  const fazlaSatirHtml = (liste, renk) => liste.length
+    ? liste.map(x => '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #262837;font-size:12.5px"><span>'+fmtTarih(x.tarih)+' · '+esc(x.aciklama)+'</span><b style="color:'+renk+'">'+fmt(x.tutar)+'</b></div>').join("")
+    : '<div class="mini" style="color:var(--mut)">Fark yok</div>';
+
+  document.getElementById("muh-sonuc").innerHTML =
+    '<div class="card" style="margin-top:14px"><div class="mtitle" style="font-size:14px">GİDER — Muhasebecide var, panelde yok <span class="pill">'+giderFark.eksik.length+'</span></div>' + eksikSatirHtml(giderFark.eksik, "gider") + '</div>'
+    + '<div class="card"><div class="mtitle" style="font-size:14px">GİDER — Panelde var, muhasebecide yok <span class="pill">'+giderFark.fazla.length+'</span></div>' + fazlaSatirHtml(giderFark.fazla, "var(--amber)") + '</div>'
+    + '<div class="card"><div class="mtitle" style="font-size:14px">GELİR/TAHSİLAT — Muhasebecide var, panelde yok <span class="pill">'+gelirFark.eksik.length+'</span></div>' + eksikSatirHtml(gelirFark.eksik, "gelir") + '<div class="mini" style="margin-top:6px">Not: muhasebeci parayı ne zaman aldıysa o günü yazar. Panel tarafında bu, tahsilat tarihine göre karşılaştırılıyor — fatura tarihine göre değil. Buradan eklediğin bir gelir, tam tahsil edilmiş olarak kaydedilir.</div></div>'
+    + '<div class="card"><div class="mtitle" style="font-size:14px">GELİR/TAHSİLAT — Panelde var, muhasebecide yok <span class="pill">'+gelirFark.fazla.length+'</span></div>' + fazlaSatirHtml(gelirFark.fazla, "var(--amber)") + '</div>';
+}
+
+// Kg/hammadde alanı sadece anlamlı olduğu kategorilerde gösterilir — normal +Kayıt formundaki
+// mantıkla aynı: satış kategorilerinde kg, "Hammadde" giderinde ise hangi hammadde stoğuna kaç kg
+// eklendiği. Diğer kategorilerde (Personel, Vergi/SGK, Kredi Ödemesi vb.) kg kavramı yok, gösterilmez.
+const MUH_KG_GELIR_KAT = ["Satış-Fatura","Perakende Satış","Hammadde Satışı"];
+function muhSatirHtml(tur, i, x, kategoriSecili) {
+  const katListesi = tur==="gider" ? GIDER_KAT : GELIR_KAT;
+  const hammaddeliMi = tur==="gider" && kategoriSecili==="Hammadde";
+  const gelirKgliMi = tur==="gelir" && MUH_KG_GELIR_KAT.indexOf(kategoriSecili) >= 0;
+  let ekAlan = "";
+  if (hammaddeliMi) {
+    ekAlan = '<select id="muh-ham-'+i+'" style="flex:1.4;font-size:12px;padding:4px 6px"><option value="">— hangi hammadde —</option>'
+      + data.hammadde.map((hm,hi)=>'<option value="'+hi+'">'+esc(hm.tedarikci+" ("+hm.aciklama+")")+'</option>').join("") + '</select>'
+      + '<input type="text" id="muh-hamkg-'+i+'" inputmode="decimal" placeholder="Kg" style="width:64px;font-size:12px;padding:4px 6px">';
+  } else if (gelirKgliMi) {
+    ekAlan = '<input type="text" id="muh-kg-'+i+'" inputmode="decimal" placeholder="Satış Kg" style="width:90px;font-size:12px;padding:4px 6px">';
+  }
+  return '<div id="muh-satir-'+tur+'-'+i+'" style="padding:6px 0;border-bottom:1px solid #262837;font-size:12.5px">'
+    + '<div style="display:flex;justify-content:space-between;gap:8px"><span>'+fmtTarih(x.tarih)+' · '+esc(x.aciklama)+'</span><b style="color:var(--red);white-space:nowrap">'+fmt(x.tutar)+'</b></div>'
+    + '<div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">'
+    + '<select id="muh-kat-'+tur+'-'+i+'" onchange="muhSatirYenile(\''+tur+'\','+i+')" style="flex:1;min-width:110px;font-size:12px;padding:4px 6px">'+katListesi.map(k=>'<option value="'+esc(k)+'"'+(k===kategoriSecili?" selected":"")+'>'+esc(k)+'</option>').join("")+'</select>'
+    + ekAlan
+    + '<button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap;flex-shrink:0" onclick="muhEksikEkle(\''+tur+'\','+i+')">✓ Ekle</button>'
+    + '</div></div>';
+}
+// Kategori değişince (Hammadde seçilip seçilmediğine göre kg/hammadde alanı görünürlüğü değişir)
+// SADECE o satırı yeniden çizer — diğer satırlara ve girilmiş değerlerine dokunmaz.
+function muhSatirYenile(tur, i) {
+  const x = (tur==="gider" ? window.__muhEksikGider : window.__muhEksikGelir)[i];
+  const yeniKategori = gv("muh-kat-"+tur+"-"+i);
+  const el = document.getElementById("muh-satir-"+tur+"-"+i);
+  if (el && x) el.outerHTML = muhSatirHtml(tur, i, x, yeniKategori);
+}
+// "Ekle" butonuna basılınca: gider → yeni GİDER hareketi (Hammadde ise seçilen stok kalemine kg
+// eklenir, normal +Kayıt formuyla aynı mantık); gelir → yeni GELİR hareketi, satış kg'si varsa
+// eklenir, muhasebeci zaten "para geldi" dediği için TAM TAHSİL EDİLMİŞ olarak kaydedilir.
+function muhEksikEkle(tur, i) {
+  const x = (tur==="gider" ? window.__muhEksikGider : window.__muhEksikGelir)[i];
+  if (!x) return;
+  const kategori = gv("muh-kat-"+tur+"-"+i);
+  if (!kategori) { toast("Kategori seç"); return; }
+  const yeniKayit = {
+    __id: (Date.now()+"_"+Math.random().toString(36).slice(2)),
+    tur: tur==="gider" ? "GİDER" : "GELİR",
+    tarih: x.tarih,
+    kategori: kategori,
+    aciklama: x.aciklama,
+    not: "Muhasebe karşılaştırmasından eklendi"
+  };
+  if (tur==="gider") {
+    yeniKayit.gider = x.tutar;
+    if (kategori === "Hammadde") {
+      const hamIdx = gv("muh-ham-"+i);
+      const hamKg = parseTL(gv("muh-hamkg-"+i));
+      if (hamIdx !== "" && !isNaN(hamKg) && hamKg > 0) {
+        const hm = data.hammadde[parseInt(hamIdx)];
+        if (hm) { hm.kalan = (hm.kalan||0) + hamKg; hm.alinan = (hm.alinan||0) + hamKg; }
+      }
+    }
+  } else {
+    yeniKayit.gelir = x.tutar;
+    yeniKayit.tahsilatlar = [{ tarih: x.tarih, tutar: x.tutar }]; // muhasebeci zaten tahsil edildiğini bildiriyor
+    const satisKg = parseTL(gv("muh-kg-"+i));
+    if (!isNaN(satisKg) && satisKg > 0) yeniKayit.kg = satisKg;
+  }
+  data.hareketler.push(yeniKayit);
+  save();
+  const satirEl = document.getElementById("muh-satir-"+tur+"-"+i);
+  if (satirEl) satirEl.innerHTML = '<div style="padding:6px 0;color:var(--green);font-size:12.5px">✓ Eklendi — '+esc(x.aciklama)+' ('+fmt(x.tutar)+')</div>';
+  toast("✓ Eklendi: " + x.aciklama);
+}
 
 function xlsAyristir(wb) {
   const satirlar = [], atlanan = [];
@@ -2518,7 +2715,7 @@ function rUretim() {
     html += '<div style="display:flex;flex-direction:column;gap:4px">'
       + '<div style="display:flex;gap:8px;align-items:center">'
       + '<select style="flex:2" onchange="uUrunStokSec('+ui+',this.value)"><option value="">— ürün seç —</option>'
-      + data.mamul.map((mm,mi) => '<option value="'+mi+'"'+(String(u.mamulIdx)===String(mi)?" selected":"")+'>'+esc(mm.kalite+" · "+mm.tip+" · "+mm.genislik+(mm.gramaj!=="-"?" · "+mm.gramaj:""))+' (stok: '+mm.adet+')</option>').join("")
+      + data.mamul.map((mm,mi) => '<option value="'+mi+'"'+(String(u.mamulIdx)===String(mi)?" selected":"")+'>'+esc(mamulEtiket(mm))+' (stok: '+mm.adet+')</option>').join("")
       + '<option value="__yeni">+ yeni ürün oluştur…</option>'
       + '</select>'
       + '<input type="text" style="flex:1" inputmode="decimal" placeholder="adet" value="'+esc(u.adet)+'" onchange="uUrunSet('+ui+',\'adet\',this.value);render()">'
@@ -2586,7 +2783,7 @@ function rHareketler(H) {
   const q = arama.trim().toLocaleLowerCase("tr");
   if (q) liste = liste.filter(h => (h.aciklama||"").toLocaleLowerCase("tr").indexOf(q) >= 0 || (h.not||"").toLocaleLowerCase("tr").indexOf(q) >= 0 || (h.kategori||"").toLocaleLowerCase("tr").indexOf(q) >= 0);
 
-  let html = '<div class="card"><div class="mtitle">Hareketler <span class="pill">'+liste.length+' kayıt</span><span style="flex:1"></span><button class="chip" style="color:var(--blue);border-color:var(--blue);white-space:nowrap" onclick="gunlukRaporSec()">📆 Günlük Rapor</button></div>';
+  let html = '<div class="card"><div class="mtitle">Hareketler <span class="pill">'+liste.length+' kayıt</span><span style="flex:1"></span><button class="chip" style="color:var(--blue);border-color:var(--blue);white-space:nowrap" onclick="gunlukRaporSec()">📆 Günlük Rapor</button> <button class="chip" style="white-space:nowrap" onclick="muhasebeKarsilastirAc()">📊 Muhasebe ile Karşılaştır</button></div>';
   html += '<input type="text" id="h-arama" placeholder="🔍 Ara: firma, kategori, not…" value="'+esc(arama)+'" oninput="arama=this.value;renderKorumali()" style="margin-bottom:10px">';
   html += '<div class="chips">'+filtreler.map(f => '<button class="chip'+(hFiltre===f[0]?" on":"")+'" onclick="hFiltre=\''+f[0]+'\';render()">'+f[1]+'</button>').join("")+'</div>';
 
@@ -2708,11 +2905,35 @@ function editKalemSil(i) { window.__editKalemler.splice(i,1); render(); }
 function editKalemSet(i,k,v) { window.__editKalemler[i][k] = v; }
 function editKalemUrunSec(i, stokIdx) {
   const m = data.mamul[parseInt(stokIdx)];
-  if (!m) { window.__editKalemler[i].key = ""; window.__editKalemler[i].ad = ""; return; }
+  if (!m) { window.__editKalemler[i].key = ""; window.__editKalemler[i].ad = ""; window.__editKalemler[i].masurali = null; return; }
   window.__editKalemler[i].key = m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj;
   window.__editKalemler[i].ad = m.kalite+" "+m.tip+" "+m.genislik;
+  window.__editKalemler[i].masurali = !!m.masurali;
 }
-function keyToMamulIdx(key) { return data.mamul.findIndex(m => m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj === key); }
+// key (kalite|tip|genislik|gramaj) tek başına artık BENZERSİZ değil — aynı ürünün masuralı ve
+// masurasız versiyonu aynı key'i paylaşabilir (bilerek, ayrı stok kalemleri olarak). masurali
+// bilgisi verilirse ONUNLA eşleşeni tercih eder; verilmezse ya da eşleşen yoksa (geriye dönük
+// uyumluluk) key'e uyan ilk kaydı döndürür.
+function keyToMamulIdx(key, masurali) {
+  const adaylar = data.mamul.map((m,i) => i).filter(i => { const m = data.mamul[i]; return m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj === key; });
+  if (!adaylar.length) return -1;
+  if (masurali != null) {
+    const tam = adaylar.find(i => !!data.mamul[i].masurali === !!masurali);
+    if (tam != null) return tam;
+  }
+  return adaylar[0];
+}
+// Aynısını obje olarak döndüren kısayol (find() yerine kullanılır).
+function mamulBulKeyIle(key, masurali) {
+  const i = keyToMamulIdx(key, masurali);
+  return i >= 0 ? data.mamul[i] : null;
+}
+// Dropdown/seçim listelerinde bir mamulü gösterirken kullanılan standart etiket — masuralı/masurasız
+// bilgisini de içerir, aksi halde aynı kalite/tip/genişlik/gramaj'lı iki farklı stok kalemi
+// (biri masuralı biri masurasız) listede birbirinin AYNI görünür, ayırt edilemez.
+function mamulEtiket(m) {
+  return m.kalite + " · " + m.tip + " · " + m.genislik + (m.gramaj!=="-"?" · "+m.gramaj:"") + " · " + (m.masurali?"masuralı":"masurasız");
+}
 
 function duzenleKaydet(id) {
   const h = data.hareketler.find(x => x.__id === id);
@@ -2731,21 +2952,25 @@ function duzenleKaydet(id) {
   let yeniKalemler = null, stokDeltalari = null;
   if (window.__editKalemler) {
     yeniKalemler = window.__editKalemler.filter(k => k.key && parseTL(k.adet) > 0).map(k => {
-      const obj = { key: k.key, adet: parseTL(k.adet), ad: k.ad };
+      const obj = { key: k.key, adet: parseTL(k.adet), ad: k.ad, masurali: k.masurali };
       const kgVal = (k.kg != null && String(k.kg).trim() !== "") ? parseTL(k.kg) : null;
       if (kgVal != null && !isNaN(kgVal) && kgVal > 0) obj.kg = kgVal;
       return obj;
     });
     const eskiKalemler = h.kalemler || [];
-    const deltaMap = {}; // key -> stoğa net eklenecek adet (eski−yeni)
-    eskiKalemler.forEach(k => { deltaMap[k.key] = (deltaMap[k.key]||0) + k.adet; });
-    yeniKalemler.forEach(k => { deltaMap[k.key] = (deltaMap[k.key]||0) - k.adet; });
+    // Anahtar SADECE key değil, key+masurali birlikte — aksi halde aynı ürünün masuralı ve
+    // masurasız versiyonlarının stok değişimi yanlışlıkla birbirine karışır/toplanır.
+    const dKey = k => k.key + "::" + (k.masurali ? "1" : "0");
+    const deltaMap = {}; // "key::masurali" -> stoğa net eklenecek adet (eski−yeni)
+    eskiKalemler.forEach(k => { const dk = dKey(k); deltaMap[dk] = (deltaMap[dk]||0) + k.adet; });
+    yeniKalemler.forEach(k => { const dk = dKey(k); deltaMap[dk] = (deltaMap[dk]||0) - k.adet; });
     stokDeltalari = deltaMap;
 
     const negatifUyari = [];
-    Object.entries(deltaMap).forEach(([key, delta]) => {
+    Object.entries(deltaMap).forEach(([dk, delta]) => {
       if (delta === 0) return;
-      const m = data.mamul[keyToMamulIdx(key)];
+      const [key, masuraliFlag] = dk.split("::");
+      const m = mamulBulKeyIle(key, masuraliFlag === "1");
       if (m) {
         const sonuc = m.adet + delta;
         if (sonuc < 0) negatifUyari.push((m.kalite+" "+m.tip+" "+m.genislik) + " → " + sonuc + " bobin olacak");
@@ -2772,9 +2997,10 @@ function duzenleKaydet(id) {
   if (e.not != null) h.not = e.not.trim() || null;
 
   if (stokDeltalari) {
-    Object.entries(stokDeltalari).forEach(([key, delta]) => {
+    Object.entries(stokDeltalari).forEach(([dk, delta]) => {
       if (delta === 0) return;
-      const m = data.mamul[keyToMamulIdx(key)];
+      const [key, masuraliFlag] = dk.split("::");
+      const m = mamulBulKeyIle(key, masuraliFlag === "1");
       if (m) m.adet += delta;
     });
     h.kalemler = yeniKalemler.length ? yeniKalemler : undefined;
@@ -3283,7 +3509,7 @@ function silOnay(idx) {
   if (h.kalemler && h.kalemler.length) {
     if (confirm("Bu satışta stoktan düşülen ürünler var:\n" + h.kalemler.map(k => "• " + k.ad + " × " + k.adet).join("\n") + "\n\nStoğa geri eklensin mi?")) {
       h.kalemler.forEach(k => {
-        const m = data.mamul.find(m => m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj === k.key);
+        const m = mamulBulKeyIle(k.key, k.masurali);
         if (m) m.adet += k.adet;
       });
     }
@@ -4076,8 +4302,11 @@ function stokMamulTablosuHtml() {
     const kaliteEslenikleri = data.genislikEslenikleri && data.genislikEslenikleri[m.kalite];
     const eslenikHedef = kaliteEslenikleri && kaliteEslenikleri[genislikNormalize(m.genislik)];
     const eslenikGosterge = eslenikHedef ? '<div class="notrow">🔗 masura: '+esc(eslenikHedef)+'</div>' : '';
-    const ozellikRozeti = '<div class="notrow">'+(m.katSayisi?esc(m.katSayisi)+' · ':'')+(m.masurali?'<span style="color:var(--blue)">masuralı</span>':'masurasız')+'</div>';
-    html += '<tr><td><b>'+esc(m.kalite)+'</b> '+esc(m.tip)+' · '+esc(m.genislik)+(m.gramaj!=="-"?' · '+esc(m.gramaj):"")+ozellikRozeti+eslenikGosterge+'<div class="notrow"><span class="adet-edit" onclick="mamulDuzenle('+i+')">✎ ürünü düzenle</span></div></td>'
+    const masuraliRozet = m.masurali
+      ? '<span class="pill" style="background:rgba(94,144,255,.18);color:#8FB0FF;margin-left:4px">MASURALI</span>'
+      : '<span class="pill" style="background:rgba(255,255,255,.08);color:var(--mut);margin-left:4px">MASURASIZ</span>';
+    const katRozet = m.katSayisi ? '<div class="notrow">'+esc(m.katSayisi)+'</div>' : '';
+    html += '<tr><td><b>'+esc(m.kalite)+'</b> '+esc(m.tip)+' · '+esc(m.genislik)+(m.gramaj!=="-"?' · '+esc(m.gramaj):"")+masuraliRozet+katRozet+eslenikGosterge+'<div class="notrow"><span class="adet-edit" onclick="mamulDuzenle('+i+')">✎ ürünü düzenle</span></div></td>'
       + '<td class="num" style="min-width:56px"><span class="adet-edit '+renk+'" onclick="adetDuzenle('+i+')">'+m.adet+'</span>'+doluCubuk(m.adet, STOK_ESIK*3, barRenk)+'</td>'
       + '<td class="num"><span class="adet-edit" onclick="kgBobinDuzenle('+i+')">'+fmtKg(m.kgBobin)+'</span></td>'
       + '<td class="num">'+fmtKg(kg)+'</td>'
@@ -4359,9 +4588,10 @@ function urunKaydet(idx) {
     data.mamul[idx] = kayit;
     toast("✓ Ürün güncellendi");
   } else {
-    // aynı ürün var mı kontrol
-    const ayni = data.mamul.find(m => m.kalite===kalite && m.tip===tip && m.genislik===genislik && m.gramaj===gramaj);
-    if (ayni) { toast("Bu ürün zaten var — adedini düzenleyin"); urunModalKapat(); return; }
+    // aynı ürün var mı kontrol — masuralı/masurasız artık ürünü ayırt eden bir özellik: aynı
+    // kalite/tip/genişlik/gramaj'ın hem masuralı hem masurasız versiyonu AYRI stok kalemi olabilir.
+    const ayni = data.mamul.find(m => m.kalite===kalite && m.tip===tip && m.genislik===genislik && m.gramaj===gramaj && !!m.masurali===masurali);
+    if (ayni) { toast("Bu ürün (aynı masuralı/masurasız durumuyla) zaten var — adedini düzenleyin"); urunModalKapat(); return; }
     data.mamul.push(kayit);
     toast("✓ Yeni ürün eklendi");
     // Satış ekranından "yeni ürün" ile açıldıysa o satıra otomatik seç + fiyatı öner
@@ -4521,6 +4751,56 @@ function fiyatSil(i) {
 }
 
 // ============ MÜŞTERİLER ============
+// Bilinen TÜM eşlemeleri (kod içi sabitler + panelden eklenen kalıcı eşlemeler) uygulayarak geçmiş
+// kayıtlardaki müşteri adlarını standart hale getirir. Cari bakiyeler de (varsa iki ayrı yazım altında
+// ayrı ayrı duruyorsa) birleştirilir — hiçbir tutar kaybolmaz, sadece tek isim altında toplanır.
+function musteriAdlariniStandartlastir() {
+  const tumEslemeler = Object.assign({}, MUSTERI_NORM, data.musteriEslenikleri||{});
+  if (!Object.keys(tumEslemeler).length) { toast("Bilinen bir eşleme yok"); return; }
+  let degisenKayit = 0;
+  data.hareketler.forEach(h => {
+    const hedef = tumEslemeler[h.aciklama];
+    if (hedef && hedef !== h.aciklama) { h.aciklama = hedef; degisenKayit++; }
+  });
+  Object.entries(tumEslemeler).forEach(([eski, yeni]) => {
+    if (data.cariBakiyeler[eski] != null) {
+      data.cariBakiyeler[yeni] = (data.cariBakiyeler[yeni]||0) + data.cariBakiyeler[eski];
+      delete data.cariBakiyeler[eski];
+    }
+  });
+  save();
+  render();
+  toast(degisenKayit > 0 ? ("✓ " + degisenKayit + " kayıt standart isme güncellendi") : "Zaten hepsi standart, güncellenecek kayıt yok");
+}
+// Bir müşteriyi başka bir (standart) isimle kalıcı olarak birleştirme aracı — gelecekte yeni bir
+// yazım tutarsızlığı fark edilirse kod değişikliği gerekmeden buradan çözülebilir.
+function musteriBirlestirModal(eskiAd) {
+  const digerMusteriler = Array.from(new Set(data.hareketler.filter(h=>h.gelir).map(h=>h.aciklama))).filter(a => a && a !== eskiAd).sort();
+  const overlay = document.createElement("div");
+  overlay.id = "musteri-birlestir-modal";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px";
+  overlay.innerHTML =
+    '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:20px;width:100%;max-width:380px;max-height:80vh;overflow:auto">'
+    + '<div class="mtitle">🔗 "'+esc(eskiAd)+'" Kimle Birleşsin?</div>'
+    + '<div class="mini" style="margin-bottom:12px">Seçtiğin müşteri STANDART isim olur — "'+esc(eskiAd)+'" adıyla yapılmış TÜM geçmiş satışlar ona taşınır, cari bakiyeler birleşir. Bu eşleme kalıcı kaydedilir, aynı isim tekrar girilirse otomatik uygulanır.</div>'
+    + '<select id="mb-hedef" style="margin-bottom:10px"><option value="">— müşteri seç —</option>' + digerMusteriler.map(a => '<option value="'+esc(a)+'">'+esc(a)+'</option>').join("") + '</select>'
+    + '<div style="display:flex;gap:8px"><button class="btn" style="background:var(--green)" onclick="musteriBirlestirUygula(\''+jsStr(eskiAd)+'\')">Birleştir</button><button class="btn" style="background:#2A2C3A" onclick="musteriBirlestirModalKapat()">İptal</button></div>'
+    + '</div>';
+  document.body.appendChild(overlay);
+}
+function musteriBirlestirModalKapat() {
+  const el = document.getElementById("musteri-birlestir-modal");
+  if (el) el.remove();
+}
+function musteriBirlestirUygula(eskiAd) {
+  const hedef = gv("mb-hedef");
+  if (!hedef) { toast("Bir müşteri seç"); return; }
+  if (!data.musteriEslenikleri) data.musteriEslenikleri = {};
+  data.musteriEslenikleri[eskiAd] = hedef;
+  musteriBirlestirModalKapat();
+  musteriAdlariniStandartlastir();
+}
+
 function rMusteriler(H) {
   const girdiler = Object.entries(H.musteriler).sort((a,b) => b[1].toplam - a[1].toplam);
   const genelToplam = girdiler.reduce((s,g) => s + g[1].toplam, 0);
@@ -4532,7 +4812,7 @@ function rMusteriler(H) {
     + '<div class="kpi"><div class="lbl">Toplam Bekleyen</div><div class="v" style="color:'+(genelBekleyen>0?"var(--red)":"var(--green)")+'">'+pg(fmtK(genelBekleyen))+'</div></div>'
     + (genelCari>0.01 ? '<div class="kpi"><div class="lbl">Toplam Cari Bakiye</div><div class="v yesil">+'+pg(fmtK(genelCari))+'</div><span class="mini">bir sonraki faturalardan otomatik düşer</span></div>' : '')
     + '</div>';
-  html += '<div class="card"><div class="mtitle">Müşteri Analizi <span class="pill">satış gelirleri</span><span style="flex:1"></span><button class="chip" style="white-space:nowrap" onclick="acikCarilerYazdir()">🖨 Açık Cariler Raporu</button></div><div class="scroll"><table><tr><th>Müşteri</th><th class="num">Toplam</th><th class="num">İşlem</th><th>Son Satış</th><th class="num">Bekleyen</th><th></th></tr>';
+  html += '<div class="card"><div class="mtitle">Müşteri Analizi <span class="pill">satış gelirleri</span><span style="flex:1"></span><button class="chip" style="white-space:nowrap" onclick="musteriAdlariniStandartlastir()">🔧 Adları Standartlaştır</button> <button class="chip" style="white-space:nowrap" onclick="acikCarilerYazdir()">🖨 Açık Cariler Raporu</button></div><div class="scroll"><table><tr><th>Müşteri</th><th class="num">Toplam</th><th class="num">İşlem</th><th>Son Satış</th><th class="num">Bekleyen</th><th></th></tr>';
   girdiler.forEach(([ad, m]) => {
     const bekleyen = musteriBekleyenToplam(ad);
     const kredi = data.cariBakiyeler[normMusteri(ad)] || 0;
@@ -4544,7 +4824,7 @@ function rMusteriler(H) {
       + (bekleyen>0.01?'<span style="color:var(--red);font-weight:800">'+pg(fmt(bekleyen))+'</span>':'<span style="color:var(--mut)">—</span>')
       + (kredi>0.01?'<div class="mini" style="color:var(--green);font-weight:700">+'+pg(fmt(kredi))+' cari</div>':'')
       + '</td>'
-      + '<td style="text-align:right;white-space:nowrap"><button class="chip" style="white-space:nowrap" onclick="musteriEkstreModal(\''+jsStr(ad)+'\')">📄 Ekstre</button>'+((bekleyen>0.01||kredi>0.01)?' <button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap" onclick="musteriTahsilatModal(\''+jsStr(ad)+'\')">💰 Tahsilat</button>':'')+'</td>'
+      + '<td style="text-align:right;white-space:nowrap"><button class="chip" style="white-space:nowrap" onclick="musteriEkstreModal(\''+jsStr(ad)+'\')">📄 Ekstre</button>'+((bekleyen>0.01||kredi>0.01)?' <button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap" onclick="musteriTahsilatModal(\''+jsStr(ad)+'\')">💰 Tahsilat</button>':'')+' <button class="chip" style="white-space:nowrap" onclick="musteriBirlestirModal(\''+jsStr(ad)+'\')">🔗 Birleştir</button></td>'
       + '</tr>';
   });
   html += '</table></div></div>';
