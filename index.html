@@ -2337,13 +2337,23 @@ function panelGiderleriAy(ayKey) {
     .map(h => ({ tarih: h.tarih, aciklama: h.aciklama, tutar: h.gider }));
 }
 // Muhasebeci GELİR'i tahsilat anını takip ettiği için, panelin fatura tarihi (h.tarih) değil,
-// kendi tahsilat kayıtlarının (h.tahsilatlar[]) tarihiyle eşleştirilir.
+// paranın GERÇEKTEN geldiği tarihle eşleştirilir. İki kaynaktan derlenir:
+//  1) Gerçek tahsilat kayıtları (h.tahsilatlar[]) — vadeli satışlarda sonradan girilen ödemeler.
+//  2) VADESİZ (peşin) satışlar — bunlar için ayrıca "tahsilat" girilmez, çünkü satış anında zaten
+//     nakit tahsil edilmiştir; h.vade yoksa ve hiç tahsilatlar[] kaydı yoksa, satışın kendi tarihi
+//     ve tutarı doğrudan "o gün tahsil edildi" sayılır. Bu adım olmadan, işi ağırlıkla peşin olan
+//     bir işletmenin satışlarının neredeyse tamamı bu karşılaştırmada hiç görünmez.
 function panelTahsilatlariAy(ayKey) {
   const sonuc = [];
   data.hareketler.forEach(h => {
-    (h.tahsilatlar||[]).forEach(t => {
-      if (t.tarih && (ayKey==="TUM" || t.tarih.slice(0,7)===ayKey)) sonuc.push({ tarih: t.tarih, aciklama: h.aciklama, tutar: t.tutar });
-    });
+    if (h.tahsilatlar && h.tahsilatlar.length) {
+      h.tahsilatlar.forEach(t => {
+        if (t.tarih && (ayKey==="TUM" || t.tarih.slice(0,7)===ayKey)) sonuc.push({ tarih: t.tarih, aciklama: h.aciklama, tutar: t.tutar });
+      });
+    } else if (h.gelir && !h.vade && h.tarih && (ayKey==="TUM" || h.tarih.slice(0,7)===ayKey)) {
+      // Peşin satış — vade yok, hiç tahsilat kaydı da yok → satış anında nakit alınmış kabul edilir.
+      sonuc.push({ tarih: h.tarih, aciklama: h.aciklama, tutar: h.gelir });
+    }
   });
   return sonuc;
 }
@@ -2402,6 +2412,7 @@ function muhasebeAyristirVeKarsilastir(wb, ayKey) {
   window.__muhEksikGider = giderFark.eksik;
   window.__muhEksikGelir = gelirFark.eksik;
 
+  window.__muhPanelListesi = { gider: panelGiderler, gelir: panelTahsilatlar };
   const eksikSatirHtml = (liste, tur) => liste.length
     ? liste.map((x,i) => muhSatirHtml(tur, i, x, (tur==="gider"?GIDER_KAT:GELIR_KAT)[0])).join("")
     : '<div class="mini" style="color:var(--mut)">Fark yok</div>';
@@ -2420,7 +2431,7 @@ function muhasebeAyristirVeKarsilastir(wb, ayKey) {
   document.getElementById("muh-sonuc").innerHTML =
     '<div class="card" style="margin-top:14px;border:1.5px solid var(--gold)"><div class="mtitle" style="font-size:14px">🔎 Toplam Özet — '+esc(donemEtiketi)+'</div>'
     + '<div id="muh-ozet-icerik"></div>'
-    + '<div class="mini" style="margin-top:6px">Fark sıfıra yaklaşana kadar aşağıdaki "eksik" satırları ekle. Sıfırlanmıyorsa, "Panelde var, muhasebecide yok" listesinde panelin fazladan taşıdığı kayıtlar olabilir (ör. taksitli kredi ödemeleri gibi farklı muhasebeleştirilen kalemler) — bunlar hata olmayabilir.</div>'
+    + '<div class="mini" style="margin-top:6px">İsim/tutar otomatik eşleşmesi kesin değil — her "eksik" satırın altında panelde tutar bazlı en yakın kayıt(lar) gösteriliyor. Baktığında "evet bu zaten o" diyorsan <b>Zaten Var — Atla</b> düğmesine bas, gerçekten yeni bir kayıtsa <b>✓ Ekle</b> düğmesine bas. Fark sıfıra yaklaşana kadar devam et.</div>'
     + '</div>'
     + '<div class="card"><div class="mtitle" style="font-size:14px">GİDER — Muhasebecide var, panelde yok <span class="pill">'+giderFark.eksik.length+'</span></div>' + eksikSatirHtml(giderFark.eksik, "gider") + '</div>'
     + '<div class="card"><div class="mtitle" style="font-size:14px">GİDER — Panelde var, muhasebecide yok <span class="pill">'+giderFark.fazla.length+'</span></div>' + fazlaSatirHtml(giderFark.fazla, "var(--amber)") + '</div>'
@@ -2460,13 +2471,34 @@ function muhSatirHtml(tur, i, x, kategoriSecili) {
   } else if (gelirKgliMi) {
     ekAlan = '<input type="text" id="muh-kg-'+i+'" inputmode="decimal" placeholder="Satış Kg" style="width:90px;font-size:12px;padding:4px 6px">';
   }
+  // Otomatik eşleştirme bu kayda karar veremedi (isim de tutar da net değil) — kararı sana bırakıyorum.
+  // En yakın tutarlı 2 panel kaydını gösteriyorum, sen bakıp "bu zaten o mu" karar veriyorsun.
+  const panelListesi = (window.__muhPanelListesi && window.__muhPanelListesi[tur]) || [];
+  const adaylar = panelListesi
+    .map(p => ({ p, fark: Math.abs(p.tutar - x.tutar) }))
+    .sort((a,b) => a.fark - b.fark)
+    .slice(0, 2);
+  let adayHtml = "";
+  if (adaylar.length) {
+    adayHtml = '<div class="mini" style="margin-top:4px;color:var(--mut)">Panelde tutar bazlı en yakın: ' + adaylar.map(a =>
+      esc(fmtTarih(a.p.tarih)+' · '+a.p.aciklama+' · '+fmt(a.p.tutar)) + (a.fark>0.5 ? ' (fark: '+fmt(a.fark)+')' : ' (birebir aynı tutar!)')
+    ).join(' &nbsp;|&nbsp; ') + '</div>';
+  }
   return '<div id="muh-satir-'+tur+'-'+i+'" style="padding:6px 0;border-bottom:1px solid #262837;font-size:12.5px">'
     + '<div style="display:flex;justify-content:space-between;gap:8px"><span>'+fmtTarih(x.tarih)+' · '+esc(x.aciklama)+'</span><b style="color:var(--red);white-space:nowrap">'+fmt(x.tutar)+'</b></div>'
+    + adayHtml
     + '<div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">'
     + '<select id="muh-kat-'+tur+'-'+i+'" onchange="muhSatirYenile(\''+tur+'\','+i+')" style="flex:1;min-width:110px;font-size:12px;padding:4px 6px">'+katListesi.map(k=>'<option value="'+esc(k)+'"'+(k===kategoriSecili?" selected":"")+'>'+esc(k)+'</option>').join("")+'</select>'
     + ekAlan
     + '<button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap;flex-shrink:0" onclick="muhEksikEkle(\''+tur+'\','+i+')">✓ Ekle</button>'
+    + '<button class="chip" style="white-space:nowrap;flex-shrink:0" onclick="muhAtla(\''+tur+'\','+i+')">Zaten Var — Atla</button>'
     + '</div></div>';
+}
+// "Zaten Var — Atla": makine bu kaydı otomatik eşleştiremedi ama sen panelde zaten olduğunu görüyorsun.
+// Hiçbir veri eklemez/değiştirmez — sadece o satırı listeden kaldırır, tekrar sorulmaz.
+function muhAtla(tur, i) {
+  const satirEl = document.getElementById("muh-satir-"+tur+"-"+i);
+  if (satirEl) satirEl.innerHTML = '<div style="padding:6px 0;color:var(--mut);font-size:12.5px">— Atlandı (zaten panelde olduğu kabul edildi)</div>';
 }
 // Kategori değişince (Hammadde seçilip seçilmediğine göre kg/hammadde alanı görünürlüğü değişir)
 // SADECE o satırı yeniden çizer — diğer satırlara ve girilmiş değerlerine dokunmaz.
