@@ -2269,19 +2269,29 @@ function muhasebeKarsilastirAc() {
   overlay.innerHTML = '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:800px;margin:auto 0;max-height:90vh;overflow:auto" id="muh-karsilastir-icerik">'
     + '<div class="mtitle">📊 Muhasebe Dosyasıyla Karşılaştır</div>'
     + '<div class="mini" style="margin-bottom:10px">Muhasebecinin Excel dosyasını seç — "...GİDER" ve "...GELİR" adlı sayfaları otomatik bulup, seçtiğin aydaki kayıtları panelinle karşılaştırırım. Hiçbir şey otomatik değişmez, sadece fark listesi gösterilir.</div>'
-    + '<div style="margin-bottom:10px"><div class="mini" style="margin-bottom:5px">Hangi ay?</div><input type="month" id="muh-ay" value="'+buAyKey()+'"></div>'
+    + '<div style="margin-bottom:10px"><div class="mini" style="margin-bottom:5px">Hangi dönem?</div><div style="display:flex;gap:6px"><input type="month" id="muh-ay" value="'+buAyKey()+'" style="flex:1" onchange="muhDonemDegisti()"><button type="button" class="chip" id="muh-tum-zaman-btn" onclick="muhTumZamanSec()">Tüm Zamanlar</button></div><div class="mini" style="margin-top:4px">Sadece tek bir ay yerine, o zamana kadarki HER ŞEYİ görmek için "Tüm Zamanlar"ı seç — toplamların gerçekten tuttuğundan emin olmanın en güvenli yolu budur.</div></div>'
     + '<input type="file" accept=".xlsx,.xls" onchange="muhasebeDosyaSecildi(event)" style="width:100%;padding:12px;background:var(--bg);border:1.5px dashed var(--line);border-radius:10px;color:var(--ink)">'
     + '<button class="btn" style="background:#2A2C3A;margin-top:12px" onclick="muhasebeKarsilastirKapat()">Kapat</button>'
     + '<div id="muh-sonuc"></div>'
     + '</div>';
   document.body.appendChild(overlay);
 }
-function muhasebeKarsilastirKapat() { const el = document.getElementById("muh-karsilastir-modal"); if (el) el.remove(); }
+function muhasebeKarsilastirKapat() { const el = document.getElementById("muh-karsilastir-modal"); if (el) el.remove(); window.__muhTumZaman = false; }
+
+// "Tüm Zamanlar" seçilince ay kutusu devre dışı kalır — window.__muhTumZaman bayrağı okunur.
+function muhTumZamanSec() {
+  window.__muhTumZaman = !window.__muhTumZaman;
+  const btn = document.getElementById("muh-tum-zaman-btn");
+  const ayInput = document.getElementById("muh-ay");
+  if (btn) { btn.style.background = window.__muhTumZaman ? "var(--blue)" : ""; btn.style.color = window.__muhTumZaman ? "#fff" : ""; }
+  if (ayInput) ayInput.disabled = window.__muhTumZaman;
+}
+function muhDonemDegisti() { window.__muhTumZaman = false; const btn = document.getElementById("muh-tum-zaman-btn"); if (btn) { btn.style.background=""; btn.style.color=""; } }
 
 function muhasebeDosyaSecildi(ev) {
   const dosya = ev.target.files && ev.target.files[0];
   if (!dosya) return;
-  const secilenAy = gv("muh-ay");
+  const secilenAy = window.__muhTumZaman ? "TUM" : gv("muh-ay");
   xlsSheetJsYukle(() => {
     const okuyucu = new FileReader();
     okuyucu.onload = e => {
@@ -2301,6 +2311,7 @@ function muhBaslikBul(kolonlar, aranan) {
   }
   return -1;
 }
+// ayKey "TUM" ise dönem filtrelemesi hiç yapılmaz — dosyadaki/paneldeki HER kayıt dahil edilir.
 function muhSayfaOku(sheet, ayKey, tarihBaslik, aciklamaBaslik, tutarBaslik) {
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
   if (!rows.length) return [];
@@ -2313,7 +2324,7 @@ function muhSayfaOku(sheet, ayKey, tarihBaslik, aciklamaBaslik, tutarBaslik) {
     const tarih = row[iT];
     if (!(tarih instanceof Date) || isNaN(tarih)) continue;
     const tarihStr = yerelTarihStr(tarih);
-    if (tarihStr.slice(0,7) !== ayKey) continue;
+    if (ayKey !== "TUM" && tarihStr.slice(0,7) !== ayKey) continue;
     const tutar = row[iTutar];
     if (tutar == null || isNaN(tutar) || tutar === 0) continue;
     sonuc.push({ tarih: tarihStr, aciklama: xlsHucre(iA>=0?row[iA]:""), tutar: parseFloat(tutar) });
@@ -2322,7 +2333,7 @@ function muhSayfaOku(sheet, ayKey, tarihBaslik, aciklamaBaslik, tutarBaslik) {
 }
 
 function panelGiderleriAy(ayKey) {
-  return data.hareketler.filter(h => h.gider && h.tarih && h.tarih.slice(0,7)===ayKey)
+  return data.hareketler.filter(h => h.gider && h.tarih && (ayKey==="TUM" || h.tarih.slice(0,7)===ayKey))
     .map(h => ({ tarih: h.tarih, aciklama: h.aciklama, tutar: h.gider }));
 }
 // Muhasebeci GELİR'i tahsilat anını takip ettiği için, panelin fatura tarihi (h.tarih) değil,
@@ -2331,17 +2342,43 @@ function panelTahsilatlariAy(ayKey) {
   const sonuc = [];
   data.hareketler.forEach(h => {
     (h.tahsilatlar||[]).forEach(t => {
-      if (t.tarih && t.tarih.slice(0,7)===ayKey) sonuc.push({ tarih: t.tarih, aciklama: h.aciklama, tutar: t.tutar });
+      if (t.tarih && (ayKey==="TUM" || t.tarih.slice(0,7)===ayKey)) sonuc.push({ tarih: t.tarih, aciklama: h.aciklama, tutar: t.tutar });
     });
   });
   return sonuc;
 }
-// İki liste arasında tutar bazlı (±0,5₺ tolerans, yuvarlama farkları için) eşleştirme yapar.
+// Bu kelimeler o kadar yaygın (birçok farklı firma adında geçiyor) ki "ortak kelime" saymak
+// TAMAMEN FARKLI iki firmayı (ör. "Bizim Ambalaj" ile "Ege Ambalaj") yanlışlıkla eşleştirebilir.
+// Eşleşme kontrolünde bu kelimeler yok sayılır — sadece AYIRT EDİCİ kelimeler (firma/kişi adının
+// kendine özgü kısmı) sayılır.
+const MUH_GENEL_KELIME = new Set(["ambalaj","plastik","ticaret","sanayi","sanayii","ltd","şti","sti","a.ş","as",
+  "perakende","satış","satis","gıda","gida","mobilya","yazılım","yazilim","teknik","endüstri","endustri",
+  "kapak","hırdavat","hirdavat","nalburiye","kimya","polimer","makina","makine","fatura","dan","tan","den","ten",
+  "kestirme","atık","atik","iade","kredi","kullanımı","kullanimi","faturası","faturasi","için","icin","ile","ve"]);
+// İki açıklama/isim en az bir ANLAMLI ve AYIRT EDİCİ (3+ harfli, jenerik olmayan) kelimeyi paylaşıyor
+// mu — yazım farkına ("Bizim Ambalaj-Emine Keser" ile "Bizim Ambalaj (Emine Keser)" gibi) toleranslı,
+// ama sadece ortak "Ambalaj"/"Plastik" gibi genel bir kelime yüzünden yanlış eşleşmeyi engeller.
+function muhIsimBenzerMi(a, b) {
+  const kelimeler = s => trFold(String(s||"")).replace(/[^a-zçğıöşü0-9\s]/g," ").split(/\s+/).filter(w=>w.length>=3 && !MUH_GENEL_KELIME.has(w));
+  const wa = kelimeler(a), wb = kelimeler(b);
+  if (!wa.length || !wb.length) return false;
+  return wa.some(w => wb.indexOf(w) >= 0);
+}
+// Sadece TUTAR eşleşmesi yeterli değil — aynı tutar tesadüfen farklı iki kayıtta da çıkabilir
+// (aynı tutar farklı müşteri/tedarikçi). Önce tutar VE isim benzerliği olan eşleşme aranır; isim
+// hiç benzemese bile o tutara sahip TEK bir aday varsa (başka rakip yoksa, sadece yazım tamamen
+// farklıysa) yine de eşleştirilir — ama aynı tutara sahip BİRDEN FAZLA aday varsa, isim benzerliği
+// olmadan rastgele biriyle eşleştirilmez.
 function muhEslestir(muhListesi, panelListesi) {
   const panelKullanildi = new Array(panelListesi.length).fill(false);
   const eksik = []; // muhasebecide var, panelde yok
   muhListesi.forEach(m => {
-    const idx = panelListesi.findIndex((p,i) => !panelKullanildi[i] && Math.abs(p.tutar-m.tutar) < 0.5);
+    let idx = panelListesi.findIndex((p,i) => !panelKullanildi[i] && Math.abs(p.tutar-m.tutar) < 0.5 && muhIsimBenzerMi(p.aciklama, m.aciklama));
+    if (idx < 0) {
+      const adaylar = [];
+      panelListesi.forEach((p,i) => { if (!panelKullanildi[i] && Math.abs(p.tutar-m.tutar) < 0.5) adaylar.push(i); });
+      if (adaylar.length === 1) idx = adaylar[0]; // tek aday varsa (rastgele tutar çakışması riski yok) kabul et
+    }
     if (idx >= 0) panelKullanildi[idx] = true; else eksik.push(m);
   });
   const fazla = panelListesi.filter((p,i) => !panelKullanildi[i]); // panelde var, muhasebecide yok
@@ -2373,11 +2410,38 @@ function muhasebeAyristirVeKarsilastir(wb, ayKey) {
     ? liste.map(x => '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #262837;font-size:12.5px"><span>'+fmtTarih(x.tarih)+' · '+esc(x.aciklama)+'</span><b style="color:'+renk+'">'+fmt(x.tutar)+'</b></div>').join("")
     : '<div class="mini" style="color:var(--mut)">Fark yok</div>';
 
+  // Toplam/fark özeti — "her şeyi ekledim ama toplam tutmuyor" durumunu hemen görünür kılar,
+  // ve "Ekle" bastıkça (muhOzetGuncelle ile) CANLI güncellenir, tekrar dosya yüklemeye gerek kalmaz.
+  const muhGiderToplam = muhGiderler.reduce((s,x)=>s+x.tutar,0);
+  const muhGelirToplam = muhGelirler.reduce((s,x)=>s+x.tutar,0);
+  window.__muhOzet = { ayKey, muhGiderToplam, muhGelirToplam };
+  const donemEtiketi = ayKey === "TUM" ? "Tüm Zamanlar" : fmtTarih(ayKey+"-01").replace(/^\d{2}\./,"");
+
   document.getElementById("muh-sonuc").innerHTML =
-    '<div class="card" style="margin-top:14px"><div class="mtitle" style="font-size:14px">GİDER — Muhasebecide var, panelde yok <span class="pill">'+giderFark.eksik.length+'</span></div>' + eksikSatirHtml(giderFark.eksik, "gider") + '</div>'
+    '<div class="card" style="margin-top:14px;border:1.5px solid var(--gold)"><div class="mtitle" style="font-size:14px">🔎 Toplam Özet — '+esc(donemEtiketi)+'</div>'
+    + '<div id="muh-ozet-icerik"></div>'
+    + '<div class="mini" style="margin-top:6px">Fark sıfıra yaklaşana kadar aşağıdaki "eksik" satırları ekle. Sıfırlanmıyorsa, "Panelde var, muhasebecide yok" listesinde panelin fazladan taşıdığı kayıtlar olabilir (ör. taksitli kredi ödemeleri gibi farklı muhasebeleştirilen kalemler) — bunlar hata olmayabilir.</div>'
+    + '</div>'
+    + '<div class="card"><div class="mtitle" style="font-size:14px">GİDER — Muhasebecide var, panelde yok <span class="pill">'+giderFark.eksik.length+'</span></div>' + eksikSatirHtml(giderFark.eksik, "gider") + '</div>'
     + '<div class="card"><div class="mtitle" style="font-size:14px">GİDER — Panelde var, muhasebecide yok <span class="pill">'+giderFark.fazla.length+'</span></div>' + fazlaSatirHtml(giderFark.fazla, "var(--amber)") + '</div>'
     + '<div class="card"><div class="mtitle" style="font-size:14px">GELİR/TAHSİLAT — Muhasebecide var, panelde yok <span class="pill">'+gelirFark.eksik.length+'</span></div>' + eksikSatirHtml(gelirFark.eksik, "gelir") + '<div class="mini" style="margin-top:6px">Not: muhasebeci parayı ne zaman aldıysa o günü yazar. Panel tarafında bu, tahsilat tarihine göre karşılaştırılıyor — fatura tarihine göre değil. Buradan eklediğin bir gelir, tam tahsil edilmiş olarak kaydedilir.</div></div>'
     + '<div class="card"><div class="mtitle" style="font-size:14px">GELİR/TAHSİLAT — Panelde var, muhasebecide yok <span class="pill">'+gelirFark.fazla.length+'</span></div>' + fazlaSatirHtml(gelirFark.fazla, "var(--amber)") + '</div>';
+  muhOzetGuncelle();
+}
+function muhOzetSatirHtml(baslik, muhT, panelT) {
+  const fark = muhT - panelT;
+  return '<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:13px"><span>'+baslik+'</span>'
+    + '<span>Muhasebeci: <b>'+fmt(muhT)+'</b> · Panel: <b>'+fmt(panelT)+'</b> · Fark: <b style="color:'+(Math.abs(fark)<1?"var(--green)":"var(--red)")+'">'+fmt(fark)+'</b></span></div>';
+}
+// Panel toplamını YENİDEN hesaplayıp özet kartını günceller — "Ekle" ile her yeni kayıt eklendikçe
+// çağrılır, fark canlı olarak sıfıra yaklaştığı görülebilir, tekrar dosya yüklemeye gerek kalmaz.
+function muhOzetGuncelle() {
+  const o = window.__muhOzet;
+  if (!o) return;
+  const panelGiderToplam = panelGiderleriAy(o.ayKey).reduce((s,x)=>s+x.tutar,0);
+  const panelGelirToplam = panelTahsilatlariAy(o.ayKey).reduce((s,x)=>s+x.tutar,0);
+  const el = document.getElementById("muh-ozet-icerik");
+  if (el) el.innerHTML = muhOzetSatirHtml("Gider", o.muhGiderToplam, panelGiderToplam) + muhOzetSatirHtml("Gelir/Tahsilat", o.muhGelirToplam, panelGelirToplam);
 }
 
 // Kg/hammadde alanı sadece anlamlı olduğu kategorilerde gösterilir — normal +Kayıt formundaki
@@ -2449,6 +2513,7 @@ function muhEksikEkle(tur, i) {
   const satirEl = document.getElementById("muh-satir-"+tur+"-"+i);
   if (satirEl) satirEl.innerHTML = '<div style="padding:6px 0;color:var(--green);font-size:12.5px">✓ Eklendi — '+esc(x.aciklama)+' ('+fmt(x.tutar)+')</div>';
   toast("✓ Eklendi: " + x.aciklama);
+  muhOzetGuncelle();
 }
 
 function xlsAyristir(wb) {
