@@ -1,7 +1,7 @@
 rules_version = '2';
 
 // RAZ Panel veritabanı kuralları.
-// Verilere SADECE aşağıdaki listede adı olan kullanıcılar erişebilir (okuma + yazma).
+// Verilere SADECE aşağıdaki listede adı olan kullanıcılar erişebilir.
 // Kullanıcı adı "oraz" ise buraya "oraz@razpanel.local" yazılır.
 // Yeni kişi eklemek için: Firebase > Authentication'da hesabını aç, sonra adını bu listeye ekle.
 service cloud.firestore {
@@ -12,8 +12,35 @@ service cloud.firestore {
           'oraz@razpanel.local'
         ];
     }
-    match /{document=**} {
+
+    // Eski tek-belge veri (raz/data) yeni düzene taşındı; yedek olarak sadece okunur.
+    // Sayfası eski sürümde açık kalmış bir cihaz buraya yazamasın diye yazma kapalı.
+    match /raz/{belge} {
+      allow read: if yetkili();
+      allow write: if yetkili() && belge != 'data';
+    }
+
+    // Asıl veri: her kayıt ayrı belge
+    match /raz2/{id} {
       allow read, write: if yetkili();
+    }
+
+    // İşlem geçmişi: eklenebilir ve okunabilir; kimse silemez ya da değiştiremez
+    match /raz_gunluk/{id} {
+      allow read, create: if yetkili();
+    }
+
+    // Silinenler kutusu (30 gün)
+    match /raz_silinenler/{id} {
+      allow read, write: if yetkili();
+    }
+
+    // Günlük otomatik yedekler
+    match /raz_yedekler/{gun} {
+      allow read, write: if yetkili();
+      match /parcalar/{parca} {
+        allow read, write: if yetkili();
+      }
     }
   }
 }

@@ -40,3 +40,12 @@ Bundan sonra listede olmayan hiç kimse — sayfa adresini bilse bile — verile
 - Şifre unutulursa: Authentication → Users → kişinin satırındaki menü → **Reset password** yerine
   hesabı silip aynı adla yeniden oluşturmak en kolayıdır (sahte e-postaya mail gitmez).
 - Bir kişinin erişimini kapatmak için: Users'tan hesabını silin ve kurallardaki listeden çıkarın.
+
+## Güncelleme: yeni veri düzeni (kayıtlar ayrı ayrı, geçmiş, silinenler)
+Panelin bu sürümü verileri ilk açılışta otomatik olarak yeni düzene taşır (eski veri silinmez,
+`raz/data` belgesinde yedek olarak kalır). Sonra:
+1. Paneli açık olan **bütün cihazlarda** sayfayı yenileyin (eski sürüm açık kalmasın).
+2. Firestore Database → Rules: bu depodaki güncel `firestore.rules` içeriğini yapıştırın,
+   **kullanıcı listesini kendi listenizle tekrar doldurun**, Publish.
+   Bu kurallarla işlem geçmişi kimse tarafından silinemez/değiştirilemez ve eski veri belgesine
+   artık yazılamaz.

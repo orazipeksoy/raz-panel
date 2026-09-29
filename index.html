@@ -295,7 +295,7 @@ setTimeout(function() {
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
-import { initializeFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, getDoc, getDocFromServer, setDoc, deleteDoc, writeBatch, onSnapshot, collection, query, orderBy, limit, where, getDocs, waitForPendingWrites, terminate, clearIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 const firebaseConfig = {
   apiKey: "AIzaSyDPgL-ogKfzX_a2kwlXRnQUbmBqIPtSqpY",
   authDomain: "raz-plastik.firebaseapp.com",
@@ -306,41 +306,289 @@ const firebaseConfig = {
   measurementId: "G-HN3V212J1S"
 };
 const app = initializeApp(firebaseConfig);
-const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
-  useFetchStreams: false
-});
-const DOC_REF = doc(db, "raz", "data");
-window.__fbLoad = async function() {
+// Kalıcı yerel önbellek: cihaz internetsizken yapılan kayıtlar sayfa yenilense bile kaybolmaz,
+// internet gelince buluta gönderilir. Tekrar açılışlarda sadece değişen kayıtlar indirilir.
+let db;
+try {
+  db = initializeFirestore(app, {
+    experimentalForceLongPolling: true,
+    useFetchStreams: false,
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  });
+} catch(e) {
+  console.warn("Kalıcı önbellek açılamadı, bellek önbelleği kullanılıyor:", e);
+  db = initializeFirestore(app, { experimentalForceLongPolling: true, useFetchStreams: false });
+}
+const auth = getAuth(app);
+
+// ============ VERİ DEPOSU (sürüm 2) ============
+// Eskiden bütün veri tek belgede (raz/data) JSON metni olarak duruyordu — Firestore'un 1 MB belge
+// sınırına dayanınca kayıt sessizce başarısız olacaktı; iki cihaz aynı anda kaydedince de biri
+// diğerinin girdiğini eziyordu. Artık "raz2" koleksiyonunda:
+//   e__<anahtar>__<__id> : dizi elemanı (her hareket, üretim, ürün... ayrı belge)  {k,t:"e",s,j}
+//   a__<anahtar>         : dizinin var olduğunu işaretler (boş dizi de korunur)   {k,t:"a"}
+//   m__<anahtar>         : dizi olmayan alanlar (ayarlar, cari bakiyeler...)        {k,t:"m",j}
+// s = sıra değeri (liste sırasını korur), j = kaydın JSON metni.
+// Kaydederken sadece DEĞİŞEN belgeler yazılır; böylece iki cihaz farklı kayıtlar üzerinde
+// çalışırken birbirinin işini ezmez.
+const KOLEKSIYON = "raz2";
+const ESKI_REF = doc(db, "raz", "data");     // eski tek belge — taşımadan sonra dokunulmaz, yedek olarak kalır
+const SURUM_REF = doc(db, "raz", "v2");      // taşıma yapıldı işareti
+let bulut = new Map();                       // belgeId -> {id,k,t,s,j} : bulutun bilinen son hali
+let depoHazir = false;
+
+function kullaniciAdi() {
+  const u = auth.currentUser;
+  return (u && u.email) ? u.email.split("@")[0] : "?";
+}
+function yeniId() { return "x" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+function nesneDizisiMi(v) { return Array.isArray(v) && v.every(x => x && typeof x === "object" && !Array.isArray(x)); }
+
+// Uygulama verisini belgelere çevirir. Dizi elemanlarına eksikse kalıcı __id verir (veriyi değiştirir).
+// Sıra değerleri mümkün olduğunca ESKİ değerlerini korur — ortadan bir kayıt silinince ya da araya
+// kayıt eklenince diğer yüzlerce kaydı yeniden yazmamak için.
+function belgelereCevir(veri) {
+  const m = new Map();
+  Object.keys(veri).forEach(k => {
+    const v = veri[k];
+    if (v === undefined) return;
+    if (!nesneDizisiMi(v)) { m.set("m__" + k, { id: "m__" + k, k, t: "m", s: 0, j: JSON.stringify(v) }); return; }
+    m.set("a__" + k, { id: "a__" + k, k, t: "a", s: 0, j: "" });
+    const gorulen = new Set();
+    v.forEach(el => {
+      if (!el.__id || gorulen.has(el.__id) || String(el.__id).indexOf("/") >= 0) el.__id = yeniId();
+      gorulen.add(el.__id);
+    });
+    const eskiS = v.map(el => { const e = bulut.get("e__" + k + "__" + el.__id); return e ? e.s : null; });
+    let son = null;
+    v.forEach((el, i) => {
+      let s;
+      if (eskiS[i] != null && (son === null || eskiS[i] > son)) s = eskiS[i];
+      else {
+        let sonraki = null;
+        for (let j = i + 1; j < v.length; j++) { if (eskiS[j] != null && (son === null || eskiS[j] > son)) { sonraki = eskiS[j]; break; } }
+        if (son === null) s = (sonraki === null) ? 0 : sonraki - 1;
+        else s = (sonraki === null) ? son + 1 : (son + sonraki) / 2;
+      }
+      son = s;
+      const id = "e__" + k + "__" + el.__id;
+      m.set(id, { id, k, t: "e", s, j: JSON.stringify(el), el });
+    });
+  });
+  return m;
+}
+
+// Bulutun bilinen halinden uygulama verisini yeniden kurar.
+function veriyeCevir() {
+  const veri = {}, diziler = {};
+  bulut.forEach(d => {
+    if (d.t === "m") { try { veri[d.k] = JSON.parse(d.j); } catch(e) { console.error("Bozuk belge:", d.id); } }
+    else if (d.t === "a") { if (!diziler[d.k]) diziler[d.k] = []; }
+    else if (d.t === "e") { (diziler[d.k] = diziler[d.k] || []).push(d); }
+  });
+  Object.keys(diziler).forEach(k => {
+    veri[k] = diziler[k]
+      .sort((a, b) => (a.s - b.s) || (a.id < b.id ? -1 : 1))
+      .map(d => { try { return JSON.parse(d.j); } catch(e) { return null; } })
+      .filter(Boolean);
+  });
+  return veri;
+}
+
+function ozetle(k, el, eski) {
+  try { return window.__raz2Ozet ? String(window.__raz2Ozet(k, el, eski)).slice(0, 300) : k; }
+  catch(e) { return k; }
+}
+
+// secenek.sessiz: kim/ne zaman bilgisi ve işlem geçmişi yazılmaz (taşıma, ilk kurulum için)
+// secenek.topluIzin: çok sayıda kaydı silen işleme izin ver (yedekten geri yükleme için)
+async function kaydet(veri, secenek) {
+  secenek = secenek || {};
+  if (!depoHazir) return { ok: false, hata: "hazir-degil" };
+  const yeni = belgelereCevir(veri);
+  const kim = kullaniciAdi(), simdi = new Date().toISOString();
+  const yazilacak = [], silinecek = [], gunluk = [];
+
+  yeni.forEach((d, id) => {
+    const e = bulut.get(id);
+    if (e && e.t === d.t && e.j === d.j && e.s === d.s) return;
+    if (d.t === "e" && (!e || e.j !== d.j) && !secenek.sessiz) {
+      if (!e) {
+        if (!d.el.__olusturan) { d.el.__olusturan = kim; d.el.__olusturuldu = simdi; }
+      } else {
+        d.el.__degistiren = kim; d.el.__degisti = simdi;
+      }
+      d.j = JSON.stringify(d.el);
+      let eskiEl = null; if (e) { try { eskiEl = JSON.parse(e.j); } catch(x) {} }
+      gunluk.push({ islem: e ? "degistir" : "ekle", tur: d.k, ozet: ozetle(d.k, d.el, eskiEl) });
+    } else if (d.t === "m" && e && e.j !== d.j && !secenek.sessiz) {
+      gunluk.push({ islem: "degistir", tur: d.k, ozet: ozetle(d.k, null, null) });
+    }
+    yazilacak.push(d);
+  });
+  bulut.forEach((e, id) => {
+    if (yeni.has(id)) return;
+    silinecek.push(e);
+    if (e.t === "e" && !secenek.sessiz) {
+      let el = null; try { el = JSON.parse(e.j); } catch(x) {}
+      gunluk.push({ islem: "sil", tur: e.k, ozet: ozetle(e.k, el, null) });
+    }
+  });
+
+  // Emniyet kilidi: bir hata ya da bayat veri yüzünden toplu silme olmasın
+  const silinenEleman = silinecek.filter(e => e.t === "e").length;
+  let toplamEleman = 0; bulut.forEach(e => { if (e.t === "e") toplamEleman++; });
+  if (!secenek.topluIzin && silinenEleman > 25 && silinenEleman > toplamEleman * 0.2) {
+    return { ok: false, hata: "toplu-silme", sayi: silinenEleman };
+  }
+  if (!yazilacak.length && !silinecek.length) return { ok: true, degisen: 0 };
+
+  const islemler = [];
+  yazilacak.forEach(d => islemler.push({ tur: "yaz", ref: doc(db, KOLEKSIYON, d.id), veri: d.t === "e" ? { k: d.k, t: "e", s: d.s, j: d.j } : { k: d.k, t: d.t, s: 0, j: d.j } }));
+  silinecek.forEach(e => {
+    islemler.push({ tur: "sil", ref: doc(db, KOLEKSIYON, e.id) });
+    // Silinenler kutusu: 30 gün geri alınabilir
+    if (e.t === "e" && !secenek.sessiz) {
+      islemler.push({ tur: "yaz", ref: doc(db, "raz_silinenler", e.id + "__" + Date.now().toString(36)), veri: { k: e.k, s: e.s, j: e.j, silen: kim, zaman: simdi } });
+    }
+  });
+  let gunlukKayit = gunluk;
+  if (gunluk.length > 30) {
+    const say = t => gunluk.filter(g => g.islem === t).length;
+    gunlukKayit = [{ islem: "toplu", tur: "", ozet: "Toplu işlem: " + say("ekle") + " ekleme, " + say("degistir") + " değişiklik, " + say("sil") + " silme" }];
+  }
+  gunlukKayit.forEach(g => islemler.push({ tur: "yaz", ref: doc(collection(db, "raz_gunluk")), veri: { zaman: simdi, kullanici: kim, islem: g.islem, tur: g.tur, ozet: g.ozet } }));
+
+  // Bulutun yeni halini hemen kabul et (dinleyici kendi yazdıklarımızı "değişiklik" saymasın).
+  // Yazma reddedilirse Firestore yerel önbelleği geri alır, dinleyici de bunu geri yansıtır.
+  const yeniBulut = new Map();
+  yeni.forEach((d, id) => yeniBulut.set(id, { id, k: d.k, t: d.t, s: d.t === "e" ? d.s : 0, j: d.j }));
+  bulut = yeniBulut;
+
   try {
-    const s = await getDoc(DOC_REF);
+    const commitler = [];
+    for (let i = 0; i < islemler.length; i += 400) {
+      const b = writeBatch(db);
+      islemler.slice(i, i + 400).forEach(o => { if (o.tur === "yaz") b.set(o.ref, o.veri); else b.delete(o.ref); });
+      commitler.push(b.commit());
+    }
+    await Promise.all(commitler);
     window.__fbDurum = "OK";
-    return { ok: true, payload: s.exists() ? s.data().payload : null };
+    return { ok: true, degisen: yazilacak.length + silinecek.length };
+  } catch(e) {
+    console.error("Kaydetme hatası:", e);
+    window.__fbDurum = (e && e.code) || String(e);
+    return { ok: false, hata: (e && e.code) || String(e) };
   }
-  catch(e) {
-    const kod = (e && e.code) ? e.code : "?";
-    const msj = (e && e.message) ? e.message : String(e);
-    window.__fbDurum = kod + " — " + msj;
-    console.error("Firebase okuma hatası:", kod, msj, e);
-    return { ok: false, error: kod + ": " + msj };
-  }
-};
-window.__fbSave = async function(j) {
+}
+
+// Canlı dinleme. İlk tam görüntü gelince çözülür; sonrasında sadece BAŞKA cihazdan gelen gerçek
+// değişikliklerde window.__raz2Degisti(veri) çağrılır.
+function dinlemeBaslat() {
+  return new Promise((coz, reddet) => {
+    let ilk = true;
+    onSnapshot(collection(db, KOLEKSIYON), snap => {
+      let gercek = 0;
+      snap.docChanges().forEach(ch => {
+        const id = ch.doc.id;
+        if (ch.type === "removed") { if (bulut.has(id)) { bulut.delete(id); gercek++; } return; }
+        const d = ch.doc.data(), e = bulut.get(id);
+        const yeniD = { id, k: d.k, t: d.t, s: d.s || 0, j: d.j || "" };
+        if (!e || e.j !== yeniD.j || e.s !== yeniD.s || e.t !== yeniD.t) { bulut.set(id, yeniD); gercek++; }
+      });
+      if (ilk) {
+        if (snap.metadata.fromCache && snap.empty) return; // önbellek boş — sunucuyu bekle
+        ilk = false; coz(); return;
+      }
+      if (gercek && window.__raz2Degisti) { try { window.__raz2Degisti(veriyeCevir()); } catch(e) { console.error(e); } }
+    }, err => {
+      console.error("Dinleme hatası:", err);
+      window.__fbDurum = (err && err.code) || String(err);
+      if (ilk) { ilk = false; reddet(err); }
+    });
+  });
+}
+
+// Açılışta çağrılır: gerekiyorsa eski tek belgeden taşır, dinlemeyi başlatır, veriyi döndürür.
+window.__raz2Hazirla = async function() {
   try {
-    window.__lastLocalWrite = j;
-    await setDoc(DOC_REF, { payload: j, updatedAt: new Date().toISOString() });
-    return true;
+    let surumVar;
+    try { surumVar = (await getDocFromServer(SURUM_REF)).exists(); }
+    catch(e) { surumVar = (await getDoc(SURUM_REF)).exists(); } // internetsiz: önbellekten bak
+    if (!surumVar) {
+      const eski = await getDocFromServer(ESKI_REF);
+      if (eski.exists() && eski.data().payload) {
+        const veri = JSON.parse(eski.data().payload);
+        // Eksik kimlikleri anahtar+sıra ile ver: iki cihaz aynı anda taşısa bile aynı belgeler oluşur
+        Object.keys(veri).forEach(k => {
+          if (nesneDizisiMi(veri[k])) veri[k].forEach((el, i) => { if (!el.__id) el.__id = k + "_" + i; });
+        });
+        bulut = new Map(); depoHazir = true;
+        const r = await kaydet(veri, { sessiz: true, topluIzin: true });
+        depoHazir = false;
+        if (!r.ok) return { ok: false, error: "Veri taşınamadı: " + r.hata };
+      }
+      await setDoc(SURUM_REF, { surum: 2, tasindi: new Date().toISOString(), tasiyan: kullaniciAdi() });
+    }
+    await dinlemeBaslat();
+    depoHazir = true;
+    window.__fbDurum = "OK";
+    return { ok: true, veri: bulut.size ? veriyeCevir() : null };
+  } catch(e) {
+    const kod = (e && e.code) ? e.code : "?";
+    window.__fbDurum = kod + " — " + ((e && e.message) || String(e));
+    console.error("Açılış hatası:", e);
+    return { ok: false, error: kod + ": " + ((e && e.message) || String(e)) };
   }
-  catch(e) { console.error(e); return false; }
 };
+window.__raz2Kaydet = kaydet;
+window.__raz2BulutVerisi = function() { return veriyeCevir(); };
+
+// ============ İŞLEM GEÇMİŞİ + SİLİNENLER KUTUSU ============
+window.__raz2GunlukGetir = async function(adet) {
+  const snap = await getDocs(query(collection(db, "raz_gunluk"), orderBy("zaman", "desc"), limit(adet || 200)));
+  const liste = []; snap.forEach(d => liste.push(Object.assign({ id: d.id }, d.data())));
+  return liste;
+};
+window.__raz2SilinenleriGetir = async function() {
+  const snap = await getDocs(query(collection(db, "raz_silinenler"), orderBy("zaman", "desc"), limit(300)));
+  const liste = []; snap.forEach(d => liste.push(Object.assign({ id: d.id }, d.data())));
+  return liste;
+};
+window.__raz2SilineniKaldir = async function(id) { await deleteDoc(doc(db, "raz_silinenler", id)); };
+// 30 günden eski silinenleri temizler (açılışta arka planda)
+window.__raz2CopTemizle = async function() {
+  try {
+    const sinir = new Date(Date.now() - 30 * 86400000).toISOString();
+    const snap = await getDocs(query(collection(db, "raz_silinenler"), where("zaman", "<", sinir), limit(300)));
+    if (snap.empty) return;
+    const b = writeBatch(db); snap.forEach(d => b.delete(d.ref)); await b.commit();
+  } catch(e) { console.warn("Silinenler temizlenemedi:", e); }
+};
+
+// Çıkışta: gönderilmeyi bekleyen kayıt var mı bak, sonra cihazdaki önbelleği sil
+window.__raz2BekleyenVarMi = async function() {
+  const bitti = await Promise.race([waitForPendingWrites(db).then(() => true), new Promise(r => setTimeout(() => r(false), 5000))]);
+  return !bitti;
+};
+window.__raz2OnbellegiSil = async function() {
+  try { await terminate(db); await clearIndexedDbPersistence(db); } catch(e) { console.warn("Önbellek silinemedi:", e); }
+};
+
 // ============ OTOMATİK GÜNLÜK YEDEKLEME ============
+// Yedek parçalara bölünerek yazılır — veri büyüse de 1 MB belge sınırına takılmaz.
+const YEDEK_PARCA = 200000;
 window.__fbYedekAl = async function(gunKey, payload) {
   try {
     const yedekRef = doc(db, "raz_yedekler", gunKey);
     const mevcut = await getDoc(yedekRef);
-    if (!mevcut.exists()) {
-      await setDoc(yedekRef, { payload, savedAt: new Date().toISOString() });
+    if (mevcut.exists()) return true;
+    const n = Math.max(1, Math.ceil(payload.length / YEDEK_PARCA));
+    for (let i = 0; i < n; i++) {
+      await setDoc(doc(db, "raz_yedekler", gunKey, "parcalar", String(i)), { v: payload.slice(i * YEDEK_PARCA, (i + 1) * YEDEK_PARCA) });
     }
+    // Ana belge en son yazılır: parçalar eksiksizse yedek "var" sayılır
+    await setDoc(yedekRef, { parcaSayisi: n, boyut: payload.length, savedAt: new Date().toISOString() });
     return true;
   } catch(e) { console.error("Yedekleme hatası:", e); return false; }
 };
@@ -355,26 +603,22 @@ window.__fbYedekleriListele = async function() {
 };
 window.__fbYedekGetir = async function(gunKey) {
   try {
-    const yedekRef = doc(db, "raz_yedekler", gunKey);
-    const snap = await getDoc(yedekRef);
-    return snap.exists() ? snap.data().payload : null;
+    const snap = await getDoc(doc(db, "raz_yedekler", gunKey));
+    if (!snap.exists()) return null;
+    const d = snap.data();
+    if (d.payload) return d.payload; // eski biçim: tek belge
+    let metin = "";
+    for (let i = 0; i < (d.parcaSayisi || 0); i++) {
+      const p = await getDoc(doc(db, "raz_yedekler", gunKey, "parcalar", String(i)));
+      if (!p.exists()) return null;
+      metin += p.data().v;
+    }
+    return metin;
   } catch(e) { console.error("Yedek getirme hatası:", e); return null; }
-};
-window.__fbListen = function(callback) {
-  try {
-    onSnapshot(DOC_REF, (snap) => {
-      if (snap.exists()) {
-        const p = snap.data().payload;
-        // Kendi yazdığımız veriyi tekrar işleme (döngüyü önle)
-        if (p !== window.__lastLocalWrite) callback(p);
-      }
-    }, (err) => console.error("Dinleme hatası:", err));
-  } catch(e) { console.error(e); }
 };
 // ============ GİRİŞ (Firebase Authentication) ============
 // Veritabanı kuralları sadece giriş yapmış yetkili kullanıcıya izin verir — bu yüzden veri,
 // giriş tamamlanmadan hiç okunmaz. Oturum cihazda hatırlanır; her açılışta şifre sorulmaz.
-const auth = getAuth(app);
 window.__fbGiris = async function(eposta, sifre) {
   try { await signInWithEmailAndPassword(auth, eposta, sifre); return { ok: true }; }
   catch(e) { return { ok: false, kod: (e && e.code) || "?" }; }
@@ -477,6 +721,41 @@ function gizliModDegistir() {
   try { localStorage.setItem("raz-gizli-mod", gizliMod ? "1" : "0"); } catch(e) {}
   render();
 }
+// Kaydı kimin girdiği / en son kimin değiştirdiği — bu özellikten önceki kayıtlarda bilgi yoktur
+function fmtZaman(iso) {
+  if (!iso) return "";
+  const d = new Date(iso); if (isNaN(d)) return "";
+  const iki = n => String(n).padStart(2, "0");
+  return iki(d.getDate()) + "." + iki(d.getMonth()+1) + "." + d.getFullYear() + " " + iki(d.getHours()) + ":" + iki(d.getMinutes());
+}
+function kimBilgisi(x) {
+  if (!x || !(x.__degistiren || x.__olusturan)) return "";
+  let m = "👤 " + esc(x.__olusturan || "?") + (x.__olusturuldu ? " · " + fmtZaman(x.__olusturuldu) : "");
+  if (x.__degistiren) m += " — ✎ " + esc(x.__degistiren) + " · " + fmtZaman(x.__degisti);
+  return '<div class="notrow" style="opacity:.8">' + m + '</div>';
+}
+const KAYIT_TURU_ADI = { hareketler: "Hareket", uretimler: "Üretim", mamul: "Stok ürünü", hammadde: "Hammadde", fiyatlar: "Fiyat", krediler: "Kredi", notlar: "Not", sayimlar: "Stok sayımı", personeller: "Personel", ayarlar: "Maliyet ayarları", cariBakiyeler: "Cari bakiyeler", masuraTablosu: "Masura ağırlıkları", genislikEslenikleri: "Genişlik eşlemeleri", musteriEslenikleri: "Müşteri eşlemeleri", gizliUyarilar: "Gizlenen uyarılar" };
+// İşlem geçmişi ve silinenler listesinde bir kaydın tek satırlık özeti
+window.__raz2Ozet = function(k, el, eski) {
+  if (!el) return KAYIT_TURU_ADI[k] || k;
+  const degisim = (ad, a, b, bicim) => (eski && a !== b) ? " · " + ad + " " + bicim(a) + " → " + bicim(b) : "";
+  if (k === "hareketler") {
+    const t = el.gelir || el.gider, te = eski ? (eski.gelir || eski.gider) : null;
+    let o = (el.tur === "GELİR" ? "▲ " : "▼ ") + (el.aciklama || "") + " · " + fmt(t) + " · " + fmtTarih(el.tarih || "");
+    if (eski && te !== t) o += " (önce " + fmt(te) + ")";
+    if (eski && (el.tahsilatlar || []).length > (eski.tahsilatlar || []).length) o += " · tahsilat eklendi";
+    return o;
+  }
+  if (k === "uretimler") return fmtTarih(el.tarih || "") + " " + (el.vardiya || "") + " · " + (el.usta || "") + " · " + (el.urunler || []).reduce((t, u) => t + (u.adet || 0), 0) + " bobin";
+  if (k === "mamul") return (el.kalite || "") + " " + (el.tip || "") + " " + (el.genislik || "") + (eski && eski.adet !== el.adet ? " · adet " + eski.adet + " → " + el.adet : " · " + el.adet + " adet");
+  if (k === "hammadde") return (el.tedarikci || "") + (el.aciklama && el.aciklama !== "-" ? " (" + el.aciklama + ")" : "") + degisim("kalan", eski && eski.kalan, el.kalan, v => fmtKg(v) + " kg");
+  if (k === "fiyatlar") return (el.urun || "") + " · " + el.kdvHaric + " ₺/kg" + (eski && eski.kdvHaric !== el.kdvHaric ? " (önce " + eski.kdvHaric + ")" : "");
+  if (k === "krediler" || k === "personeller") return el.ad || "";
+  if (k === "notlar") return (el.metin || "") + (el.tamamlandi ? " ✓" : "");
+  if (k === "sayimlar") return "Sayım " + fmtTarih(el.tarih || "");
+  return KAYIT_TURU_ADI[k] || k;
+};
+
 function fmtKg(v) { return v == null ? "—" : Number(v).toLocaleString("tr-TR", {maximumFractionDigits:2}); }
 
 // Küçük bir trend çizgisi (sparkline) üretir — KPI kutularının içine gömülmek için.
@@ -580,7 +859,9 @@ function saglaId(d) {
   return d;
 }
 
+let bulutHazir = false; // bulut verisi yüklenmeden buluta yazılmaz (bayat/başlangıç verisi asla gönderilmez)
 async function load() {
+  bulutHazir = false;
   try {
     const raw = localStorage.getItem("raz-data-v1");
     data = raw ? saglaId(JSON.parse(raw)) : saglaId(JSON.parse(JSON.stringify(SEED)));
@@ -588,46 +869,33 @@ async function load() {
   resetForm(); resetUForm(); render();
   showSyncBadge("syncing");
   try {
-    // 10 saniye zaman aşımı — takılırsa kullanıcı bilsin
-    const zamanAsimi = new Promise((_, rej) => setTimeout(() => rej(new Error("zaman aşımı (10sn) — ağ/güvenlik duvarı engeli olabilir")), 10000));
-    const sonuc = await Promise.race([window.__fbLoad(), zamanAsimi]);
+    // 25 saniye zaman aşımı — ilk açılışta verinin yeni düzene taşınması biraz sürebilir
+    const zamanAsimi = new Promise((_, rej) => setTimeout(() => rej(new Error("zaman aşımı (25sn) — ağ/güvenlik duvarı engeli olabilir")), 25000));
+    const sonuc = await Promise.race([window.__raz2Hazirla(), zamanAsimi]);
     if (!sonuc.ok) {
       // Okuma HATASI — asla üstüne yazma, sadece uyar
       showSyncBadge("off");
       toast("Buluta erişilemedi: " + (sonuc.error || "bilinmeyen hata"));
       return;
     }
-    if (sonuc.payload) {
-      data = saglaId(JSON.parse(sonuc.payload));
-      localStorage.setItem("raz-data-v1", JSON.stringify(data));
-      resetForm(); resetUForm(); render(); showSyncBadge("ok");
-    } else {
-      // Bulut gerçekten boş — ilk kurulum, seed'i yaz
-      await window.__fbSave(JSON.stringify(data));
-      showSyncBadge("ok");
-    }
+    const ilkKurulum = !sonuc.veri;
+    if (sonuc.veri) data = saglaId(sonuc.veri);
+    try { localStorage.setItem("raz-data-v1", JSON.stringify(data)); } catch(e) {}
+    bulutHazir = true;
+    // saglaId'nin eklediği varsayılan alanlar / kimlikler sessizce buluta işlenir (geçmişe yazılmaz)
+    await window.__raz2Kaydet(data, { sessiz: true, topluIzin: ilkKurulum });
+    resetForm(); resetUForm(); render(); showSyncBadge("ok");
     // Günlük otomatik yedek (o gün için henüz yoksa oluşturur)
-    try {
-      const bugunKey = yerelTarihStr();
-      window.__fbYedekAl(bugunKey, JSON.stringify(data));
-    } catch(e) {}
-    // Canlı dinleme: başka cihaz kaydettiğinde otomatik güncelle
-    window.__fbListen(function(cloudRaw2) {
-      try {
-        // 1) Kendi yazdığımız veriyi yok say (yankı)
-        if (cloudRaw2 === window.__lastLocalWrite) return;
-        // 2) Son kaydımızdan hemen sonra gelen bildirimi yok say (yarış koşulu koruması)
-        if (window.__lastSaveTime && (Date.now() - window.__lastSaveTime) < 4000) return;
-        const gelen = saglaId(JSON.parse(cloudRaw2));
-        // 3) Gelen veri bizimkinden AZ kayıt içeriyorsa (bayat/eksik) üzerine yazma
-        if (data && gelen.hareketler && data.hareketler && gelen.hareketler.length < data.hareketler.length && (Date.now() - (window.__lastSaveTime||0)) < 15000) return;
-        data = gelen;
-        localStorage.setItem("raz-data-v1", JSON.stringify(data));
-        render();
-        toast("↻ Diğer cihazdan güncellendi");
-        showSyncBadge("ok");
-      } catch(e) {}
-    });
+    try { window.__fbYedekAl(yerelTarihStr(), JSON.stringify(data)); } catch(e) {}
+    try { window.__raz2CopTemizle(); } catch(e) {}
+    // Canlı dinleme: başka cihaz kaydettiğinde sadece gerçekten değişen kayıtlar gelir
+    window.__raz2Degisti = function(veri) {
+      data = saglaId(veri);
+      try { localStorage.setItem("raz-data-v1", JSON.stringify(data)); } catch(e) {}
+      renderKorumali();
+      toast("↻ Diğer cihazdan güncellendi");
+      showSyncBadge("ok");
+    };
   } catch(e) {
     window.__fbDurum = (e && e.message) ? e.message : String(e);
     showSyncBadge("off");
@@ -642,17 +910,34 @@ function showSyncBadge(state) {
   else { el.textContent = "● Çevrimdışı — " + (window.__fbDurum || "bağlantı bekleniyor"); el.style.color = "#F87171"; }
 }
 
-async function save() {
-  const j = JSON.stringify(data);
-  window.__lastLocalWrite = j; // yankı bastırma: kendi yazdığımız veriyi dinleyici tekrar işlemesin
-  window.__lastSaveTime = Date.now();
-  try { localStorage.setItem("raz-data-v1", j); } catch(e) {}
+// secenek.topluIzin: çok sayıda kaydı silen işlem (yedekten geri yükleme) için emniyet kilidini açar
+async function save(secenek) {
+  try { localStorage.setItem("raz-data-v1", JSON.stringify(data)); } catch(e) {}
+  if (!bulutHazir || !window.__raz2Kaydet) {
+    toast("Yalnız bu cihaza kaydedildi — bulut bağlantısı bekleniyor");
+    showSyncBadge("off");
+    return;
+  }
   toast("Kaydediliyor…");
-  try {
-    const ok = await window.__fbSave(j);
-    toast(ok ? "✓ Kaydedildi" : "Yalnız yerel kaydedildi");
-    showSyncBadge(ok ? "ok" : "off");
-  } catch(e) { toast("Yalnız yerel kaydedildi"); showSyncBadge("off"); }
+  // İnternet yoksa kayıt cihazda sıraya girer ve internet gelince gönderilir — ekran beklemesin
+  const sonuc = await Promise.race([
+    window.__raz2Kaydet(data, secenek || {}),
+    new Promise(r => setTimeout(() => r({ ok: true, bekliyor: true }), 8000))
+  ]);
+  if (sonuc.hata === "toplu-silme") {
+    alert("Güvenlik durdurması: bu işlem " + sonuc.sayi + " kaydı birden silecekti, bu yüzden buluta gönderilmedi.\n\nEkran buluttaki son hale döndürülüyor. Bu bir hataysa bana haber ver.");
+    data = saglaId(window.__raz2BulutVerisi());
+    try { localStorage.setItem("raz-data-v1", JSON.stringify(data)); } catch(e) {}
+    render();
+    return;
+  }
+  if (sonuc.ok) {
+    toast(sonuc.bekliyor ? "✓ Kaydedildi — internet gelince buluta gönderilecek" : "✓ Kaydedildi");
+    showSyncBadge(sonuc.bekliyor ? "off" : "ok");
+  } else {
+    toast("Buluta kaydedilemedi: " + sonuc.hata);
+    showSyncBadge("off");
+  }
 }
 
 function toast(msg) {
@@ -721,7 +1006,7 @@ function render() {
   const gizliIkon = document.getElementById("gizli-toggle");
   if (gizliIkon) gizliIkon.textContent = gizliMod ? "🙈" : "👁️";
   const anaTabs = [["ozet","Özet"],["yeni","+ Kayıt"],["tartim","Tartım"],["uretim","Üretim"],["hareketler","Hareketler"],["stok","Stok"]];
-  const digerTabs = [["musteriler","Müşteriler"],["krediler","Krediler"],["notlar","Notlar"],["maliyet","Maliyet"],["aylik","Aylık"]];
+  const digerTabs = [["musteriler","Müşteriler"],["krediler","Krediler"],["notlar","Notlar"],["maliyet","Maliyet"],["aylik","Aylık"],["gecmis","Geçmiş"]];
   const digerAktif = digerTabs.some(t => t[0] === tab);
   document.getElementById("nav").innerHTML = anaTabs.map(t =>
     '<button class="tab' + (tab===t[0]?" on":"") + '" onclick="setTab(\''+t[0]+'\')">'+t[1]+'</button>').join("")
@@ -754,9 +1039,10 @@ function render() {
   else if (tab === "notlar") m.innerHTML = rNotlar();
   else if (tab === "maliyet") m.innerHTML = rMaliyet();
   else if (tab === "aylik") m.innerHTML = rAylik(H);
+  else if (tab === "gecmis") m.innerHTML = rGecmis();
 }
 
-function setTab(t) { tab = t; duzenleIdx = null; digerAcik = false; render(); }
+function setTab(t) { tab = t; duzenleIdx = null; digerAcik = false; render(); if (t === "gecmis") gecmisYukle(); }
 
 function renderKorumali() {
   const el = document.activeElement;
@@ -3018,6 +3304,7 @@ function rHareketler(H) {
       + '<div class="hareket-kart-aciklama" onclick="duzenleBaslat(\''+h.__id+'\')">'+esc(h.aciklama)+'</div>'
       + '<div class="hareket-kart-meta"><span>'+fmtTarih(h.tarih)+'</span><span class="pill">'+kategoriIkon(h.kategori)+' '+esc(h.kategori)+'</span>'+(h.kg?'<span>· '+fmtKg(h.kg)+' kg</span>':"")+'</div>'
       + (h.not ? '<div class="hareket-kart-not">'+esc(h.not)+'</div>' : "")
+      + kimBilgisi(h)
       + (h.kalemler && h.kalemler.length ? '<div class="hareket-kart-not">🧾 '+kalemlerOzet(h.kalemler)+'</div>' : "")
       + (h.vade && !durumSuAn.tamamlandiMi ? '<div class="hareket-kart-not">📅 vade: '+fmtTarih(h.vade)+'</div>' : "")
       + '</div>'
@@ -3056,7 +3343,7 @@ function rHareketler(H) {
     const eslesmeGerek = urunEslestirmeGerekiyorMu(h);
     html += '<tr>'
       + '<td style="white-space:nowrap">'+fmtTarih(h.tarih)+(h.vade&&!durumSuAn.tamamlandiMi?'<div class="notrow">vade: '+fmtTarih(h.vade)+'</div>':"")+'</td>'
-      + '<td><span class="adet-edit" onclick="duzenleBaslat(\''+h.__id+'\')">'+esc(h.aciklama)+'</span>'+(h.not?'<div class="notrow">'+esc(h.not)+'</div>':"")+(h.kalemler&&h.kalemler.length?'<div class="notrow">🧾 '+kalemlerOzet(h.kalemler)+'</div>':"")+'</td>'
+      + '<td><span class="adet-edit" onclick="duzenleBaslat(\''+h.__id+'\')">'+esc(h.aciklama)+'</span>'+(h.not?'<div class="notrow">'+esc(h.not)+'</div>':"")+(h.kalemler&&h.kalemler.length?'<div class="notrow">🧾 '+kalemlerOzet(h.kalemler)+'</div>':"")+kimBilgisi(h)+'</td>'
       + '<td><span class="pill">'+kategoriIkon(h.kategori)+' '+esc(h.kategori)+'</span></td>'
       + '<td class="num yesil">'+(h.gelir?pg(fmt(h.gelir)):"")+'</td>'
       + '<td class="num kirmizi">'+(h.gider?pg(fmt(h.gider)):"")+'</td>'
@@ -4833,6 +5120,7 @@ function urunKaydet(idx) {
   }
   const kayit = {kalite, tip, genislik, gramaj, adet: isNaN(adet)?0:adet, kgBobin, katSayisi, masurali};
   if (idx != null && idx >= 0) {
+    ["__id","__olusturan","__olusturuldu"].forEach(a => { if (data.mamul[idx][a]) kayit[a] = data.mamul[idx][a]; });
     data.mamul[idx] = kayit;
     toast("✓ Ürün güncellendi");
   } else {
@@ -4914,7 +5202,7 @@ function hamKaydet(idx) {
   if (!ted) { toast("Tedarikçi adı gerekli"); return; }
   if (isNaN(kalan) || kalan < 0) { toast("Geçerli kalan kg girin"); return; }
   const kayit = {tedarikci: ted, aciklama, kalite, alinan: (alinan!=null && !isNaN(alinan)) ? alinan : null, kalan, not};
-  if (idx != null && idx >= 0) { data.hammadde[idx] = kayit; toast("✓ Hammadde güncellendi"); }
+  if (idx != null && idx >= 0) { ["__id","__olusturan","__olusturuldu"].forEach(a => { if (data.hammadde[idx][a]) kayit[a] = data.hammadde[idx][a]; }); data.hammadde[idx] = kayit; toast("✓ Hammadde güncellendi"); }
   else { data.hammadde.push(kayit); toast("✓ Yeni hammadde eklendi"); }
   urunModalKapat();
   save(); render();
@@ -5343,10 +5631,64 @@ async function yedekGeriYukle(gunKey) {
   if (!p) { toast("Yedek alınamadı"); return; }
   try {
     data = saglaId(JSON.parse(p));
-    await save();
+    await save({ topluIzin: true });
     resetForm(); render();
     toast("✓ " + gunKey + " yedeği geri yüklendi");
   } catch(e) { toast("Yedek bozuk görünüyor"); }
+}
+
+// ============ GEÇMİŞ: işlem kayıtları + silinenler kutusu ============
+let gecmisVeri = null; // { gunluk: [...], silinenler: [...] } — sekme açılınca buluttan çekilir
+let gecmisKisi = "Tümü";
+async function gecmisYukle() {
+  try {
+    const [gunluk, silinenler] = await Promise.all([window.__raz2GunlukGetir(200), window.__raz2SilinenleriGetir()]);
+    gecmisVeri = { gunluk, silinenler };
+  } catch(e) { gecmisVeri = { hata: (e && e.code) || String(e), gunluk: [], silinenler: [] }; }
+  if (tab === "gecmis") render();
+}
+function rGecmis() {
+  let html = '<div class="card"><div class="mtitle">🗑 Silinenler <span class="pill">30 gün saklanır</span><span style="flex:1"></span><button class="chip" onclick="gecmisVeri=null;render();gecmisYukle()">↻ Yenile</button></div>';
+  if (!gecmisVeri) return html + '<div class="mini">Yükleniyor…</div></div>';
+  if (gecmisVeri.hata) html += '<div class="mini" style="color:var(--red)">Buluttan alınamadı: ' + esc(gecmisVeri.hata) + '</div>';
+  if (!gecmisVeri.silinenler.length) html += '<div class="mini">Son 30 günde silinen kayıt yok.</div>';
+  gecmisVeri.silinenler.forEach(x => {
+    let el = null; try { el = JSON.parse(x.j); } catch(e) {}
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #262837">'
+      + '<div style="min-width:0;flex:1"><div style="font-weight:700;font-size:13px"><span class="pill">' + esc(KAYIT_TURU_ADI[x.k] || x.k) + '</span> ' + esc(window.__raz2Ozet(x.k, el, null)) + '</div>'
+      + '<div class="mini">🗑 ' + esc(x.silen || "?") + ' · ' + fmtZaman(x.zaman) + '</div></div>'
+      + '<button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap;flex-shrink:0" onclick="silineniGeriAl(\'' + jsStr(x.id) + '\')">↩ Geri Al</button></div>';
+  });
+  html += '</div>';
+
+  const kisiler = Array.from(new Set(gecmisVeri.gunluk.map(g => g.kullanici).filter(Boolean))).sort();
+  const liste = gecmisVeri.gunluk.filter(g => gecmisKisi === "Tümü" || g.kullanici === gecmisKisi);
+  const ikon = { ekle: "➕", degistir: "✎", sil: "🗑", toplu: "📦" };
+  html += '<div class="card"><div class="mtitle">📜 İşlem Geçmişi <span class="pill">son 200</span></div>';
+  if (kisiler.length > 1) html += '<div class="chips">' + ["Tümü"].concat(kisiler).map(k => '<button class="chip' + (gecmisKisi === k ? " on" : "") + '" onclick="gecmisKisi=\'' + jsStr(k) + '\';render()">' + esc(k) + '</button>').join("") + '</div>';
+  if (!liste.length) html += '<div class="mini">Henüz kayıtlı işlem yok. Bu özellik eklendikten sonra yapılan her kayıt, değişiklik ve silme burada görünür.</div>';
+  liste.forEach(g => {
+    html += '<div style="padding:7px 0;border-bottom:1px solid #262837;font-size:13px">'
+      + '<div>' + (ikon[g.islem] || "•") + ' ' + (g.tur ? '<span class="pill">' + esc(KAYIT_TURU_ADI[g.tur] || g.tur) + '</span> ' : '') + esc(g.ozet || "") + '</div>'
+      + '<div class="mini">👤 ' + esc(g.kullanici || "?") + ' · ' + fmtZaman(g.zaman) + '</div></div>';
+  });
+  html += '</div>';
+  return html;
+}
+async function silineniGeriAl(copId) {
+  const x = gecmisVeri && gecmisVeri.silinenler.find(y => y.id === copId);
+  if (!x) return;
+  let el; try { el = JSON.parse(x.j); } catch(e) { toast("Kayıt okunamadı"); return; }
+  if (!Array.isArray(data[x.k])) data[x.k] = [];
+  if (data[x.k].some(e => e.__id === el.__id)) { toast("Bu kayıt zaten listede — geri almaya gerek yok"); return; }
+  let uyari = "";
+  if (x.k === "hareketler" && el.kalemler && el.kalemler.length) uyari = "\n\nNot: Bu satışın stoktan düşürdüğü ürünler otomatik tekrar DÜŞÜLMEZ — stok farkı varsa Stok ekranından elle düzelt.";
+  if (!confirm((KAYIT_TURU_ADI[x.k] || x.k) + " geri alınsın mı?\n\n" + window.__raz2Ozet(x.k, el, null) + uyari)) return;
+  data[x.k].push(el);
+  await save();
+  try { await window.__raz2SilineniKaldir(copId); } catch(e) {}
+  toast("↩ Geri alındı");
+  gecmisYukle();
 }
 
 // ============ MALİYET HESAPLAYICI ============
@@ -5538,12 +5880,16 @@ async function girisYap() {
   if (navigator.vibrate) navigator.vibrate(120);
 }
 
-function cikisYap() {
+async function cikisYap() {
   if (!confirm("Bu cihazda oturum kapatılsın mı? Tekrar girmek için kullanıcı adı ve şifre gerekecek.")) return;
+  if (window.__raz2BekleyenVarMi && await window.__raz2BekleyenVarMi()) {
+    if (!confirm("DİKKAT: Buluta henüz gönderilemeyen kayıtlar var (internet yok gibi görünüyor). Şimdi çıkış yaparsan bu kayıtlar KAYBOLUR.\n\nYine de çıkılsın mı?")) return;
+  }
   // Cihazda önbelleğe alınmış mali veriyi de sil — ortak kullanılan bir cihazda geride kalmasın
   try { localStorage.removeItem("raz-data-v1"); } catch(e) {}
-  if (window.__fbCikis) window.__fbCikis().finally(() => location.reload());
-  else location.reload();
+  try { if (window.__fbCikis) await window.__fbCikis(); } catch(e) {}
+  try { if (window.__raz2OnbellegiSil) await window.__raz2OnbellegiSil(); } catch(e) {}
+  location.reload();
 }
 
 let __authBilindi = false;
@@ -5589,21 +5935,7 @@ function appBaslat() {
   tarihGoster();
   tartimYukle();
   try { gizliMod = localStorage.getItem("raz-gizli-mod") === "1"; } catch(e) {}
-  // Firebase fonksiyonları henüz gelmediyse geçici güvenli sürümlerini kur —
-  // böylece load() içindeki __fbLoad çağrısı asla patlamaz ve ekran anında çizilir.
-  if (!window.__fbLoad) {
-    window.__onFbReady = function() {
-      // Gerçek Firebase yüklendi — buluttan taze veriyi çek
-      if (typeof load === "function") load();
-    };
-    window.__fbLoad = window.__fbLoad || (async () => ({ok:false, error:"Firebase yükleniyor…"}));
-    window.__fbSave = window.__fbSave || (async () => false);
-    window.__fbListen = window.__fbListen || (() => {});
-    window.__fbYedekAl = window.__fbYedekAl || (async () => false);
-    window.__fbYedekleriListele = window.__fbYedekleriListele || (async () => []);
-    window.__fbYedekGetir = window.__fbYedekGetir || (async () => null);
-  }
-  // Her durumda hemen çiz (yerel/seed veriyle). Firebase gelince __onFbReady tekrar load() çağırır.
+  // appBaslat sadece giriş yapıldıktan sonra çağrılır — o anda Firebase modülü zaten yüklüdür.
   try { load(); } catch(e) {
     // load() bir şekilde patlarsa bile en azından seed veriyle çiz
     try { if (!data) { data = saglaId(JSON.parse(JSON.stringify(SEED))); resetForm(); } render(); } catch(e2) {}
