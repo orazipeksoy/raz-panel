@@ -245,7 +245,7 @@ tr { transition: background-color .1s ease; }
     <span id="sync-badge">● Bağlanıyor…</span>
     <span id="tarih-goster" style="color:#A79ECF;font-size:11px"></span>
     <span style="flex:1"></span>
-    <button class="rst" onclick="disaAktar()" style="background:rgba(201,162,39,.15);border-color:#C9A227;color:#F0DFA0">⬇ Excel’e Aktar</button><button class="rst" onclick="aylikRaporSec()" style="background:rgba(158,147,240,.15);border-color:#9E93F0;color:#D6D2F7">📅 Aylık Rapor</button><button class="rst" onclick="sifirlaOnay()">Sıfırla</button><button class="rst" onclick="cikisYap()">Çıkış</button>
+    <button class="rst" onclick="disaAktar()" style="background:rgba(201,162,39,.15);border-color:#C9A227;color:#F0DFA0">⬇ Excel’e Aktar</button><button class="rst" onclick="aylikRaporSec()" style="background:rgba(158,147,240,.15);border-color:#9E93F0;color:#D6D2F7">📅 Aylık Rapor</button><button class="rst" onclick="cikisYap()">Çıkış</button>
   </div>
 </header>
 <nav id="nav"></nav>
@@ -4451,14 +4451,6 @@ function aylikRaporIndir(secilenAyKey) {
   a.click();
   URL.revokeObjectURL(a.href);
   toast("⬇ Aylık rapor indirildi");
-}
-
-function sifirlaOnay() {
-  if (!confirm("DİKKAT: Tüm kayıtlar başlangıç (seed) verisine sıfırlanacak. Bulut verisi de üzerine yazılır. Emin misin?")) return;
-  if (!confirm("Son onay — bu işlem geri alınamaz. Sıfırlansın mı?")) return;
-  data = saglaId(JSON.parse(JSON.stringify(SEED)));
-  save(); resetForm(); render();
-  toast("Veriler sıfırlandı");
 }
 
 // ============ STOK ============
