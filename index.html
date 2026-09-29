@@ -64,6 +64,34 @@ tr:last-child td { border-bottom: none; }
   .hareketler-kartlar { display: none; }
   .hareketler-tablo-wrap { display: block; }
 }
+/* ============ STOK — kart görünümü ============
+   Her ürün kendi net kartında; sol kenarlıktaki renk kaliteyi anında ayırt etmeyi sağlar
+   (1.Kalite mavi, 2.Kalite altın, ECO-1 yeşil, diğer gri) — "hangi satır hangi ürün" sorununu
+   çözmek için. Geniş ekranda (≥700px) aynı desenle tabloya döner. */
+.stok-kart { background: #1B1D28; border: 1px solid var(--line); border-left: 4px solid var(--mut); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+.stok-kart.k1 { border-left-color: #6EA8FE; }
+.stok-kart.k2 { border-left-color: #C9A227; }
+.stok-kart.keco { border-left-color: #4ADE80; }
+.stok-kart-ust { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.stok-kart-ad { font-weight: 800; font-size: 14.5px; line-height: 1.3; cursor: pointer; word-break: break-word; }
+.stok-kart-ad .kal { opacity: .75; font-weight: 700; }
+.stok-kart-rozetler { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 4px; }
+.stok-kart-rozetler .pill { font-size: 10px; padding: 2px 7px; }
+.stok-kart-detay { font-size: 11.5px; color: var(--mut); margin-top: 4px; }
+.stok-kart-sayilar { display: flex; gap: 18px; margin-top: 9px; padding-top: 9px; border-top: 1px solid #262837; }
+.stok-kart-sayi { flex: 1; }
+.stok-kart-sayi .lbl { font-size: 10.5px; color: var(--mut); text-transform: uppercase; letter-spacing: .03em; }
+.stok-kart-sayi .val { font-size: 14.5px; font-weight: 800; font-variant-numeric: tabular-nums; margin-top: 1px; }
+.stok-kart-alt { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+.stok-kartlar-liste { }
+.stok-tablo-wrap { display: none; }
+.stok-kalite-filtre { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.stok-kalite-filtre .chip { padding: 6px 12px; font-size: 12.5px; }
+.stok-kalite-filtre .chip.on { background: var(--gold); color: #1a1400; border-color: var(--gold); }
+@media (min-width: 700px) {
+  .stok-kartlar-liste { display: none; }
+  .stok-tablo-wrap { display: block; }
+}
 .yesil { color: var(--green); font-weight: 600; }
 .kirmizi { color: var(--red); font-weight: 600; }
 input, select { border: 1.5px solid #333648; border-radius: 10px; padding: 11px 12px; font-size: 16px; width: 100%; background: #1B1D28; color: var(--ink); -webkit-appearance: none; }
@@ -141,6 +169,58 @@ tr { transition: background-color .1s ease; }
 .pin-tus.sil { font-size: 16px; color: #C9BEEA; }
 #kilit-mesaj { color: #A79ECF; font-size: 13px; min-height: 18px; }
 #app-icerik { display: none; }
+#app-icerik.gorunur { display: block; }
+#sidebar-nav { display: none; }
+
+/* ============ GENİŞ EKRAN (masaüstü/tablet) — sol yan panel navigasyonu ============
+   Telefon genişliğinde (aşağıdaki media query'nin dışında) HİÇBİR ŞEY değişmez — üstteki
+   #nav sekme çubuğu aynen kalır. Bu blok SADECE 880px ve üzeri ekranlarda devreye girer,
+   #nav'ı gizleyip yerine solda dikey bir menü (#sidebar-nav) gösterir. Aynı setTab()
+   çağrılarını kullandığı için işlevsel olarak hiçbir şey kaybolmaz, sadece yerleşim değişir. */
+@media (min-width: 880px) {
+  #app-icerik.gorunur {
+    display: grid;
+    grid-template-columns: 230px 1fr;
+    grid-template-areas: "header header" "sidenav main";
+    align-items: start;
+    min-height: 100vh;
+  }
+  #app-icerik.gorunur > header { grid-area: header; }
+  #app-icerik.gorunur > nav#nav,
+  #app-icerik.gorunur > #diger-menu { display: none; }
+  #app-icerik.gorunur > #sidebar-nav {
+    display: flex;
+    grid-area: sidenav;
+    flex-direction: column;
+    gap: 3px;
+    padding: 18px 12px;
+    background: var(--card);
+    border-right: 1px solid var(--line);
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  #app-icerik.gorunur > #sidebar-nav .tab {
+    text-align: left;
+    border-bottom: none;
+    border-left: 3px solid transparent;
+    border-radius: 8px;
+    padding: 12px 14px;
+    min-height: auto;
+  }
+  #app-icerik.gorunur > #sidebar-nav .tab.on {
+    background: rgba(158,147,240,.14);
+    border-left-color: #9E93F0;
+    color: var(--ink);
+  }
+  #app-icerik.gorunur > main {
+    grid-area: main;
+    max-width: none;
+    margin: 0;
+    padding: 22px 28px;
+  }
+}
 </style>
 </head>
 <body>
@@ -185,6 +265,7 @@ tr { transition: background-color .1s ease; }
   </div>
 </header>
 <nav id="nav"></nav>
+<nav id="sidebar-nav"></nav>
 <main id="main"></main>
 <div id="toast" class="toast" style="display:none"></div>
 </div>
@@ -209,10 +290,10 @@ setTimeout(function() {
     var kilit = document.getElementById("kilit-ekrani");
     var ic = document.getElementById("app-icerik");
     var kilitGorunur = kilit && kilit.style.display !== "none";
-    var icerikGorunur = ic && ic.style.display && ic.style.display !== "none";
+    var icerikGorunur = ic && (ic.classList.contains("gorunur") || (ic.style.display && ic.style.display !== "none"));
     // Kilit de içerik de görünmüyorsa → boot patlamış demektir
     if (!kilitGorunur && !icerikGorunur) {
-      if (ic) ic.style.display = "block";
+      if (ic) ic.classList.add("gorunur");
       var main = document.getElementById("main");
       if (main) {
         var mesaj = window.__jsHata ? ("Teknik detay: " + window.__jsHata) : "Uygulama başlatılamadı.";
@@ -378,6 +459,7 @@ const VARDIYALAR = ["Gündüz", "Gece"];
 let data = null;
 let tab = "ozet";
 let stokArama = ""; // Stok ekranındaki mamul listesi arama kutusu
+let stokKaliteFiltre = "Tümü"; // Stok'ta hızlı kalite filtresi — "Tümü"/"1. Kalite"/"2. Kalite"/"ECO-1"
 let gizliMod = false; // görünürken parasal rakamları gizleme modu — sadece bu cihazda hatırlanır
 let digerAcik = false;
 let form = null;
@@ -654,6 +736,14 @@ function render() {
       '<div id="diger-menu" style="display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--line)">'
       + digerTabs.map(t => '<button class="chip' + (tab===t[0]?" on":"") + '" onclick="digerAcik=false;setTab(\''+t[0]+'\')">'+t[1]+'</button>').join("")
       + '</div>');
+  }
+  // Geniş ekranlarda (masaüstü/tablet) görünen SOL YAN PANEL navigasyonu — mobildeki üst sekme
+  // çubuğuyla (#nav) AYNI setTab() çağrılarını kullanır, sadece CSS ile farklı düzende gösterilir.
+  // "Diğer" alt menüsü olmadan TÜM sekmeler tek düz liste — yan panelde yer sorunu olmadığı için.
+  const sbEl = document.getElementById("sidebar-nav");
+  if (sbEl) {
+    sbEl.innerHTML = anaTabs.concat(digerTabs).map(t =>
+      '<button class="tab' + (tab===t[0]?" on":"") + '" onclick="setTab(\''+t[0]+'\')">'+t[1]+'</button>').join("");
   }
   const m = document.getElementById("main");
   if (tab === "ozet") m.innerHTML = rOzet(H);
@@ -4378,21 +4468,76 @@ function sifirlaOnay() {
 // Mamul (bitmiş ürün) tablosunun kendi HTML'ini üretir — arama kutusundan AYRI bir fonksiyon,
 // çünkü arama her harfte SADECE bu tabloyu günceller, input'un kendisine hiç dokunmaz. Böylece
 // mobilde her tuş vuruşunda tüm sayfa yeniden çizilip klavyenin/odağın kesilmesi engellenir.
+// Kaliteye göre kart kenar rengi sınıfı — ürünleri gözle hızlıca ayırt etmek için.
+function stokKaliteSinif(kalite) {
+  if (kalite === "1. Kalite") return "k1";
+  if (kalite === "2. Kalite") return "k2";
+  if (kalite === "ECO-1") return "keco";
+  return "";
+}
+function stokMamulFiltrele() {
+  const aramaNorm = trFold(stokArama.trim());
+  return data.mamul
+    .map((m,i) => ({m,i}))
+    .filter(({m}) => stokKaliteFiltre === "Tümü" || m.kalite === stokKaliteFiltre)
+    .filter(({m}) => !aramaNorm || trFold(m.kalite+" "+m.tip+" "+m.genislik+" "+m.gramaj+" "+(m.katSayisi||"")).includes(aramaNorm));
+}
 function stokMamulTablosuHtml() {
   let mamulDeger = 0;
   data.mamul.forEach(m => { mamulDeger += (m.adet||0) * (m.kgBobin||0) * fiyatBul(m.kalite) * 1.2; });
-  let html = '<div class="scroll"><table><tr><th>Ürün</th><th class="num">Adet</th><th class="num">Kg/Bobin</th><th class="num">Toplam Kg</th><th class="num">Değer</th><th></th></tr>';
   let topKg = 0;
-  const aramaNorm = trFold(stokArama.trim());
-  const mamulGosterilecek = data.mamul
-    .map((m,i) => ({m,i}))
-    .filter(({m}) => !aramaNorm || trFold(m.kalite+" "+m.tip+" "+m.genislik+" "+m.gramaj+" "+(m.katSayisi||"")).includes(aramaNorm));
+  const mamulGosterilecek = stokMamulFiltrele();
+
   if (stokArama.trim() && !mamulGosterilecek.length) {
-    html += '<tr><td colspan="6" style="text-align:center;color:var(--mut);padding:14px">"'+esc(stokArama)+'" ile eşleşen ürün yok</td></tr>';
+    const bosMesaj = '<div class="mini" style="text-align:center;color:var(--mut);padding:16px">"'+esc(stokArama)+'" ile eşleşen ürün yok</div>';
+    return '<div class="stok-kartlar-liste">'+bosMesaj+'</div><div class="stok-tablo-wrap">'+bosMesaj+'</div>';
   }
+
+  // ---- MOBİL: kart görünümü ----
+  let kartHtml = '<div class="stok-kartlar-liste">';
   mamulGosterilecek.forEach(({m,i}) => {
     const kg = (m.adet||0) * (m.kgBobin||0);
     topKg += kg;
+    const deger = kg * fiyatBul(m.kalite) * 1.2;
+    const renk = m.adet <= 0 ? "kirmizi" : (m.adet < STOK_ESIK ? "" : "yesil");
+    const barRenk = m.adet <= 0 ? "var(--red)" : (m.adet < STOK_ESIK ? "var(--amber)" : "var(--green)");
+    const kaliteEslenikleri = data.genislikEslenikleri && data.genislikEslenikleri[m.kalite];
+    const eslenikHedef = kaliteEslenikleri && kaliteEslenikleri[genislikNormalize(m.genislik)];
+    // Gramaj (gr/m²) önemli bir ayırt edici bilgi — ana başlığa dahil edilir, gözden kaçmasın.
+    // Kat sayısı gibi ikincil bilgiler altta küçük yazıda kalır.
+    const gramajGoster = (m.gramaj && m.gramaj !== "-") ? ' · <b style="color:var(--gold)">'+esc(m.gramaj)+'</b>' : '';
+    const detayParcalari = [];
+    if (m.katSayisi) detayParcalari.push(esc(m.katSayisi));
+    const masuraliRozet = m.masurali
+      ? '<span class="pill" style="background:rgba(94,144,255,.18);color:#8FB0FF">MASURALI</span>'
+      : '<span class="pill" style="background:rgba(255,255,255,.08);color:var(--mut)">MASURASIZ</span>';
+    const eslenikRozet = eslenikHedef ? '<span class="pill" style="background:rgba(74,222,128,.14);color:var(--green)">🔗 '+esc(eslenikHedef)+'</span>' : '';
+    kartHtml += '<div class="stok-kart '+stokKaliteSinif(m.kalite)+'">'
+      + '<div class="stok-kart-ust">'
+      + '<div class="stok-kart-ad" onclick="mamulDuzenle('+i+')"><span class="kal">'+esc(m.kalite)+'</span> '+esc(m.tip)+' · '+esc(m.genislik)+gramajGoster+'</div>'
+      + '<button class="sil-x" onclick="mamulSil('+i+')">×</button>'
+      + '</div>'
+      + (detayParcalari.length ? '<div class="stok-kart-detay">'+detayParcalari.join(" · ")+'</div>' : '')
+      + '<div class="stok-kart-rozetler">'+masuraliRozet+eslenikRozet+'</div>'
+      + '<div class="stok-kart-sayilar">'
+      + '<div class="stok-kart-sayi"><div class="lbl">Adet</div><div class="val adet-edit '+renk+'" onclick="adetDuzenle('+i+')">'+m.adet+'</div>'+doluCubuk(m.adet, STOK_ESIK*3, barRenk)+'</div>'
+      + '<div class="stok-kart-sayi"><div class="lbl">Kg/Bobin</div><div class="val adet-edit" onclick="kgBobinDuzenle('+i+')">'+fmtKg(m.kgBobin)+'</div></div>'
+      + '<div class="stok-kart-sayi"><div class="lbl">Toplam</div><div class="val">'+fmtKg(kg)+'</div></div>'
+      + '<div class="stok-kart-sayi"><div class="lbl">Değer</div><div class="val">'+(deger>0?fmtK(deger):"—")+'</div></div>'
+      + '</div></div>';
+  });
+  kartHtml += '<div class="stok-kart" style="border-left-color:var(--gold)"><div class="stok-kart-sayilar" style="margin-top:0;padding-top:0;border-top:none">'
+    + '<div class="stok-kart-sayi"><div class="lbl">Toplam Kg</div><div class="val" style="color:var(--gold)">'+fmtKg(topKg)+'</div></div>'
+    + '<div class="stok-kart-sayi"><div class="lbl">Toplam Değer</div><div class="val" style="color:var(--gold)">'+fmtK(mamulDeger)+'</div></div>'
+    + '</div></div>';
+  kartHtml += '</div>';
+
+  // ---- MASAÜSTÜ: tablo görünümü ----
+  let tabloHtml = '<div class="stok-tablo-wrap"><div class="scroll"><table><tr><th>Ürün</th><th class="num">Adet</th><th class="num">Kg/Bobin</th><th class="num">Toplam Kg</th><th class="num">Değer</th><th></th></tr>';
+  let topKg2 = 0;
+  mamulGosterilecek.forEach(({m,i}) => {
+    const kg = (m.adet||0) * (m.kgBobin||0);
+    topKg2 += kg;
     const deger = kg * fiyatBul(m.kalite) * 1.2;
     const renk = m.adet <= 0 ? "kirmizi" : (m.adet < STOK_ESIK ? "" : "yesil");
     const barRenk = m.adet <= 0 ? "var(--red)" : (m.adet < STOK_ESIK ? "var(--amber)" : "var(--green)");
@@ -4403,24 +4548,38 @@ function stokMamulTablosuHtml() {
       ? '<span class="pill" style="background:rgba(94,144,255,.18);color:#8FB0FF;margin-left:4px">MASURALI</span>'
       : '<span class="pill" style="background:rgba(255,255,255,.08);color:var(--mut);margin-left:4px">MASURASIZ</span>';
     const katRozet = m.katSayisi ? '<div class="notrow">'+esc(m.katSayisi)+'</div>' : '';
-    html += '<tr><td><b>'+esc(m.kalite)+'</b> '+esc(m.tip)+' · '+esc(m.genislik)+(m.gramaj!=="-"?' · '+esc(m.gramaj):"")+masuraliRozet+katRozet+eslenikGosterge+'<div class="notrow"><span class="adet-edit" onclick="mamulDuzenle('+i+')">✎ ürünü düzenle</span></div></td>'
+    tabloHtml += '<tr><td><b>'+esc(m.kalite)+'</b> '+esc(m.tip)+' · '+esc(m.genislik)+(m.gramaj!=="-"?' · '+esc(m.gramaj):"")+masuraliRozet+katRozet+eslenikGosterge+'<div class="notrow"><span class="adet-edit" onclick="mamulDuzenle('+i+')">✎ ürünü düzenle</span></div></td>'
       + '<td class="num" style="min-width:56px"><span class="adet-edit '+renk+'" onclick="adetDuzenle('+i+')">'+m.adet+'</span>'+doluCubuk(m.adet, STOK_ESIK*3, barRenk)+'</td>'
       + '<td class="num"><span class="adet-edit" onclick="kgBobinDuzenle('+i+')">'+fmtKg(m.kgBobin)+'</span></td>'
       + '<td class="num">'+fmtKg(kg)+'</td>'
       + '<td class="num">'+(deger>0?fmtK(deger):"—")+'</td>'
       + '<td style="text-align:right"><button class="sil-x" onclick="mamulSil('+i+')">×</button></td></tr>';
   });
-  html += '<tr><td><b>TOPLAM</b></td><td></td><td></td><td class="num"><b>'+fmtKg(topKg)+'</b></td><td class="num"><b>'+fmtK(mamulDeger)+'</b></td><td></td></tr>';
-  html += '</table></div>';
-  return html;
+  tabloHtml += '<tr><td><b>TOPLAM</b></td><td></td><td></td><td class="num"><b>'+fmtKg(topKg2)+'</b></td><td class="num"><b>'+fmtK(mamulDeger)+'</b></td><td></td></tr>';
+  tabloHtml += '</table></div></div>';
+
+  return kartHtml + tabloHtml;
 }
-// Arama kutusuna her yazışta SADECE tablo bölümünü günceller — kutunun kendi DOM node'u hiç
+// Arama kutusuna her yazışta SADECE liste bölümünü günceller — kutunun kendi DOM node'u hiç
 // yeniden oluşturulmaz, bu yüzden odak ve mobil klavye asla kesilmez.
 function stokAramaGuncelle() {
   const el = document.getElementById("stok-arama-input");
   stokArama = el ? el.value : "";
   const hedef = document.getElementById("stok-mamul-tablosu");
   if (hedef) hedef.innerHTML = stokMamulTablosuHtml();
+}
+// Kalite filtre çipine dokununca SADECE liste bölümünü günceller — arama kutusundaki gibi,
+// tam sayfa render tetiklemeden. Aktif çipin görsel durumunu da günceller.
+function stokKaliteFiltreSec(kalite) {
+  stokKaliteFiltre = kalite;
+  const hedef = document.getElementById("stok-mamul-tablosu");
+  if (hedef) hedef.innerHTML = stokMamulTablosuHtml();
+  const filtreEl = document.getElementById("stok-kalite-filtre");
+  if (filtreEl) {
+    filtreEl.querySelectorAll(".chip").forEach(c => c.classList.remove("on"));
+    const aktif = filtreEl.querySelector('[data-kalite="'+kalite+'"]');
+    if (aktif) aktif.classList.add("on");
+  }
 }
 
 function rStok() {
@@ -4439,6 +4598,9 @@ function rStok() {
 
   html += '<div class="card"><div class="mtitle">Mamul Stok <span class="pill">bobin</span></div>'
     + '<input type="text" id="stok-arama-input" value="'+esc(stokArama)+'" oninput="stokAramaGuncelle()" placeholder="🔍 Ürün ara (kalite, tip, genişlik...)" style="margin-bottom:10px">'
+    + '<div class="stok-kalite-filtre" id="stok-kalite-filtre">'
+    + ["Tümü","1. Kalite","2. Kalite","ECO-1"].map(k => '<button class="chip'+(stokKaliteFiltre===k?" on":"")+'" data-kalite="'+esc(k)+'" onclick="stokKaliteFiltreSec(\''+esc(k)+'\')">'+esc(k)+'</button>').join("")
+    + '</div>'
     + '<div id="stok-mamul-tablosu">' + stokMamulTablosuHtml() + '</div>'
     + '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="mamulEkle()">+ Yeni Ürün Ekle</button></div>'
     + '<div class="mini" style="margin-top:8px">Değer, ürünün Satış Fiyatları listesindeki KDV hariç fiyatı üzerinden KDV dahil hesaplanır. Fiyatı olmayan ürünler için değer boş görünür.</div></div>';
@@ -5408,7 +5570,7 @@ function appBaslat() {
   window.__bootOK = true;
   // KRİTİK: uygulama içeriğini görünür yap (CSS'te display:none ile gizli başlar)
   const ic = document.getElementById("app-icerik");
-  if (ic) ic.style.display = "block";
+  if (ic) ic.classList.add("gorunur");
   const kilit = document.getElementById("kilit-ekrani");
   if (kilit) kilit.style.display = "none";
   tarihGoster();
