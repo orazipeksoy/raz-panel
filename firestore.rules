@@ -1,0 +1,19 @@
+rules_version = '2';
+
+// RAZ Panel veritabanı kuralları.
+// Verilere SADECE aşağıdaki listede adı olan kullanıcılar erişebilir (okuma + yazma).
+// Kullanıcı adı "oraz" ise buraya "oraz@razpanel.local" yazılır.
+// Yeni kişi eklemek için: Firebase > Authentication'da hesabını aç, sonra adını bu listeye ekle.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function yetkili() {
+      return request.auth != null
+        && request.auth.token.email in [
+          'oraz@razpanel.local'
+        ];
+    }
+    match /{document=**} {
+      allow read, write: if yetkili();
+    }
+  }
+}
