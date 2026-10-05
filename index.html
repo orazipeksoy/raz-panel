@@ -2290,8 +2290,11 @@ function iscilikAyOzeti(ayKey) {
       if (tahmini) q.tahminiKg += kg;
       if (eksik) q.eksikMasuraKg += kg;
       const ad = k.ad || (kalite + " " + (parca[1] || "") + " " + genislik);
-      const u = q.urunler[ad] || (q.urunler[ad] = { bobin: 0, kg: 0, masuraKg: 0, netKg: 0, masurali: masuraliMi, eksik: false });
+      // Aynı ürünün masuralı ve masurasız satışları ayrı satır (masura geçişinin yapıldığı ay karışmasın)
+      const uAnahtar = ad + "|" + (masuraliMi ? 1 : 0);
+      const u = q.urunler[uAnahtar] || (q.urunler[uAnahtar] = { ad, bobin: 0, kg: 0, masuraKg: 0, netKg: 0, masurali: masuraliMi, eksik: false, masuraBirim: 0 });
       u.bobin += adet; u.kg += kg; u.masuraKg += masuraKg; u.netKg += net; if (eksik) u.eksik = true;
+      if (masuraliMi && !eksik && adet > 0) u.masuraBirim = Math.round(masuraKg / adet * 10000) / 10000;
     });
   });
   let toplamNet = 0, toplamTutar = 0, toplamKg = 0, toplamMasura = 0, toplamBobin = 0;
@@ -4161,12 +4164,15 @@ function xlsxTarihSerial(iso) {
 function xM(v, s) { return { v: Number(v)||0, s }; }
 function xT(v, s) { return { v: (v==null?"":String(v)), t:"s", s }; }
 function xD(iso, s) { return { v: xlsxTarihSerial(iso), s }; }
+// Formül hücresi: Excel açılışta yeniden hesaplar; değer, formül hesaplamayan önizlemeler (telefon) için saklanır
+function xF(formul, v, s) { return { f: formul, v: Number(v)||0, s }; }
 function xlsxSatir(rowIndex, hucreler, yukseklik) {
   let xml = "";
   hucreler.forEach((h, ci) => {
     if (h == null) return;
     const ref = xlsxSutunHarfi(ci) + rowIndex;
     if (h.t === "s") xml += '<c r="'+ref+'" s="'+(h.s||0)+'" t="inlineStr"><is><t xml:space="preserve">'+xlsxEsc(h.v)+'</t></is></c>';
+    else if (h.f) xml += '<c r="'+ref+'" s="'+(h.s||0)+'"><f>'+xlsxEsc(h.f)+'</f><v>'+h.v+'</v></c>';
     else xml += '<c r="'+ref+'" s="'+(h.s||0)+'"><v>'+h.v+'</v></c>';
   });
   const ht = yukseklik ? ' ht="'+yukseklik+'" customHeight="1"' : '';
@@ -4290,7 +4296,7 @@ function xlsxOlustur(sayfalar) {
       + '</Relationships>' },
     { ad: "xl/workbook.xml", icerik:
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-      + '<sheets>' + sayfalar.map((s,i) => '<sheet name="'+xlsxEsc(s.ad)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>').join('') + '</sheets></workbook>' },
+      + '<sheets>' + sayfalar.map((s,i) => '<sheet name="'+xlsxEsc(s.ad)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>').join('') + '</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>' },
     { ad: "xl/styles.xml", icerik: XLSX_STYLES },
     { ad: "docProps/core.xml", icerik:
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>RAZ Plastik Mali Rapor</dc:title><dc:creator>RAZ Plastik Poliwood</dc:creator></cp:coreProperties>' },
@@ -4623,6 +4629,75 @@ function gunlukRaporIndir(tarihIso) {
   toast("Günlük rapor yeni sekmede açıldı — Yazdır butonuna dokun");
 }
 
+// İşçilik Hesabı Excel sayfası — FORMÜLLÜ: bobin, satılan kg, masura/bobin ya da ₺/kg değiştirilince
+// net kg ve işçilik tutarları Excel'de kendiliğinden yeniden hesaplanır.
+// Sütunlar: A ürün · B bobin · C satılan kg · D masura/bobin · E masura kg (=B×D) · F net kg (=C−E)
+//           G ₺/kg (kalite satırında girilir, ürünler oradan alır) · H işçilik (=F×G)
+function iscilikSayfaXml(ayKey, ayAdi) {
+  const isc = iscilikAyOzeti(ayKey);
+  const satirlar = [], birlesme = [];
+  let r = 1, bb;
+  bb = xlsxBaslikSatiri(r, "İŞÇİLİK HESABI — " + ayAdi.toLocaleUpperCase("tr"), 8, XS.baslikNavy); satirlar.push(bb.xml); birlesme.push(bb.merge); r++;
+  bb = xlsxBaslikSatiri(r, "Formüllüdür: Bobin, Satılan kg, Masura/bobin ya da kalite satırındaki ₺/kg'yi değiştirirsen net kg ve işçilik kendiliğinden güncellenir.", 8, XS.altbilgi, 20); satirlar.push(bb.xml); birlesme.push(bb.merge); r++;
+  r++;
+  const baslik = r;
+  satirlar.push(xlsxSatir(r, ["Kalite / Ürün","Bobin","Satılan kg","Masura/bobin kg","Masura kg","Net kg","₺/kg","İşçilik ₺"].map(t => xT(t, XS.tabloBaslik)))); r++;
+  const kaliteSatirlari = [];
+  let topBobin = 0, topKg = 0, topMasura = 0, topNet = 0, topTutar = 0;
+  Object.keys(isc.kaliteler).sort().forEach(k => {
+    const q = isc.kaliteler[k];
+    const ks = r; r++;
+    const urunler = Object.keys(q.urunler).sort().map(a => q.urunler[a]);
+    const ilk = r;
+    let kBobin = 0, kKg = 0, kMasura = 0, kNet = 0, kTutar = 0;
+    urunler.forEach(u => {
+      const birim = u.masurali && !u.eksik ? u.masuraBirim : 0;
+      const masura = u.bobin * birim, net = Math.max(0, u.kg - masura), tutar = net * q.oran;
+      kBobin += u.bobin; kKg += u.kg; kMasura += masura; kNet += net; kTutar += tutar;
+      const ad = "   " + u.ad + (u.eksik ? " (⚠ masura ağırlığı tanımsız — D sütununa yaz)" : (u.masurali ? " (masuralı)" : ""));
+      satirlar.push(xlsxSatir(r, [
+        xT(ad, XS.metinBorder), xM(u.bobin, XS.adetBorder), xM(u.kg, XS.kg), xM(birim, XS.kg),
+        xF("B"+r+"*D"+r, masura, XS.kg), xF("MAX(0,C"+r+"-E"+r+")", net, XS.kg),
+        xF("$G$"+ks, q.oran, XS.para), xF("F"+r+"*G"+r, tutar, XS.paraYesil)
+      ])); r++;
+    });
+    const son = r - 1;
+    const top = col => urunler.length ? "SUM("+col+ilk+":"+col+son+")" : "0";
+    satirlar.splice(satirlar.length - urunler.length, 0, xlsxSatir(ks, [
+      xT(k, XS.toplamEtiket), xF(top("B"), kBobin, XS.toplamKg), xF(top("C"), kKg, XS.toplamKg), xT("", XS.toplamEtiket),
+      xF(top("E"), kMasura, XS.toplamKg), xF(top("F"), kNet, XS.toplamKg), xM(q.oran, XS.toplamPara), xF(top("H"), kTutar, XS.toplamParaYesil)
+    ]));
+    kaliteSatirlari.push(ks);
+    topBobin += kBobin; topKg += kKg; topMasura += kMasura; topNet += kNet; topTutar += kTutar;
+  });
+  const genel = col => kaliteSatirlari.length ? kaliteSatirlari.map(x => col + x).join("+") : "0";
+  satirlar.push(xlsxSatir(r, [
+    xT("TOPLAM", XS.toplamEtiket), xF(genel("B"), topBobin, XS.toplamKg), xF(genel("C"), topKg, XS.toplamKg), xT("", XS.toplamEtiket),
+    xF(genel("E"), topMasura, XS.toplamKg), xF(genel("F"), topNet, XS.toplamKg), xT("", XS.toplamEtiket), xF(genel("H"), topTutar, XS.toplamParaYesil)
+  ])); r++;
+  Object.values(isc.tanimsizMasura).forEach(t => {
+    r++; satirlar.push(xlsxSatir(r, [xT("⚠ " + t.kalite + " " + t.genislik + ": masura ağırlığı tanımsız — " + t.adet + " bobin için masura düşülmedi. Bir masuranın kg'sini o ürünün D sütununa yazabilirsin.", XS.metinBorder)])); birlesme.push("A"+r+":H"+r);
+  });
+  if (isc.urunsuzSatislar.length) {
+    r++; satirlar.push(xlsxSatir(r, [xT("ℹ Ürün seçilmeden girilmiş " + isc.urunsuzSatislar.length + " satış (" + fmtKg(isc.urunsuzSatislar.reduce((t,h)=>t+(h.kg||0),0)) + " kg) bu hesaba dahil değil", XS.metinBorder)])); birlesme.push("A"+r+":H"+r);
+  }
+  return xlsxSayfaXml({ satirlar, kolonGenislikleri: [44,9,13,15,12,13,10,16], donmusSatir: baslik, birlesmeler: birlesme, sonSutun: 8, sonSatir: r });
+}
+// Aylık sekmesindeki düğme: sadece İşçilik Hesabı sayfasını indirir
+function iscilikExcelIndir() {
+  const ayKey = iscilikAy || buAyKey();
+  const p = ayKey.split("-");
+  const ayAdi = AYLAR[parseInt(p[1])-1] + " " + p[0];
+  const bytes = xlsxOlustur([{ ad: "İşçilik Hesabı", xml: iscilikSayfaXml(ayKey, ayAdi) }]);
+  const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "RAZ_Iscilik_" + ayKey + ".xlsx";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast("⬇ İşçilik hesabı indirildi");
+}
+
 function aylikRaporIndir(secilenAyKey) {
   const ayKey = secilenAyKey || buAyKey();
   const H = hesapla();
@@ -4803,31 +4878,7 @@ function aylikRaporIndir(secilenAyKey) {
   }
   const s5Xml = xlsxSayfaXml({ satirlar: s5, kolonGenislikleri: [30,18,16,16], donmusSatir: 0, filtreAraligi: karFiltre, birlesmeler: m5, sonSutun: 4, sonSatir: r-1 });
 
-  // ---- SAYFA 6: İŞÇİLİK HESABI (satılan kg, masura hariç) ----
-  const isc = iscilikAyOzeti(ayKey);
-  const s6 = []; const m6 = [];
-  r = 1;
-  bb = xlsxBaslikSatiri(r, "İŞÇİLİK HESABI — "+ayAdi.toLocaleUpperCase("tr"), 7, XS.baslikNavy); s6.push(bb.xml); m6.push(bb.merge); r++;
-  bb = xlsxBaslikSatiri(r, "Satılan kg − masura kg = net kg; işçilik = net kg × kalitenin ₺/kg oranı", 7, XS.altbilgi, 20); s6.push(bb.xml); m6.push(bb.merge); r++;
-  r++;
-  const iscHeader = r;
-  s6.push(xlsxSatir(r, [xT("Kalite / Ürün",XS.tabloBaslik), xT("Bobin",XS.tabloBaslik), xT("Satılan kg",XS.tabloBaslik), xT("Masura kg",XS.tabloBaslik), xT("Net kg",XS.tabloBaslik), xT("₺/kg",XS.tabloBaslik), xT("İşçilik",XS.tabloBaslik)])); r++;
-  Object.keys(isc.kaliteler).sort().forEach(k => {
-    const q = isc.kaliteler[k];
-    s6.push(xlsxSatir(r, [xT(k,XS.toplamEtiket), xM(q.bobin,XS.toplamKg), xM(q.kg,XS.toplamKg), xM(q.masuraKg,XS.toplamKg), xM(q.netKg,XS.toplamKg), xM(q.oran,XS.toplamPara), xM(q.tutar,XS.toplamParaYesil)])); r++;
-    Object.keys(q.urunler).sort().forEach(ad => {
-      const u = q.urunler[ad];
-      s6.push(xlsxSatir(r, [xT("   "+ad+(u.eksik?" (⚠ masura ağırlığı tanımsız)":(u.masurali?" (masuralı)":"")),XS.metinBorder), xM(u.bobin,XS.adetBorder), xM(u.kg,XS.kg), xM(u.masuraKg,XS.kg), xM(u.netKg,XS.kg), xT("",XS.metinBorder), xT("",XS.metinBorder)])); r++;
-    });
-  });
-  s6.push(xlsxSatir(r, [xT("TOPLAM",XS.toplamEtiket), xM(isc.toplamBobin,XS.toplamKg), xM(isc.toplamKg,XS.toplamKg), xM(isc.toplamMasura,XS.toplamKg), xM(isc.toplamNet,XS.toplamKg), xT("",XS.toplamEtiket), xM(isc.toplamTutar,XS.toplamParaYesil)])); r++;
-  Object.values(isc.tanimsizMasura).forEach(t => {
-    r++; s6.push(xlsxSatir(r, [xT("⚠ "+t.kalite+" "+t.genislik+": masura ağırlığı tanımsız — "+t.adet+" bobin masura düşülmeden net sayıldı",XS.metinBorder)])); m6.push("A"+r+":G"+r);
-  });
-  if (isc.urunsuzSatislar.length) {
-    r++; s6.push(xlsxSatir(r, [xT("ℹ Ürün seçilmeden girilmiş "+isc.urunsuzSatislar.length+" satış ("+fmtKg(isc.urunsuzSatislar.reduce((t,h)=>t+(h.kg||0),0))+" kg) bu hesaba dahil değil",XS.metinBorder)])); m6.push("A"+r+":G"+r);
-  }
-  const s6Xml = xlsxSayfaXml({ satirlar: s6, kolonGenislikleri: [40,10,14,14,14,10,16], donmusSatir: iscHeader, birlesmeler: m6, sonSutun: 7, sonSatir: r });
+  const s6Xml = iscilikSayfaXml(ayKey, ayAdi);
 
   const sayfalar = [
     { ad: "Aylık Rapor", xml: s1Xml },
@@ -5943,7 +5994,7 @@ function rIscilik() {
   const ay = iscilikAy || buAyKey();
   const oz = iscilikAyOzeti(ay);
   const p = ay.split("-");
-  let html = '<div class="card"><div class="mtitle">🧮 İşçilik Hesabı <span class="pill">satılan kg, masura hariç</span></div>';
+  let html = '<div class="card"><div class="mtitle">🧮 İşçilik Hesabı <span class="pill">satılan kg, masura hariç</span><span style="flex:1"></span><button class="chip" style="white-space:nowrap" onclick="iscilikExcelIndir()">⬇ Excel (formüllü)</button></div>';
   html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'
     + '<button class="chip' + (ay === buAyKey() ? " on" : "") + '" onclick="iscilikAy=buAyKey();render()">Bu Ay</button>'
     + '<button class="chip' + (ay === gecenAyKey() ? " on" : "") + '" onclick="iscilikAy=gecenAyKey();render()">Geçen Ay</button>'
@@ -5968,7 +6019,7 @@ function rIscilik() {
       Object.keys(q.urunler).sort().forEach(ad => {
         const u = q.urunler[ad];
         html += '<div class="mini" style="display:flex;justify-content:space-between;gap:8px;padding-top:5px;margin-top:5px;border-top:1px solid #262837">'
-          + '<span>' + esc(ad) + (u.masurali ? ' <span class="pill" style="font-size:9px;padding:1px 5px">M</span>' : '') + '</span>'
+          + '<span>' + esc(u.ad) + (u.masurali ? ' <span class="pill" style="font-size:9px;padding:1px 5px">M</span>' : '') + '</span>'
           + '<span style="white-space:nowrap">' + u.bobin + ' bobin · ' + fmtKg(u.kg) + (u.eksik ? ' <span class="kirmizi">− ?</span>' : (u.masuraKg ? ' − ' + fmtKg(u.masuraKg) : '')) + ' = <b>' + fmtKg(u.netKg) + '</b> kg</span></div>';
       });
       html += '</div>';
