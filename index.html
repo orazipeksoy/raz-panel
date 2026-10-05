@@ -1533,6 +1533,11 @@ function kaydet() {
     return {m, kg: hesap.kg, dusulecekAdet: hesap.adet, kgGercekMi: hesap.kgGercekMi};
   });
 
+  // Masura ağırlığı tanımsız masuralı ürün uyarısı — işçilik hesabında masura düşülemez
+  const masurasizlar = kalemDusum.filter(x => masuraEksikMi(x.m)).map(x => x.m.kalite + " " + x.m.genislik);
+  if (masurasizlar.length) {
+    if (!confirm("Şu masuralı ürünlerin masura ağırlığı tanımlı değil:\n• " + Array.from(new Set(masurasizlar)).join("\n• ") + "\n\nSatış yine kaydedilir; ama ağırlığı tanımlayana kadar işçilik hesabında masura düşülemez (Stok ekranındaki kırmızı rozetten tanımlayabilirsin, geçmiş satışlar da düzelir).\n\nDevam edilsin mi?")) return;
+  }
   // Stok yetersizliği uyarısı
   for (const {m, dusulecekAdet} of kalemDusum) {
     if (m && dusulecekAdet > m.adet) {
@@ -2245,6 +2250,81 @@ function tumZamanlarTanimsizGenislikler() {
   });
   return sonuc;
 }
+
+// ============ İŞÇİLİK HESABI (satılan kg, masura hariç) ============
+// İşçilik, satılan bobinlerin masura HARİÇ net kilosu üzerinden ödenir. Her satış kalemi için:
+//   satılan kg = satışta tartılıp girilen kg (girilmemişse adet × ürün kartındaki kg/bobin — tahmini)
+//   masura kg  = ürün masuralıysa adet × o kalite+genişliğin masura ağırlığı (Maliyet > Masura Ağırlıkları)
+//   net kg     = satılan kg − masura kg   →   işçilik = net kg × o kalitenin ₺/kg oranı
+// Masura ağırlığı satış anında değil RAPOR anında okunur: ağırlığı sonradan tanımlamak geçmiş
+// satışları da düzeltir.
+function iscilikAyOzeti(ayKey) {
+  const kaliteler = {};          // kalite -> özet
+  const tanimsizMasura = {};     // "kalite|genişlik" -> {kalite, genislik, adet, kg}
+  const urunsuzSatislar = [];    // ürün seçilmeden girilmiş satışlar (kaliteye/masuraya ayrılamaz)
+  const kaliteAl = k => kaliteler[k] || (kaliteler[k] = { bobin: 0, kg: 0, masuraKg: 0, netKg: 0, tahminiKg: 0, eksikMasuraKg: 0, urunler: {} });
+  data.hareketler.forEach(h => {
+    if (h.tarih.slice(0,7) !== ayKey || !h.gelir || !(h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış")) return;
+    if (!h.kalemler || !h.kalemler.length) { urunsuzSatislar.push(h); return; }
+    h.kalemler.forEach(k => {
+      const parca = String(k.key || "").split("|");
+      const kalite = parca[0] || "?", genislik = parca[2] || "";
+      const adet = k.adet || 0;
+      let kg = k.kg, tahmini = false;
+      if (kg == null) { const m = mamulBulKeyIle(k.key, k.masurali); kg = adet * (m ? (m.kgBobin || 0) : 0); tahmini = true; }
+      const masuraliMi = k.masurali != null ? k.masurali : (kalite === "2. Kalite");
+      let masuraKg = 0, eksik = false;
+      if (masuraliMi) {
+        const mas = masuraBul(kalite, genislik);
+        if (mas) masuraKg = adet * mas.masura;
+        else {
+          eksik = true;
+          const a = kalite + "|" + genislik;
+          if (!tanimsizMasura[a]) tanimsizMasura[a] = { kalite, genislik, adet: 0, kg: 0 };
+          tanimsizMasura[a].adet += adet; tanimsizMasura[a].kg += kg;
+        }
+      }
+      const net = Math.max(0, kg - masuraKg);
+      const q = kaliteAl(kalite);
+      q.bobin += adet; q.kg += kg; q.masuraKg += masuraKg; q.netKg += net;
+      if (tahmini) q.tahminiKg += kg;
+      if (eksik) q.eksikMasuraKg += kg;
+      const ad = k.ad || (kalite + " " + (parca[1] || "") + " " + genislik);
+      const u = q.urunler[ad] || (q.urunler[ad] = { bobin: 0, kg: 0, masuraKg: 0, netKg: 0, masurali: masuraliMi, eksik: false });
+      u.bobin += adet; u.kg += kg; u.masuraKg += masuraKg; u.netKg += net; if (eksik) u.eksik = true;
+    });
+  });
+  let toplamNet = 0, toplamTutar = 0, toplamKg = 0, toplamMasura = 0, toplamBobin = 0;
+  Object.keys(kaliteler).forEach(k => {
+    const q = kaliteler[k];
+    q.oran = (data.ayarlar.iscilik && data.ayarlar.iscilik[k] != null) ? data.ayarlar.iscilik[k] : 0;
+    q.tutar = q.netKg * q.oran;
+    toplamNet += q.netKg; toplamTutar += q.tutar; toplamKg += q.kg; toplamMasura += q.masuraKg; toplamBobin += q.bobin;
+  });
+  return { kaliteler, tanimsizMasura, urunsuzSatislar, toplamNet, toplamTutar, toplamKg, toplamMasura, toplamBobin };
+}
+
+// Bir kalite+genişlik için masura ağırlığını tek adımda tanımlar (stok, satış ve rapordaki uyarılardan çağrılır)
+function masuraTanimlaHizli(kalite, genislik, varsayilanBobin) {
+  const masuraStr = prompt(kalite + " · " + genislik + "\n\nBir MASURANIN ağırlığı kaç kg? (ör. 1,74)");
+  if (masuraStr === null) return false;
+  const masuraKg = parseTL(masuraStr);
+  if (isNaN(masuraKg) || masuraKg <= 0) { toast("Geçerli bir masura kg girin"); return false; }
+  let bobinKg = parseTL(String(varsayilanBobin || ""));
+  if (isNaN(bobinKg) || bobinKg <= 0) {
+    const b = prompt(kalite + " · " + genislik + "\n\nStandart bir bobin (masura dahil) kaç kg?", "");
+    if (b === null) return false;
+    bobinKg = parseTL(b);
+    if (isNaN(bobinKg) || bobinKg <= 0) { toast("Geçerli bir bobin kg girin"); return false; }
+  }
+  if (!data.masuraTablosu) data.masuraTablosu = {};
+  if (!data.masuraTablosu[kalite]) data.masuraTablosu[kalite] = {};
+  data.masuraTablosu[kalite][genislik] = { masura: masuraKg, bobin: bobinKg };
+  save(); render();
+  toast("✓ " + kalite + " " + genislik + " masurası " + String(masuraKg).replace(".", ",") + " kg olarak tanımlandı — geçmiş satışlar da bununla hesaplanır");
+  return true;
+}
+function masuraEksikMi(m) { return !!(m && m.masurali && !masuraBul(m.kalite, m.genislik)); }
 
 function masuraAnaliziAy(ayKey) {
   const tumSatislar = data.hareketler.filter(h => h.tarih.slice(0,7) === ayKey && h.gelir && (h.kategori === "Satış-Fatura" || h.kategori === "Perakende Satış"));
@@ -4568,7 +4648,7 @@ function aylikRaporIndir(secilenAyKey) {
   // ---- SAYFA 1: AYLIK RAPOR (genel özet) ----
   const s1 = []; const m1 = [];
   let r = 1;
-  let bb = xlsxBaslikSatiri(r, "RAZ PLASTİK — AYLIK RAPOR — "+ayAdi.toUpperCase(), 4, XS.baslikNavy, 30); s1.push(bb.xml); m1.push(bb.merge); r++;
+  let bb = xlsxBaslikSatiri(r, "RAZ PLASTİK — AYLIK RAPOR — "+ayAdi.toLocaleUpperCase("tr"), 4, XS.baslikNavy, 30); s1.push(bb.xml); m1.push(bb.merge); r++;
   bb = xlsxBaslikSatiri(r, "Rapor tarihi: "+fmtTarih(bugunIso), 4, XS.altbilgi, 20); s1.push(bb.xml); m1.push(bb.merge); r++;
   r++;
   bb = xlsxBaslikSatiri(r, "GENEL ÖZET", 4, XS.baslikYesil); s1.push(bb.xml); m1.push(bb.merge); r++;
@@ -4579,7 +4659,7 @@ function aylikRaporIndir(secilenAyKey) {
   s1.push(xlsxSatir(r, [xT("Satılan Toplam Kg",XS.etiket), xM(buAyOzet.kg||0, XS.kg)])); r++;
   r++;
   const masAn = masuraAnaliziAy(ayKey);
-  bb = xlsxBaslikSatiri(r, "2. KALİTE MASURA ANALİZİ", 4, XS.baslikNavy); s1.push(bb.xml); m1.push(bb.merge); r++;
+  bb = xlsxBaslikSatiri(r, "MASURA ANALİZİ (MASURALI ÜRÜNLER)", 4, XS.baslikNavy); s1.push(bb.xml); m1.push(bb.merge); r++;
   s1.push(xlsxSatir(r, [xT("Satılan 2. Kalite Bobin",XS.etiket), xM(masAn.toplamBobin, XS.adetBorder)])); r++;
   s1.push(xlsxSatir(r, [xT("Toplam Bobin Ağırlığı (kg)",XS.etiket), xM(masAn.toplamBobinKg, XS.kg)])); r++;
   s1.push(xlsxSatir(r, [xT("— Bunun İçindeki Masura (kg)",XS.etiket), xM(masAn.toplamMasuraKg, XS.kg)])); r++;
@@ -4632,7 +4712,7 @@ function aylikRaporIndir(secilenAyKey) {
   // ---- SAYFA 2: MÜŞTERİ DETAY (BU AY) ----
   const s2 = []; const m2 = [];
   r = 1;
-  bb = xlsxBaslikSatiri(r, "MÜŞTERİ DETAYI — "+ayAdi.toUpperCase(), 4, XS.baslikYesil); s2.push(bb.xml); m2.push(bb.merge); r++;
+  bb = xlsxBaslikSatiri(r, "MÜŞTERİ DETAYI — "+ayAdi.toLocaleUpperCase("tr"), 4, XS.baslikYesil); s2.push(bb.xml); m2.push(bb.merge); r++;
   const musteriHeaderRow = r;
   s2.push(xlsxSatir(r, [xT("Müşteri",XS.tabloBaslik), xT("Toplam Tutar",XS.tabloBaslik), xT("İşlem Sayısı",XS.tabloBaslik), xT("Toplam Kg",XS.tabloBaslik)])); r++;
   const musteriGirdiler = Object.entries(musteriBuAy).sort((a,b) => b[1].toplam - a[1].toplam);
@@ -4651,7 +4731,7 @@ function aylikRaporIndir(secilenAyKey) {
   // ---- SAYFA 3: ÜRETİM DETAY (BU AY) ----
   const s3 = []; const m3 = [];
   r = 1;
-  bb = xlsxBaslikSatiri(r, "ÜRETİM DETAYI — "+ayAdi.toUpperCase(), 8, XS.baslikKirmizi); s3.push(bb.xml); m3.push(bb.merge); r++;
+  bb = xlsxBaslikSatiri(r, "ÜRETİM DETAYI — "+ayAdi.toLocaleUpperCase("tr"), 8, XS.baslikKirmizi); s3.push(bb.xml); m3.push(bb.merge); r++;
   const uretimHeaderRow = r;
   s3.push(xlsxSatir(r, [xT("Tarih",XS.tabloBaslik),xT("Vardiya",XS.tabloBaslik),xT("Makine",XS.tabloBaslik),xT("Usta",XS.tabloBaslik),xT("Saat",XS.tabloBaslik),xT("Ürünler",XS.tabloBaslik),xT("Hammadde",XS.tabloBaslik),xT("Verimlilik",XS.tabloBaslik)])); r++;
   oz.kayitlar.slice().sort((a,b) => a.tarih.localeCompare(b.tarih)).forEach(u => {
@@ -4671,7 +4751,7 @@ function aylikRaporIndir(secilenAyKey) {
   const urunOz = urunSatisAyOzeti(ayKey);
   const s4 = []; const m4 = [];
   r = 1;
-  bb = xlsxBaslikSatiri(r, "ÜRÜN BAZLI SATIŞ — "+ayAdi.toUpperCase(), 4, XS.baslikYesil); s4.push(bb.xml); m4.push(bb.merge); r++;
+  bb = xlsxBaslikSatiri(r, "ÜRÜN BAZLI SATIŞ — "+ayAdi.toLocaleUpperCase("tr"), 4, XS.baslikYesil); s4.push(bb.xml); m4.push(bb.merge); r++;
   const urunHeaderRow = r;
   s4.push(xlsxSatir(r, [xT("Ürün",XS.tabloBaslik), xT("Satılan Adet",XS.tabloBaslik), xT("Toplam Kg",XS.tabloBaslik), xT("İşlem Sayısı",XS.tabloBaslik)])); r++;
   const urunGirdiler = Object.values(urunOz.urunler).sort((a,b) => b.adet - a.adet);
@@ -4695,7 +4775,7 @@ function aylikRaporIndir(secilenAyKey) {
   const karOz = karlilikAyOzeti(ayKey);
   const s5 = []; const m5 = [];
   r = 1;
-  bb = xlsxBaslikSatiri(r, "KÂRLILIK ÖZETİ (TAHMİNİ) — "+ayAdi.toUpperCase(), 4, XS.baslikNavy); s5.push(bb.xml); m5.push(bb.merge); r++;
+  bb = xlsxBaslikSatiri(r, "KÂRLILIK ÖZETİ (TAHMİNİ) — "+ayAdi.toLocaleUpperCase("tr"), 4, XS.baslikNavy); s5.push(bb.xml); m5.push(bb.merge); r++;
   bb = xlsxBaslikSatiri(r, "Ortalama hammadde fiyatı ve sabit işçilik/masura maliyetiyle hesaplanır — muhasebe rakamlarının yerine geçmez, sağlama amaçlıdır.", 4, XS.altbilgi, 26); s5.push(bb.xml); m5.push(bb.merge); r++;
   r++;
   s5.push(xlsxSatir(r, [xT("Toplam Satış Geliri (KDV hariç)",XS.etiket), xM(karOz.toplamGelir, XS.paraYesil)])); r++;
@@ -4723,8 +4803,35 @@ function aylikRaporIndir(secilenAyKey) {
   }
   const s5Xml = xlsxSayfaXml({ satirlar: s5, kolonGenislikleri: [30,18,16,16], donmusSatir: 0, filtreAraligi: karFiltre, birlesmeler: m5, sonSutun: 4, sonSatir: r-1 });
 
+  // ---- SAYFA 6: İŞÇİLİK HESABI (satılan kg, masura hariç) ----
+  const isc = iscilikAyOzeti(ayKey);
+  const s6 = []; const m6 = [];
+  r = 1;
+  bb = xlsxBaslikSatiri(r, "İŞÇİLİK HESABI — "+ayAdi.toLocaleUpperCase("tr"), 7, XS.baslikNavy); s6.push(bb.xml); m6.push(bb.merge); r++;
+  bb = xlsxBaslikSatiri(r, "Satılan kg − masura kg = net kg; işçilik = net kg × kalitenin ₺/kg oranı", 7, XS.altbilgi, 20); s6.push(bb.xml); m6.push(bb.merge); r++;
+  r++;
+  const iscHeader = r;
+  s6.push(xlsxSatir(r, [xT("Kalite / Ürün",XS.tabloBaslik), xT("Bobin",XS.tabloBaslik), xT("Satılan kg",XS.tabloBaslik), xT("Masura kg",XS.tabloBaslik), xT("Net kg",XS.tabloBaslik), xT("₺/kg",XS.tabloBaslik), xT("İşçilik",XS.tabloBaslik)])); r++;
+  Object.keys(isc.kaliteler).sort().forEach(k => {
+    const q = isc.kaliteler[k];
+    s6.push(xlsxSatir(r, [xT(k,XS.toplamEtiket), xM(q.bobin,XS.toplamKg), xM(q.kg,XS.toplamKg), xM(q.masuraKg,XS.toplamKg), xM(q.netKg,XS.toplamKg), xM(q.oran,XS.toplamPara), xM(q.tutar,XS.toplamParaYesil)])); r++;
+    Object.keys(q.urunler).sort().forEach(ad => {
+      const u = q.urunler[ad];
+      s6.push(xlsxSatir(r, [xT("   "+ad+(u.eksik?" (⚠ masura ağırlığı tanımsız)":(u.masurali?" (masuralı)":"")),XS.metinBorder), xM(u.bobin,XS.adetBorder), xM(u.kg,XS.kg), xM(u.masuraKg,XS.kg), xM(u.netKg,XS.kg), xT("",XS.metinBorder), xT("",XS.metinBorder)])); r++;
+    });
+  });
+  s6.push(xlsxSatir(r, [xT("TOPLAM",XS.toplamEtiket), xM(isc.toplamBobin,XS.toplamKg), xM(isc.toplamKg,XS.toplamKg), xM(isc.toplamMasura,XS.toplamKg), xM(isc.toplamNet,XS.toplamKg), xT("",XS.toplamEtiket), xM(isc.toplamTutar,XS.toplamParaYesil)])); r++;
+  Object.values(isc.tanimsizMasura).forEach(t => {
+    r++; s6.push(xlsxSatir(r, [xT("⚠ "+t.kalite+" "+t.genislik+": masura ağırlığı tanımsız — "+t.adet+" bobin masura düşülmeden net sayıldı",XS.metinBorder)])); m6.push("A"+r+":G"+r);
+  });
+  if (isc.urunsuzSatislar.length) {
+    r++; s6.push(xlsxSatir(r, [xT("ℹ Ürün seçilmeden girilmiş "+isc.urunsuzSatislar.length+" satış ("+fmtKg(isc.urunsuzSatislar.reduce((t,h)=>t+(h.kg||0),0))+" kg) bu hesaba dahil değil",XS.metinBorder)])); m6.push("A"+r+":G"+r);
+  }
+  const s6Xml = xlsxSayfaXml({ satirlar: s6, kolonGenislikleri: [40,10,14,14,14,10,16], donmusSatir: iscHeader, birlesmeler: m6, sonSutun: 7, sonSatir: r });
+
   const sayfalar = [
     { ad: "Aylık Rapor", xml: s1Xml },
+    { ad: "İşçilik Hesabı", xml: s6Xml },
     { ad: "Müşteri Detay", xml: s2Xml },
     { ad: "Üretim Detay", xml: s3Xml },
     { ad: "Ürün Bazlı Satış", xml: s4Xml },
@@ -4787,6 +4894,7 @@ function stokMamulTablosuHtml() {
     const masuraliRozet = m.masurali
       ? '<span class="pill" style="background:rgba(94,144,255,.18);color:#8FB0FF">MASURALI</span>'
       : '<span class="pill" style="background:rgba(255,255,255,.08);color:var(--mut)">MASURASIZ</span>';
+    const masuraEksikRozet = masuraEksikMi(m) ? '<span class="pill" style="background:var(--red-bg);color:var(--red);cursor:pointer" onclick="masuraTanimlaHizli(\''+jsStr(m.kalite)+'\',\''+jsStr(m.genislik)+'\','+(m.kgBobin||0)+')">⚠ masura ağırlığı yok — tanımla</span>' : '';
     const eslenikRozet = eslenikHedef ? '<span class="pill" style="background:rgba(74,222,128,.14);color:var(--green)">🔗 '+esc(eslenikHedef)+'</span>' : '';
     kartHtml += '<div class="stok-kart '+stokKaliteSinif(m.kalite)+'">'
       + '<div class="stok-kart-ust">'
@@ -4794,7 +4902,7 @@ function stokMamulTablosuHtml() {
       + '<button class="sil-x" onclick="mamulSil('+i+')">×</button>'
       + '</div>'
       + (detayParcalari.length ? '<div class="stok-kart-detay">'+detayParcalari.join(" · ")+'</div>' : '')
-      + '<div class="stok-kart-rozetler">'+masuraliRozet+eslenikRozet+'</div>'
+      + '<div class="stok-kart-rozetler">'+masuraliRozet+masuraEksikRozet+eslenikRozet+'</div>'
       + '<div class="stok-kart-sayilar">'
       + '<div class="stok-kart-sayi"><div class="lbl">Adet</div><div class="val adet-edit '+renk+'" onclick="adetDuzenle('+i+')">'+m.adet+'</div>'+doluCubuk(m.adet, STOK_ESIK*3, barRenk)+'</div>'
       + '<div class="stok-kart-sayi"><div class="lbl">Kg/Bobin</div><div class="val adet-edit" onclick="kgBobinDuzenle('+i+')">'+fmtKg(m.kgBobin)+'</div></div>'
@@ -4823,8 +4931,9 @@ function stokMamulTablosuHtml() {
     const masuraliRozet = m.masurali
       ? '<span class="pill" style="background:rgba(94,144,255,.18);color:#8FB0FF;margin-left:4px">MASURALI</span>'
       : '<span class="pill" style="background:rgba(255,255,255,.08);color:var(--mut);margin-left:4px">MASURASIZ</span>';
+    const masuraEksikTablo = masuraEksikMi(m) ? '<div class="notrow"><span class="adet-edit kirmizi" onclick="masuraTanimlaHizli(\''+jsStr(m.kalite)+'\',\''+jsStr(m.genislik)+'\','+(m.kgBobin||0)+')">⚠ masura ağırlığı yok — tanımla</span></div>' : '';
     const katRozet = m.katSayisi ? '<div class="notrow">'+esc(m.katSayisi)+'</div>' : '';
-    tabloHtml += '<tr><td><b>'+esc(m.kalite)+'</b> '+esc(m.tip)+' · '+esc(m.genislik)+(m.gramaj!=="-"?' · '+esc(m.gramaj):"")+masuraliRozet+katRozet+eslenikGosterge+'<div class="notrow"><span class="adet-edit" onclick="mamulDuzenle('+i+')">✎ ürünü düzenle</span></div></td>'
+    tabloHtml += '<tr><td><b>'+esc(m.kalite)+'</b> '+esc(m.tip)+' · '+esc(m.genislik)+(m.gramaj!=="-"?' · '+esc(m.gramaj):"")+masuraliRozet+katRozet+masuraEksikTablo+eslenikGosterge+'<div class="notrow"><span class="adet-edit" onclick="mamulDuzenle('+i+')">✎ ürünü düzenle</span></div></td>'
       + '<td class="num" style="min-width:56px"><span class="adet-edit '+renk+'" onclick="adetDuzenle('+i+')">'+m.adet+'</span>'+doluCubuk(m.adet, STOK_ESIK*3, barRenk)+'</td>'
       + '<td class="num"><span class="adet-edit" onclick="kgBobinDuzenle('+i+')">'+fmtKg(m.kgBobin)+'</span></td>'
       + '<td class="num">'+fmtKg(kg)+'</td>'
@@ -5145,6 +5254,13 @@ function urunKaydet(idx) {
   window.__yeniUrunUretimSatiri = null;
   urunModalKapat();
   save(); render();
+  if (masurali && !masuraBul(kalite, genislik)) {
+    setTimeout(() => {
+      if (confirm(kalite + " · " + genislik + " masuralı, ama bu kalite ve genişlik için masura ağırlığı tanımlı değil.\n\nTanımlanmazsa işçilik hesabında masura kilosu DÜŞÜLEMEZ. Şimdi tanımlansın mı?")) {
+        masuraTanimlaHizli(kalite, genislik, kgBobin);
+      }
+    }, 50);
+  }
 }
 
 function mamulEkle() { urunModal(null); }
@@ -5822,9 +5938,69 @@ function masuraAgirlikSil(kalite, genislik) {
 }
 
 // ============ AYLIK ============
+let iscilikAy = null; // Aylık sekmesindeki işçilik kartının ayı (varsayılan: bu ay)
+function rIscilik() {
+  const ay = iscilikAy || buAyKey();
+  const oz = iscilikAyOzeti(ay);
+  const p = ay.split("-");
+  let html = '<div class="card"><div class="mtitle">🧮 İşçilik Hesabı <span class="pill">satılan kg, masura hariç</span></div>';
+  html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'
+    + '<button class="chip' + (ay === buAyKey() ? " on" : "") + '" onclick="iscilikAy=buAyKey();render()">Bu Ay</button>'
+    + '<button class="chip' + (ay === gecenAyKey() ? " on" : "") + '" onclick="iscilikAy=gecenAyKey();render()">Geçen Ay</button>'
+    + '<input type="month" value="' + ay + '" onchange="iscilikAy=this.value||buAyKey();render()" style="width:auto;flex:0 0 auto;padding:8px 10px">'
+    + '</div>';
+  html += '<div class="mini" style="margin-bottom:8px"><b>' + AYLAR[parseInt(p[1]) - 1] + ' ' + p[0] + '</b> satışları</div>';
+  const kaliteAdlari = Object.keys(oz.kaliteler).sort();
+  if (!kaliteAdlari.length) {
+    html += '<div class="mini">Bu ay ürün seçilerek girilmiş satış yok.</div>';
+  } else {
+    // Her kalite ayrı blok: telefonda da tüm rakamlar ekrana sığsın
+    kaliteAdlari.forEach(k => {
+      const q = oz.kaliteler[k];
+      html += '<div class="stok-kart ' + stokKaliteSinif(k) + '">'
+        + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><b style="font-size:15px">' + esc(k) + '</b>'
+        + '<b class="yesil" style="font-size:16px">' + pg(fmt(q.tutar)) + '</b></div>'
+        + '<div style="font-size:13px;margin-top:4px;line-height:1.5">' + q.bobin + ' bobin · <b>' + fmtKg(q.kg) + '</b> kg satıldı'
+        + (q.masuraKg ? ' − <b>' + fmtKg(q.masuraKg) + '</b> kg masura' : '')
+        + ' = <b>' + fmtKg(q.netKg) + ' kg net</b> × <span class="adet-edit" onclick="ayarDuzenle(\'iscilik_' + jsStr(k) + '\')">' + String(q.oran).replace(".", ",") + ' ₺/kg</span>'
+        + (q.eksikMasuraKg ? '<div class="kirmizi" style="font-size:12px">⚠ ' + fmtKg(q.eksikMasuraKg) + ' kg için masura ağırlığı tanımsız (aşağıya bak)</div>' : '')
+        + '</div>';
+      Object.keys(q.urunler).sort().forEach(ad => {
+        const u = q.urunler[ad];
+        html += '<div class="mini" style="display:flex;justify-content:space-between;gap:8px;padding-top:5px;margin-top:5px;border-top:1px solid #262837">'
+          + '<span>' + esc(ad) + (u.masurali ? ' <span class="pill" style="font-size:9px;padding:1px 5px">M</span>' : '') + '</span>'
+          + '<span style="white-space:nowrap">' + u.bobin + ' bobin · ' + fmtKg(u.kg) + (u.eksik ? ' <span class="kirmizi">− ?</span>' : (u.masuraKg ? ' − ' + fmtKg(u.masuraKg) : '')) + ' = <b>' + fmtKg(u.netKg) + '</b> kg</span></div>';
+      });
+      html += '</div>';
+    });
+    html += '<div class="stok-kart" style="border-left-color:var(--gold)"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><b>TOPLAM İŞÇİLİK</b><b style="color:var(--gold);font-size:17px">' + pg(fmt(oz.toplamTutar)) + '</b></div>'
+      + '<div style="font-size:13px;margin-top:4px">' + oz.toplamBobin + ' bobin · ' + fmtKg(oz.toplamKg) + ' kg satıldı' + (oz.toplamMasura ? ' − ' + fmtKg(oz.toplamMasura) + ' kg masura' : '') + ' = <b>' + fmtKg(oz.toplamNet) + ' kg net</b></div></div>';
+    html += '<div class="mini" style="margin-top:6px">₺/kg oranına dokunarak değiştirebilirsin. "M" = masuralı ürün.</div>';
+  }
+  // Uyarılar — hesabı eksik bırakan durumlar
+  const tanimsiz = Object.values(oz.tanimsizMasura);
+  tanimsiz.forEach(t => {
+    html += '<div class="uyari krit" style="margin-top:10px"><span class="uyari-ikon">⚠️</span><span><b>' + esc(t.kalite + " " + t.genislik) + '</b> masuralı satılmış ama masura ağırlığı tanımlı değil — ' + t.adet + ' bobin (' + fmtKg(t.kg) + ' kg) masura düşülmeden NET sayıldı.</span>'
+      + '<button class="chip" style="flex-shrink:0" onclick="masuraTanimlaHizli(\'' + jsStr(t.kalite) + '\',\'' + jsStr(t.genislik) + '\')">Tanımla</button></div>';
+  });
+  const tahmini = kaliteAdlari.reduce((t, k) => t + oz.kaliteler[k].tahminiKg, 0);
+  if (tahmini > 0) html += '<div class="uyari" style="margin-top:10px"><span class="uyari-ikon">ℹ️</span><span>' + fmtKg(tahmini) + ' kg, satışta tartılan kilo girilmediği için ürün kartındaki kg/bobin ile <b>tahmin</b> edildi.</span></div>';
+  if (oz.urunsuzSatislar.length) {
+    const kg = oz.urunsuzSatislar.reduce((t, h) => t + (h.kg || 0), 0);
+    html += '<div class="uyari" style="margin-top:10px;flex-wrap:wrap"><span class="uyari-ikon">ℹ️</span><span>' + oz.urunsuzSatislar.length + ' satış (' + fmtKg(kg) + ' kg) ürün seçilmeden girilmiş — kaliteye ve masuraya ayrılamadığı için hesaba <b>dahil değil</b>. Ürünle eşleştirirsen hesaba girer:</span></div>';
+    oz.urunsuzSatislar.forEach(h => {
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #262837;font-size:13px">'
+        + '<span>' + fmtTarih(h.tarih) + ' · ' + esc(h.aciklama) + (h.kg ? ' · ' + fmtKg(h.kg) + ' kg' : '') + (h.not ? ' <span class="mini">' + esc(h.not) + '</span>' : '') + '</span>'
+        + '<button class="chip" style="color:var(--blue);border-color:var(--blue);flex-shrink:0" onclick="urunEslestirModal(\'' + h.__id + '\')">🔧 Eşleştir</button></div>';
+    });
+  }
+  html += '</div>';
+  return html;
+}
+
 function rAylik(H) {
   const keys = Object.keys(H.aylik).sort().reverse();
-  let html = '<div class="card"><div class="mtitle">Aylık Genel Bakış</div><div class="scroll"><table><tr><th>Ay</th><th class="num">Satış</th><th class="num">Satış Kg</th><th class="num">Diğer Gelir</th><th class="num">Gider</th><th class="num">Net</th></tr>';
+  let html = rIscilik() + '<div class="card"><div class="mtitle">Aylık Genel Bakış</div><div class="scroll"><table><tr><th>Ay</th><th class="num">Satış</th><th class="num">Satış Kg</th><th class="num">Diğer Gelir</th><th class="num">Gider</th><th class="num">Net</th></tr>';
   keys.forEach(k => {
     const a = H.aylik[k];
     const net = a.satis + a.diger - a.gider;
