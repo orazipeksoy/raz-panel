@@ -812,6 +812,8 @@ function saglaId(d) {
     ];
   }
   if (!d.mamul) d.mamul = [];
+  // Ürünlerin kalıcı kimliği (hızlı giriş ekranı adetleri ürün kimliğiyle tutar)
+  d.mamul.forEach(m => { if (!m.__id) m.__id = "m_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); });
   if (!d.hammadde) d.hammadde = [];
   d.hammadde.forEach(h => { if (!h.kalite) h.kalite = "Genel"; });
   if (!d.fiyatlar) d.fiyatlar = [];
@@ -3175,6 +3177,162 @@ function xlsIceAktar() {
   toast(mesaj);
 }
 
+// ============ KAĞITTAN HIZLI ÜRETİM GİRİŞİ ============
+// Ustalar vardiya boyunca kâğıt forma yazar; formlar birikince buradan hızlıca girilir.
+// Ürünler formdakiyle AYNI sırada ve numarada listelenir; sadece adetler yazılır, Enter sonraki ürüne geçer.
+// Kaydedince ekran bir sonraki vardiyaya geçer (Gündüz → Gece → ertesi gün Gündüz), usta ve saat hatırlanır.
+let hizli = null;
+function hizliYukle() {
+  try { hizli = JSON.parse(localStorage.getItem("raz-hizli-v1") || "null"); } catch(e) { hizli = null; }
+  if (!hizli) hizli = { tarih: yerelTarihStr(), vardiya: "Gündüz", makine: MAKINELER[0], usta: "", saat: "12", not: "", adet: {}, ustaVardiya: {} };
+  if (!hizli.adet) hizli.adet = {};
+  if (!hizli.ustaVardiya) hizli.ustaVardiya = {};
+}
+function hizliSakla() { try { localStorage.setItem("raz-hizli-v1", JSON.stringify(hizli)); } catch(e) {} }
+function hizliSet(k, v) { hizli[k] = v; hizliSakla(); }
+function hizliTarihSet(iso) { hizliSet("tarih", iso); }
+function hizliToplam() {
+  let bobin = 0, kg = 0;
+  data.mamul.forEach(m => { const a = parseTL(hizli.adet[m.__id] || ""); if (!isNaN(a) && a > 0) { bobin += a; kg += a * (m.kgBobin || 0); } });
+  return { bobin, kg };
+}
+function hizliAdetSet(id, v) {
+  hizli.adet[id] = v; hizliSakla();
+  const t = hizliToplam();
+  const el = document.getElementById("hz-toplam");
+  if (el) el.textContent = t.bobin + " bobin · ~" + fmtKg(t.kg) + " kg";
+}
+// Enter: bir sonraki ürünün adet kutusuna geç (sonuncudaysa Kaydet düğmesine)
+function hizliSonraki(el) {
+  const kutular = Array.from(document.querySelectorAll(".hz-adet"));
+  const i = kutular.indexOf(el);
+  if (i >= 0 && i < kutular.length - 1) { kutular[i + 1].focus(); kutular[i + 1].select(); }
+  else { const b = document.getElementById("hz-kaydet"); if (b) b.focus(); }
+}
+function hizliKaydet() {
+  const usta = (hizli.usta || "").trim();
+  if (!usta) { toast("Usta adı gerekli"); return; }
+  const saat = parseTL(hizli.saat);
+  if (isNaN(saat) || saat <= 0) { toast("Çalışma saati gerekli"); return; }
+  const satirlar = data.mamul.map(m => ({ m, adet: parseTL(hizli.adet[m.__id] || "") })).filter(x => !isNaN(x.adet) && x.adet > 0);
+  if (!satirlar.length) { toast("En az bir ürünün adedini yazın"); return; }
+  const ayni = (data.uretimler || []).find(u => u.tarih === hizli.tarih && u.vardiya === hizli.vardiya && u.makine === hizli.makine);
+  if (ayni && !confirm(fmtTarih(hizli.tarih) + " " + hizli.vardiya + " · " + hizli.makine + " için zaten bir üretim kaydı var (usta: " + (ayni.usta || "?") + ").\n\nAynı kâğıdı iki kez girmiyorsan devam et. Yine de kaydedilsin mi?")) return;
+  const urunler = satirlar.map(({ m, adet }) => {
+    m.adet += adet;
+    return { key: m.kalite + "|" + m.tip + "|" + m.genislik + "|" + m.gramaj, ad: m.kalite + " " + m.tip + " " + m.genislik, adet, kg: adet * (m.kgBobin || 0), masurali: !!m.masurali };
+  });
+  const uretilenKg = urunler.reduce((t, u) => t + u.kg, 0);
+  if (!data.uretimler) data.uretimler = [];
+  data.uretimler.push({
+    __id: "u_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    kaynak: "kagit",
+    tarih: hizli.tarih, vardiya: hizli.vardiya, makine: hizli.makine, usta, saat,
+    not: (hizli.not || "").trim() || null,
+    urunler, hammaddeler: [], uretilenKg, hammaddeKg: 0, verimlilik: null
+  });
+  save();
+  const bobin = urunler.reduce((t, u) => t + u.adet, 0);
+  toast("✓ " + fmtTarih(hizli.tarih) + " " + hizli.vardiya + " kaydedildi — " + bobin + " bobin stoğa eklendi");
+  // Sonraki vardiyaya geç
+  hizli.ustaVardiya[hizli.vardiya] = usta;
+  if (hizli.vardiya === "Gündüz") hizli.vardiya = "Gece";
+  else {
+    hizli.vardiya = "Gündüz";
+    const d = new Date(hizli.tarih + "T12:00:00"); d.setDate(d.getDate() + 1);
+    hizli.tarih = yerelTarihStr(d);
+  }
+  hizli.usta = hizli.ustaVardiya[hizli.vardiya] || "";
+  hizli.adet = {}; hizli.not = "";
+  hizliSakla();
+  render();
+  setTimeout(() => { const ilk = document.querySelector(".hz-adet"); if (ilk) ilk.focus(); }, 30);
+}
+function hizliTemizle() {
+  if (!confirm("Yazılan adetler silinsin mi?")) return;
+  hizli.adet = {}; hizli.not = ""; hizliSakla(); render();
+}
+function rHizliGiris() {
+  if (!hizli) hizliYukle();
+  const t = hizliToplam();
+  let h = '<div class="card" style="border:1.5px solid var(--gold)"><div class="mtitle">📋 Kâğıttan Hızlı Giriş<span style="flex:1"></span><button class="chip" style="white-space:nowrap" onclick="vardiyaFormuYazdir()">🖨 Boş Form Yazdır</button></div>';
+  h += '<div class="mini" style="margin-bottom:10px">Ustanın doldurduğu formdaki adetleri aynı sırayla yaz, <b>Enter</b> ile sonraki ürüne geç. Kaydedince ekran otomatik sonraki vardiyaya geçer.</div>';
+  h += '<div class="formgrid">';
+  h += '<div><div class="mini" style="margin-bottom:5px">Tarih</div>' + tarihSeciciHtml("hz-tarih", hizli.tarih, "hizliTarihSet") + '</div>';
+  h += '<div class="row2">';
+  h += '<div><div class="mini" style="margin-bottom:5px">Vardiya</div><div style="display:flex;gap:6px">' + VARDIYALAR.map(v => '<button type="button" class="chip' + (hizli.vardiya === v ? " on" : "") + '" style="flex:1" onclick="hizliSet(\'vardiya\',\'' + v + '\');hizli.usta=hizli.usta||hizli.ustaVardiya[\'' + v + '\']||\'\';render()">' + (v === "Gündüz" ? "☀️ " : "🌙 ") + v + '</button>').join("") + '</div></div>';
+  h += '<div><div class="mini" style="margin-bottom:5px">Makine</div><div style="display:flex;gap:6px">' + MAKINELER.map(m => '<button type="button" class="chip' + (hizli.makine === m ? " on" : "") + '" style="flex:1" onclick="hizliSet(\'makine\',\'' + jsStr(m) + '\');render()">' + esc(m.replace(" Makinası", "")) + '</button>').join("") + '</div></div>';
+  h += '</div>';
+  h += '<div class="row2">';
+  h += '<div><div class="mini" style="margin-bottom:5px">Usta</div><input type="text" list="hz-usta-liste" value="' + esc(hizli.usta) + '" oninput="hizliSet(\'usta\',this.value)" placeholder="ör. Ahmet" autocomplete="off"><datalist id="hz-usta-liste">' + ustaListesi().map(u => '<option value="' + esc(u) + '">').join("") + '</datalist></div>';
+  h += '<div><div class="mini" style="margin-bottom:5px">Çalışma Saati</div><input type="text" inputmode="decimal" value="' + esc(hizli.saat) + '" oninput="hizliSet(\'saat\',this.value)"></div>';
+  h += '</div>';
+  h += '</div>';
+  h += '<div style="margin-top:12px">';
+  data.mamul.forEach((m, i) => {
+    h += '<div style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-bottom:1px solid #262837;border-left:4px solid ' + ({ "1. Kalite": "#6EA8FE", "2. Kalite": "#C9A227", "ECO-1": "#4ADE80" }[m.kalite] || "var(--mut)") + '">'
+      + '<span style="width:26px;text-align:right;font-weight:800;color:var(--mut);flex-shrink:0">' + (i + 1) + '</span>'
+      + '<span style="flex:1;min-width:0;font-size:13.5px;line-height:1.25"><b>' + esc(m.kalite) + '</b> ' + esc(m.tip) + ' · ' + esc(m.genislik) + (m.gramaj && m.gramaj !== "-" ? ' · ' + esc(m.gramaj) : '') + (m.masurali ? ' <span class="pill" style="font-size:9px;padding:1px 5px">M</span>' : '') + '</span>'
+      + '<input class="hz-adet" type="text" inputmode="numeric" enterkeyhint="next" placeholder="adet" value="' + esc(hizli.adet[m.__id] || "") + '" oninput="hizliAdetSet(\'' + jsStr(m.__id) + '\',this.value)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();hizliSonraki(this)}" style="width:84px;flex-shrink:0;text-align:right;padding:9px 10px">'
+      + '</div>';
+  });
+  h += '</div>';
+  h += '<div style="margin-top:10px"><div class="mini" style="margin-bottom:5px">Not / Fire (formda yazıyorsa)</div><input type="text" value="' + esc(hizli.not) + '" oninput="hizliSet(\'not\',this.value)" placeholder="ör. 2 saat arıza, 15 kg fire"></div>';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:10px"><span class="mini">Toplam: <b id="hz-toplam">' + t.bobin + ' bobin · ~' + fmtKg(t.kg) + ' kg</b></span><button class="chip" onclick="hizliTemizle()">Temizle</button></div>';
+  h += '<button class="btn" id="hz-kaydet" style="background:var(--green);margin-top:10px" onclick="hizliKaydet()">✓ Kaydet ve Sonraki Vardiyaya Geç</button>';
+  h += '</div>';
+  return h;
+}
+
+// Ustaların dolduracağı boş vardiya formu — ürünler hızlı giriş ekranıyla AYNI sıra ve numarada
+function vardiyaFormuYazdir() {
+  let satir = "";
+  data.mamul.forEach((m, i) => {
+    satir += '<tr><td class="no">' + (i + 1) + '</td><td class="ad"><b>' + esc(m.kalite) + '</b> ' + esc(m.tip) + ' · ' + esc(m.genislik) + (m.gramaj && m.gramaj !== "-" ? ' · ' + esc(m.gramaj) : '') + (m.masurali ? ' (M)' : '') + '</td><td class="adet"></td><td class="not"></td></tr>';
+  });
+  for (let i = 0; i < 3; i++) satir += '<tr><td class="no"></td><td class="ad" style="color:#999">Diğer: ..........................................</td><td class="adet"></td><td class="not"></td></tr>';
+  const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Vardiya Formu</title><style>'
+    + '@page { size: A4 portrait; margin: 8mm; }'
+    + '* { box-sizing: border-box; margin: 0; padding: 0; }'
+    + 'body { font-family: Arial, sans-serif; color: #000; background: #fff; }'
+    + '.ekran-sarma { width: 100%; max-width: 190mm; margin: 0 auto; padding: 10px; }'
+    + '.yazdir-btn { display: block; width: 100%; margin-bottom: 10px; padding: 16px; font-size: 17px; font-weight: bold; cursor: pointer; background: #4A3670; color: #fff; border: none; border-radius: 10px; -webkit-appearance: none; }'
+    + '.yazdir-not { font-size: 12px; color: #666; text-align: center; margin-bottom: 14px; line-height: 1.5; }'
+    + '.baslik { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #000; padding-bottom: 2mm; margin-bottom: 3mm; }'
+    + '.baslik h1 { font-size: 14pt; }'
+    + '.baslik .alt { font-size: 9pt; color: #444; }'
+    + '.alanlar { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm 8mm; font-size: 11pt; margin-bottom: 4mm; }'
+    + '.alanlar div { border-bottom: 1px solid #000; padding: 2mm 0 1mm; }'
+    + '.kutu { display: inline-block; width: 4mm; height: 4mm; border: 1.2px solid #000; vertical-align: middle; margin: 0 1mm 0 3mm; }'
+    + 'table { width: 100%; border-collapse: collapse; }'
+    + 'th { background: #E8E8E8; font-size: 9pt; border: 1px solid #000; padding: 1.5mm; text-align: left; }'
+    + 'td { border: 1px solid #000; height: 8.5mm; font-size: 10pt; padding: 0 2mm; vertical-align: middle; }'
+    + 'td.no { width: 9mm; text-align: center; font-weight: bold; background: #F2F2F2; }'
+    + 'td.adet { width: 26mm; } td.not { width: 40mm; }'
+    + '.alt-alan { margin-top: 4mm; font-size: 10.5pt; }'
+    + '.alt-alan div { border-bottom: 1px solid #000; height: 8mm; margin-top: 2mm; }'
+    + '@media print { .yazdir-btn, .yazdir-not { display: none; } .ekran-sarma { max-width: none; padding: 0; } }'
+    + '</style></head><body><div class="ekran-sarma">'
+    + '<button class="yazdir-btn" onclick="window.print()">🖨 Yazdır</button>'
+    + '<div class="yazdir-not">Ürün numaraları paneldeki "Kâğıttan Hızlı Giriş" ekranıyla aynıdır. Stoğa yeni ürün eklenince formu yeniden yazdır.</div>'
+    + '<div class="baslik"><h1>RAZ PLASTİK — VARDİYA ÜRETİM FORMU</h1><span class="alt">' + fmtTarih(yerelTarihStr()) + ' tarihli liste</span></div>'
+    + '<div class="alanlar">'
+    + '<div>Tarih: </div>'
+    + '<div>Vardiya: <span class="kutu"></span> Gündüz <span class="kutu"></span> Gece</div>'
+    + '<div>Usta: </div>'
+    + '<div>Makine: ' + MAKINELER.map(m => '<span class="kutu"></span> ' + esc(m.replace(" Makinası", ""))).join(" ") + '</div>'
+    + '<div>Başlangıç saati: </div><div>Bitiş saati: </div>'
+    + '</div>'
+    + '<table><tr><th>No</th><th>Ürün</th><th>Adet (bobin)</th><th>Not</th></tr>' + satir + '</table>'
+    + '<div class="alt-alan">Arıza / Fire / Not:<div></div><div></div></div>'
+    + '</div></body></html>';
+  const blob = new Blob([sayfa], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, "_blank");
+  if (!w) { yazdirLinkGoster(url, "Form Hazır", "Vardiya Formunu Aç"); return; }
+  toast("Form yeni sekmede açıldı — Yazdır'a dokun");
+}
+
 function rUretim() {
   const oz = uretimAyOzeti(buAyKey());
   const masAn = masuraAnaliziAy(buAyKey());
@@ -3185,6 +3343,8 @@ function rUretim() {
     + '<div class="kpi"><div class="lbl">Ort. Verimlilik</div><div class="v" style="color:'+(oz.ortVerimlilik==null?"var(--mut)":(oz.ortVerimlilik>=90?"var(--green)":"var(--amber)"))+'">'+(oz.ortVerimlilik!=null?"%"+oz.ortVerimlilik.toFixed(1):"—")+'</div><span class="mini">üretilen kg / kullanılan hammadde kg</span></div>'
     + '<div class="kpi"><div class="lbl">Bu Ay Satılan Masura</div><div class="v" style="color:var(--amber)">'+fmtKg(masAn.toplamMasuraKg)+' kg</div><span class="mini">2. Kalite satışlarından — hammaddesi ödenmemiş, faturaya yansıyan ağırlık</span></div>'
     + '</div>';
+
+  html += rHizliGiris();
 
   // ---- Makine Saatlik Verim — iki makine ayrı ayrı, kg/saat olarak karşılaştırmalı ----
   html += '<div class="card"><div class="mtitle">⚙️ Makine Saatlik Verim <span class="pill">bu ay, kg/saat</span></div>'
@@ -3233,7 +3393,7 @@ function rUretim() {
   }
 
   // ---- Yeni üretim kaydı formu ----
-  html += '<div class="card"><div class="mtitle">Yeni Üretim Kaydı</div><div class="formgrid">';
+  html += '<div class="card"><div class="mtitle">Detaylı Üretim Kaydı <span class="pill">hammadde ile</span></div><div class="formgrid">';
   html += '<div class="row2">';
   html += '<div><div class="mini" style="margin-bottom:5px">Tarih</div>'+tarihSeciciHtml("u-tarih", uForm.tarih, "uTarihSet")+'<button type="button" class="chip" style="margin-top:6px" onclick="tarihSeciciBugun(\'u-tarih\',\'uTarihSet\')">Bugün</button></div>';
   html += '<div><div class="mini" style="margin-bottom:5px">Makine</div><select onchange="uSet(\'makine\',this.value)">'+MAKINELER.map(m => '<option'+(uForm.makine===m?" selected":"")+'>'+m+'</option>').join("")+'</select></div>';
