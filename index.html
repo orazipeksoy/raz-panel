@@ -3256,7 +3256,7 @@ function rHizliGiris() {
   if (!hizli) hizliYukle();
   const t = hizliToplam();
   let h = '<div class="card" style="border:1.5px solid var(--gold)"><div class="mtitle">📋 Kâğıttan Hızlı Giriş<span style="flex:1"></span><button class="chip" style="white-space:nowrap" onclick="vardiyaFormuYazdir()">🖨 Boş Form Yazdır</button></div>';
-  h += '<div class="mini" style="margin-bottom:10px">Ustanın doldurduğu formdaki adetleri aynı sırayla yaz, <b>Enter</b> ile sonraki ürüne geç. Kaydedince ekran otomatik sonraki vardiyaya geçer.</div>';
+  h += '<div class="mini" style="margin-bottom:10px">Formdaki her vardiya için tarih, vardiya, makine ve ustayı seç; formda yazan ürünlerin karşısına adedini yaz (<b>Enter</b> sonraki ürüne geçer). Kaydedince ekran otomatik sonraki vardiyaya geçer.</div>';
   h += '<div class="formgrid">';
   h += '<div><div class="mini" style="margin-bottom:5px">Tarih</div>' + tarihSeciciHtml("hz-tarih", hizli.tarih, "hizliTarihSet") + '</div>';
   h += '<div class="row2">';
@@ -3284,47 +3284,51 @@ function rHizliGiris() {
   return h;
 }
 
-// Ustaların dolduracağı boş vardiya formu — ürünler hızlı giriş ekranıyla AYNI sıra ve numarada
+// Ustaların dolduracağı boş vardiya formu — bir A4'te 4 vardiya, her vardiyada 5 ürün satırı.
+// Ürün adını da usta yazar (stok listesine bağlı değil; ürün eklenip çıkınca yeniden yazdırmak gerekmez).
+const FORM_VARDIYA_SAYISI = 4, FORM_URUN_SATIRI = 5;
 function vardiyaFormuYazdir() {
-  let satir = "";
-  data.mamul.forEach((m, i) => {
-    satir += '<tr><td class="no">' + (i + 1) + '</td><td class="ad"><b>' + esc(m.kalite) + '</b> ' + esc(m.tip) + ' · ' + esc(m.genislik) + (m.gramaj && m.gramaj !== "-" ? ' · ' + esc(m.gramaj) : '') + (m.masurali ? ' (M)' : '') + '</td><td class="adet"></td><td class="not"></td></tr>';
-  });
-  for (let i = 0; i < 3; i++) satir += '<tr><td class="no"></td><td class="ad" style="color:#999">Diğer: ..........................................</td><td class="adet"></td><td class="not"></td></tr>';
+  const kutu = '<span class="kutu"></span>';
+  const makineler = MAKINELER.map(m => kutu + esc(m.replace(" Makinası", ""))).join(" ");
+  let bloklar = "";
+  for (let b = 0; b < FORM_VARDIYA_SAYISI; b++) {
+    let satirlar = "";
+    for (let i = 0; i < FORM_URUN_SATIRI; i++) satirlar += '<tr><td class="no">' + (i + 1) + '</td><td></td><td></td><td></td></tr>';
+    bloklar += '<div class="blok">'
+      + '<div class="ust"><span class="alan uzun">Tarih:</span><span>' + kutu + 'Gündüz ' + kutu + 'Gece</span><span>Makine: ' + makineler + '</span></div>'
+      + '<div class="ust"><span class="alan uzun">Usta:</span><span class="alan">Başlangıç:</span><span class="alan">Bitiş:</span></div>'
+      + '<table><tr><th class="no">#</th><th>Ürün (kalite · genişlik · gramaj)</th><th class="adet">Adet (bobin)</th><th class="not">Not</th></tr>' + satirlar + '</table>'
+      + '<div class="fire">Arıza / Fire:</div>'
+      + '</div>';
+  }
   const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Vardiya Formu</title><style>'
-    + '@page { size: A4 portrait; margin: 8mm; }'
+    + '@page { size: A4 portrait; margin: 7mm; }'
     + '* { box-sizing: border-box; margin: 0; padding: 0; }'
     + 'body { font-family: Arial, sans-serif; color: #000; background: #fff; }'
-    + '.ekran-sarma { width: 100%; max-width: 190mm; margin: 0 auto; padding: 10px; }'
+    + '.ekran-sarma { width: 100%; max-width: 196mm; margin: 0 auto; padding: 10px; }'
     + '.yazdir-btn { display: block; width: 100%; margin-bottom: 10px; padding: 16px; font-size: 17px; font-weight: bold; cursor: pointer; background: #4A3670; color: #fff; border: none; border-radius: 10px; -webkit-appearance: none; }'
     + '.yazdir-not { font-size: 12px; color: #666; text-align: center; margin-bottom: 14px; line-height: 1.5; }'
-    + '.baslik { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #000; padding-bottom: 2mm; margin-bottom: 3mm; }'
-    + '.baslik h1 { font-size: 14pt; }'
-    + '.baslik .alt { font-size: 9pt; color: #444; }'
-    + '.alanlar { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm 8mm; font-size: 11pt; margin-bottom: 4mm; }'
-    + '.alanlar div { border-bottom: 1px solid #000; padding: 2mm 0 1mm; }'
-    + '.kutu { display: inline-block; width: 4mm; height: 4mm; border: 1.2px solid #000; vertical-align: middle; margin: 0 1mm 0 3mm; }'
+    + '.baslik { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #000; padding-bottom: 1.5mm; margin-bottom: 2.5mm; }'
+    + '.baslik h1 { font-size: 12.5pt; }'
+    + '.baslik .alt { font-size: 8.5pt; color: #333; }'
+    + '.blok { border: 1.6px solid #000; border-radius: 2mm; padding: 2mm 2.5mm; margin-bottom: 3mm; page-break-inside: avoid; break-inside: avoid; }'
+    + '.ust { display: flex; gap: 5mm; align-items: flex-end; font-size: 10pt; margin-bottom: 1.8mm; flex-wrap: nowrap; }'
+    + '.ust > span { white-space: nowrap; }'
+    + '.alan { flex: 1; border-bottom: 1px solid #000; padding-bottom: .5mm; min-width: 26mm; }'
+    + '.alan.uzun { flex: 2; }'
+    + '.kutu { display: inline-block; width: 3.8mm; height: 3.8mm; border: 1.2px solid #000; vertical-align: -0.6mm; margin: 0 1mm 0 2mm; }'
     + 'table { width: 100%; border-collapse: collapse; }'
-    + 'th { background: #E8E8E8; font-size: 9pt; border: 1px solid #000; padding: 1.5mm; text-align: left; }'
-    + 'td { border: 1px solid #000; height: 8.5mm; font-size: 10pt; padding: 0 2mm; vertical-align: middle; }'
-    + 'td.no { width: 9mm; text-align: center; font-weight: bold; background: #F2F2F2; }'
-    + 'td.adet { width: 26mm; } td.not { width: 40mm; }'
-    + '.alt-alan { margin-top: 4mm; font-size: 10.5pt; }'
-    + '.alt-alan div { border-bottom: 1px solid #000; height: 8mm; margin-top: 2mm; }'
+    + 'th { background: #E8E8E8; font-size: 8.5pt; border: 1px solid #000; padding: .8mm 1.5mm; text-align: left; }'
+    + 'td { border: 1px solid #000; height: 7mm; font-size: 9pt; }'
+    + '.no { width: 6mm; text-align: center; font-weight: bold; background: #F2F2F2; }'
+    + '.adet { width: 25mm; } .not { width: 42mm; }'
+    + '.fire { font-size: 9.5pt; border-bottom: 1px solid #000; height: 6.5mm; padding-top: 1.5mm; margin-top: 1mm; }'
     + '@media print { .yazdir-btn, .yazdir-not { display: none; } .ekran-sarma { max-width: none; padding: 0; } }'
     + '</style></head><body><div class="ekran-sarma">'
     + '<button class="yazdir-btn" onclick="window.print()">🖨 Yazdır</button>'
-    + '<div class="yazdir-not">Ürün numaraları paneldeki "Kâğıttan Hızlı Giriş" ekranıyla aynıdır. Stoğa yeni ürün eklenince formu yeniden yazdır.</div>'
-    + '<div class="baslik"><h1>RAZ PLASTİK — VARDİYA ÜRETİM FORMU</h1><span class="alt">' + fmtTarih(yerelTarihStr()) + ' tarihli liste</span></div>'
-    + '<div class="alanlar">'
-    + '<div>Tarih: </div>'
-    + '<div>Vardiya: <span class="kutu"></span> Gündüz <span class="kutu"></span> Gece</div>'
-    + '<div>Usta: </div>'
-    + '<div>Makine: ' + MAKINELER.map(m => '<span class="kutu"></span> ' + esc(m.replace(" Makinası", ""))).join(" ") + '</div>'
-    + '<div>Başlangıç saati: </div><div>Bitiş saati: </div>'
-    + '</div>'
-    + '<table><tr><th>No</th><th>Ürün</th><th>Adet (bobin)</th><th>Not</th></tr>' + satir + '</table>'
-    + '<div class="alt-alan">Arıza / Fire / Not:<div></div><div></div></div>'
+    + '<div class="yazdir-not">Bir sayfada ' + FORM_VARDIYA_SAYISI + ' vardiya. Çoğaltıp ustalara verebilirsin.</div>'
+    + '<div class="baslik"><h1>RAZ PLASTİK — VARDİYA ÜRETİM FORMU</h1><span class="alt">Ürün yazarken: kalite · genişlik · gramaj (ör. 1. Kalite 100 cm 40 gr)</span></div>'
+    + bloklar
     + '</div></body></html>';
   const blob = new Blob([sayfa], { type: "text/html" });
   const url = URL.createObjectURL(blob);
