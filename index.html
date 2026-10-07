@@ -1768,9 +1768,16 @@ function tartimGir(gi, deger) {
     v = c.kg;
     bipCal("ok");
     toast("✓ Barkod: " + fmtKg(v) + " kg");
+  } else if (/^\d{8,}$/.test(ham)) {
+    // 8+ haneli düz sayı kilo olamaz: okuyucu barkodu eksik/fazla göndermiş demektir (ör. Mac'te hane kaçırma).
+    // Kilo diye eklenirse listeye devasa bir değer girer — reddet, ne okunduğunu göster.
+    bipCal("hata");
+    toast("Barkod eksik/hatalı okundu: " + ham.length + " hane geldi (13 olmalı) — \"" + ham + "\". Tekrar okut.");
+    temizleOdakla();
+    return;
   } else {
     v = parseTL(ham);
-    if (isNaN(v) || v <= 0) { bipCal("hata"); toast("Geçerli kg girin ya da barkod okutun"); return; }
+    if (isNaN(v) || v <= 0) { bipCal("hata"); toast("Geçerli kg girin ya da barkod okutun" + (ham ? " (okunan: \"" + ham.slice(0, 20) + "\")" : "")); temizleOdakla(); return; }
   }
   tartim.gruplar[gi].satirlar.push({brut: v});
   tartimKaydet();
