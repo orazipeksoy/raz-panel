@@ -1707,6 +1707,48 @@ document.addEventListener("keydown", function(e) {
   if (inp) inp.focus();
 }); // okuyucu çift tetik koruması — kaydedilmez, sayfa yenilenince sıfırlanır
 
+// ============ OKUTMA SESİ ============
+// Okuyucunun kendi sesi atölyede duyulmadığı için her okutmada bilgisayarın hoparlöründen de ses çalınır:
+// başarılı → tek tiz "bip", hatalı → kalın "bıp-bıp". Açık/kapalı tercihi cihazda hatırlanır.
+let __sesCtx = null;
+let okutmaSesi = true;
+try { okutmaSesi = localStorage.getItem("raz-bip") !== "0"; } catch(e) {}
+function sesHazirla() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!__sesCtx) __sesCtx = new AC();
+    if (__sesCtx.state === "suspended") __sesCtx.resume();
+    return __sesCtx;
+  } catch(e) { return null; }
+}
+// Tarayıcılar sesi ilk kullanıcı dokunuşundan/tuşundan sonra açar — ilk etkileşimde hazırla
+["pointerdown", "keydown"].forEach(ev => document.addEventListener(ev, sesHazirla, { once: true, capture: true }));
+function bipCal(tur) {
+  if (!okutmaSesi) return;
+  const ctx = sesHazirla(); if (!ctx) return;
+  try {
+    const t0 = ctx.currentTime + 0.01;
+    const notalar = tur === "hata" ? [[330, 0, 0.16], [220, 0.2, 0.26]] : [[1900, 0, 0.13]];
+    notalar.forEach(([frekans, bas, sure]) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = "square"; o.frequency.value = frekans;
+      g.gain.setValueAtTime(0.0001, t0 + bas);
+      g.gain.exponentialRampToValueAtTime(0.6, t0 + bas + 0.01);
+      g.gain.setValueAtTime(0.6, t0 + bas + sure - 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + bas + sure);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(t0 + bas); o.stop(t0 + bas + sure + 0.02);
+    });
+  } catch(e) {}
+}
+function okutmaSesiDegistir() {
+  okutmaSesi = !okutmaSesi;
+  try { localStorage.setItem("raz-bip", okutmaSesi ? "1" : "0"); } catch(e) {}
+  render();
+  if (okutmaSesi) bipCal("ok");
+}
+
 function tartimGir(gi, deger) {
   const ham = String(deger).trim();
   const temizleOdakla = () => setTimeout(() => {
@@ -1717,17 +1759,18 @@ function tartimGir(gi, deger) {
   if (/^\d{13}$/.test(ham)) {
     // Barkod okundu
     const c = barkodCoz(ham);
-    if (c.hata) { toast(c.hata); temizleOdakla(); return; }
-    if (!(c.kg > 0)) { toast("Barkodda kilo yok (0 kg) — ağırlık varken basılan etiketi okut"); temizleOdakla(); return; }
+    if (c.hata) { bipCal("hata"); toast(c.hata); temizleOdakla(); return; }
+    if (!(c.kg > 0)) { bipCal("hata"); toast("Barkodda kilo yok (0 kg) — ağırlık varken basılan etiketi okut"); temizleOdakla(); return; }
     // Çift tetik koruması: okuyucu tek tetikte aynı okumayı bazen iki kez gönderir — bu MİLİSANİYELER
     // içinde olur. Süre 0,4 sn tutuldu ki seri okutmada aynı kiloda GERÇEK ikinci bir rulo asla yutulmasın.
     if (__tartimSonOkut && __tartimSonOkut.kod === ham && (Date.now() - __tartimSonOkut.zaman) < 400) { temizleOdakla(); return; }
     __tartimSonOkut = { kod: ham, zaman: Date.now() };
     v = c.kg;
+    bipCal("ok");
     toast("✓ Barkod: " + fmtKg(v) + " kg");
   } else {
     v = parseTL(ham);
-    if (isNaN(v) || v <= 0) { toast("Geçerli kg girin ya da barkod okutun"); return; }
+    if (isNaN(v) || v <= 0) { bipCal("hata"); toast("Geçerli kg girin ya da barkod okutun"); return; }
   }
   tartim.gruplar[gi].satirlar.push({brut: v});
   tartimKaydet();
@@ -1969,6 +2012,10 @@ function rTartim() {
   html += '<div><div class="mini" style="margin-bottom:5px">Tarih</div><input type="date" value="'+tartim.tarih+'" onchange="tartimSet(\'tarih\',this.value)"></div>';
   html += '</div></div>';
 
+  html += '<div style="display:flex;gap:8px;align-items:center;margin:-4px 0 12px;flex-wrap:wrap">'
+    + '<button class="chip' + (okutmaSesi ? " on" : "") + '" onclick="okutmaSesiDegistir()">' + (okutmaSesi ? "🔊 Okutma sesi açık" : "🔇 Okutma sesi kapalı") + '</button>'
+    + '<button class="chip" onclick="var e=okutmaSesi;okutmaSesi=true;bipCal(\'ok\');setTimeout(function(){bipCal(\'hata\');okutmaSesi=e;},450)">Sesi dene</button>'
+    + '<span class="mini">Başarılı: tek bip · Hatalı: bıp-bıp</span></div>';
   html += '<div class="kpi-grid" style="grid-template-columns:1fr 1fr">';
   html += '<div class="kpi"><div class="lbl">Toplam Bobin</div><div class="v" id="t-kpi-adet">'+oz.adet+'</div></div>';
   html += '<div class="kpi"><div class="lbl">Toplam Kg</div><div class="v yesil" id="t-kpi-kg">'+fmtKg(oz.brutT)+'</div></div>';
