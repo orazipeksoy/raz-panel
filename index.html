@@ -3459,10 +3459,24 @@ function uretimEmriYazdir() {
   const adetsiz = satirlar.filter(x => !(parseInt(x.r.adet, 10) > 0));
   if (adetsiz.length && !confirm(adetsiz.length + " satırda adet yazılmamış — çıktıda boş kalacak. Yine de yazdırılsın mı?")) return;
   const toplam = satirlar.reduce((t, x) => t + (parseInt(x.r.adet, 10) || 0), 0);
+  // Ürün özellikleri ayrı sütunlarda, alt alta aynı hizada (operatör karıştırmasın)
+  const tipVar = satirlar.some(x => depoTipGoster(x.m.tip));
+  const bos = '<span class="bos">—</span>';
   let govde = "";
   satirlar.forEach((x, i) => {
-    govde += '<tr><td class="no">' + (i + 1) + '</td><td>' + esc(uEmriUrunAdi(x.m)) + '</td><td class="metraj">' + esc(x.r.metraj || "") + '</td><td class="adet">' + (parseInt(x.r.adet, 10) > 0 ? parseInt(x.r.adet, 10) : '') + '</td><td class="uretilen"></td><td>' + esc(x.r.not || "") + '</td></tr>';
+    const m = x.m, tip = depoTipGoster(m.tip);
+    govde += '<tr><td class="no">' + (i + 1) + '</td>'
+      + '<td class="oz">' + esc(m.kalite) + '</td>'
+      + '<td class="oz b">' + esc(m.genislik || "") + '</td>'
+      + (tipVar ? '<td class="oz">' + (tip ? esc(tip) : bos) + '</td>' : '')
+      + '<td class="oz b">' + (m.gramaj && m.gramaj !== "-" ? esc(m.gramaj) : bos) + '</td>'
+      + '<td class="oz">' + (m.katSayisi ? esc(m.katSayisi) : bos) + '</td>'
+      + '<td class="oz' + (m.masurali ? ' b' : '') + '">' + (m.masurali ? "Masuralı" : "Masurasız") + '</td>'
+      + '<td class="metraj">' + esc(x.r.metraj || "") + '</td>'
+      + '<td class="adet">' + (parseInt(x.r.adet, 10) > 0 ? parseInt(x.r.adet, 10) : '') + '</td>'
+      + '<td class="uretilen"></td><td class="notc">' + esc(x.r.not || "") + '</td></tr>';
   });
+  const ozSutun = 5 + (tipVar ? 1 : 0);
   const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Üretim Emri</title><style>'
     + '@page { size: A4 portrait; margin: 9mm; }'
     + '* { box-sizing: border-box; margin: 0; padding: 0; }'
@@ -3476,11 +3490,14 @@ function uretimEmriYazdir() {
     + '.kutu { display: inline-block; width: 4mm; height: 4mm; border: 1.2px solid #000; vertical-align: -0.7mm; margin: 0 1mm 0 3mm; }'
     + 'table { width: 100%; border-collapse: collapse; }'
     + 'tr { page-break-inside: avoid; }'
-    + 'th { background: #E0E0E0; font-size: 9.5pt; border: 1px solid #000; padding: 1.8mm 2mm; text-align: left; }'
+    + 'th { background: #E0E0E0; font-size: 9pt; border: 1px solid #000; padding: 1.8mm 1.2mm; text-align: left; }'
     + 'td { border: 1px solid #000; height: 10mm; font-size: 11pt; padding: 0 2mm; vertical-align: middle; }'
-    + 'td.no { width: 11mm; text-align: center; font-weight: bold; font-size: 13pt; background: #F2F2F2; }'
-    + 'td.adet { width: 24mm; text-align: center; font-weight: bold; font-size: 13pt; }'
-    + 'td.uretilen { width: 24mm; } td.metraj { width: 24mm; text-align: center; }'
+    + 'td.no { width: 10mm; text-align: center; font-weight: bold; font-size: 13pt; background: #F2F2F2; }'
+    + 'td.adet { width: 17mm; text-align: center; font-weight: bold; font-size: 13pt; }'
+    + 'td.uretilen { width: 20mm; } td.metraj { width: 18mm; text-align: center; }'
+    + 'td.oz { text-align: center; font-size: 10.5pt; white-space: nowrap; padding: 0 1.5mm; } td.oz.b { font-weight: bold; }'
+    + 'td.notc { font-size: 10pt; } .bos { color: #999; }'
+    + 'th { text-align: center; } th:nth-child(2) { }'
     + 'tfoot td { font-weight: bold; background: #F2F2F2; }'
     + '.not { margin-top: 4mm; font-size: 10.5pt; }'
     + '.imza { display: flex; gap: 12mm; margin-top: 12mm; font-size: 10.5pt; }'
@@ -3490,8 +3507,8 @@ function uretimEmriYazdir() {
     + '<button class="yazdir-btn" onclick="window.print()">🖨 Yazdır</button>'
     + '<div class="baslik"><h1>RAZ PLASTİK — ÜRETİM EMRİ</h1><span class="alt">Sıra numarasına göre üretilecek</span></div>'
     + '<div class="bilgi"><span>Tarih: <b>' + fmtTarih(uEmri.tarih) + '</b></span></div>'
-    + '<table><thead><tr><th>Sıra</th><th>Ürün</th><th>Metraj</th><th>İstenen Adet</th><th>Üretilen</th><th>Not</th></tr></thead><tbody>' + govde + '</tbody>'
-    + '<tfoot><tr><td></td><td>TOPLAM</td><td></td><td class="adet">' + (toplam || '') + '</td><td></td><td></td></tr></tfoot></table>'
+    + '<table><thead><tr><th>Sıra</th><th>Kalite</th><th>En</th>' + (tipVar ? '<th>Tip</th>' : '') + '<th>Gramaj</th><th>Kat</th><th>Masura</th><th>Metraj</th><th>İstenen Adet</th><th>Üretilen</th><th>Not</th></tr></thead><tbody>' + govde + '</tbody>'
+    + '<tfoot><tr><td></td><td colspan="' + ozSutun + '">TOPLAM</td><td></td><td class="adet">' + (toplam || '') + '</td><td></td><td></td></tr></tfoot></table>'
     + (uEmri.not ? '<div class="not"><b>Not:</b> ' + esc(uEmri.not) + '</div>' : '')
     + '<div class="imza"><div style="flex:0 0 45%">Teslim alan usta</div></div>'
     + '</div></body></html>';
