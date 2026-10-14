@@ -85,6 +85,22 @@ tr:last-child td { border-bottom: none; }
 .stok-kart-alt { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
 .stok-kartlar-liste { }
 .stok-tablo-wrap { display: none; }
+.depo-tablo { border-collapse: separate; border-spacing: 0; min-width: 100%; }
+.depo-tablo th { background: #2E5B34; color: #fff; font-size: 10.5px; letter-spacing: .03em; padding: 9px 10px; white-space: nowrap; border-bottom: none; }
+.depo-tablo td { padding: 10px; white-space: nowrap; border-bottom: 1px solid #262837; font-size: 13.5px; }
+.depo-tablo tr:nth-child(even) td:not(.depo-ilk) { background: rgba(255,255,255,.025); }
+.depo-tablo .depo-ilk { position: sticky; left: 0; background: var(--card); font-weight: 800; z-index: 1; text-transform: uppercase; }
+.depo-tablo th.depo-ilk { background: #2E5B34; z-index: 2; }
+.depo-tablo .depo-grup td { background: #1B1D28; color: var(--gold); font-size: 12px; letter-spacing: .05em; padding: 7px 10px; border-left: 4px solid var(--mut); }
+.depo-tablo .depo-grup td.k1 { border-left-color: #6EA8FE; } .depo-tablo .depo-grup td.k2 { border-left-color: #C9A227; } .depo-tablo .depo-grup td.keco { border-left-color: #4ADE80; }
+.depo-tablo .depo-dolu { cursor: pointer; font-weight: 800; }
+.depo-tablo .depo-bos { cursor: pointer; color: #3A3D52; text-align: center; font-weight: 800; }
+.depo-tablo .depo-bos:hover, .depo-tablo .depo-dolu:hover { background: rgba(158,147,240,.12); }
+@media (max-width: 700px) {
+  .depo-tablo th { white-space: normal; font-size: 9.5px; padding: 7px 5px; min-width: 62px; line-height: 1.25; vertical-align: bottom; }
+  .depo-tablo td { padding: 9px 6px; font-size: 12.5px; }
+  .depo-tablo .depo-ilk { white-space: normal; min-width: 92px; max-width: 108px; font-size: 11.5px; line-height: 1.25; }
+}
 .stok-kalite-filtre { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
 .stok-kalite-filtre .chip { padding: 6px 12px; font-size: 12.5px; }
 .stok-kalite-filtre .chip.on { background: var(--gold); color: #1a1400; border-color: var(--gold); }
@@ -700,6 +716,8 @@ const VARDIYALAR = ["Gündüz", "Gece"];
 let data = null;
 let tab = "ozet";
 let stokArama = ""; // Stok ekranındaki mamul listesi arama kutusu
+let stokGorunum = "depo"; // Mamul stok görünümü: "depo" (ölçü × masura/kat tablosu) ya da "liste" (ayrıntılı kartlar)
+try { if (localStorage.getItem("raz-stok-gorunum") === "liste") stokGorunum = "liste"; } catch(e) {}
 let stokKaliteFiltre = "Tümü"; // Stok'ta hızlı kalite filtresi — "Tümü"/"1. Kalite"/"2. Kalite"/"ECO-1"
 let gizliMod = false; // görünürken parasal rakamları gizleme modu — sadece bu cihazda hatırlanır
 let digerAcik = false;
@@ -5134,7 +5152,110 @@ function stokMamulFiltrele() {
     .filter(({m}) => stokKaliteFiltre === "Tümü" || m.kalite === stokKaliteFiltre)
     .filter(({m}) => !aramaNorm || trFold(m.kalite+" "+m.tip+" "+m.genislik+" "+m.gramaj+" "+(m.katSayisi||"")).includes(aramaNorm));
 }
+// ============ DEPO STOK TABLOSU ============
+// Excel'deki "Depo Stok Listesi" düzeni: satır = ölçü (genişlik + gramaj, varsa tip), sütun = masuralı/masurasız × kat.
+// Hücreye dokununca adet düzenlenir (+N / -N ile ekle/çıkar); boş hücreye dokununca o ürün stokta oluşturulur.
+const DEPO_SUTUNLAR = [
+  { masurali: true,  kat: "2 Katlı", ad: "Masuralı 2 Katlı" },
+  { masurali: true,  kat: "3 Katlı", ad: "Masuralı 3 Katlı" },
+  { masurali: false, kat: "2 Katlı", ad: "Masurasız 2 Katlı" },
+  { masurali: false, kat: "3 Katlı", ad: "Masurasız 3 Katlı" },
+  { masurali: true,  kat: "",        ad: "Masuralı (kat yok)" },
+  { masurali: false, kat: "",        ad: "Masurasız (kat yok)" }
+];
+const DEPO_KALITE_SIRA = ["1. Kalite", "2. Kalite", "ECO-1"];
+let __depoSatirlar = [], __depoSutunlar = [];
+function depoTipGoster(tip) { return (!tip || tip === "Standart" || /katl/i.test(tip)) ? "" : tip; }
+function depoSayi(v) { const m = String(v || "").match(/[\d.,]+/); return m ? parseFloat(m[0].replace(",", ".")) : 0; }
+function stokDepoTablosuHtml() {
+  const liste = stokMamulFiltrele();
+  // Kat yok sütunları sadece kat bilgisi girilmemiş ürün varsa görünür
+  const katsizVar = liste.some(({ m }) => !m.katSayisi);
+  __depoSutunlar = DEPO_SUTUNLAR.filter(c => c.kat || katsizVar);
+  const satirMap = {};
+  liste.forEach(({ m, i }) => {
+    const tipG = depoTipGoster(m.tip);
+    const anahtar = m.kalite + "|" + tipG + "|" + genislikNormalize(m.genislik) + "|" + String(m.gramaj || "-").toLowerCase().replace(/\s+/g, "");
+    if (!satirMap[anahtar]) satirMap[anahtar] = { kalite: m.kalite, tip: tipG || "Standart", genislik: m.genislik, gramaj: m.gramaj || "-", hucre: __depoSutunlar.map(() => []) };
+    const c = __depoSutunlar.findIndex(s => s.masurali === !!m.masurali && s.kat === (m.katSayisi || ""));
+    if (c >= 0) satirMap[anahtar].hucre[c].push(i);
+  });
+  __depoSatirlar = Object.values(satirMap).sort((a, b) => {
+    const ka = DEPO_KALITE_SIRA.indexOf(a.kalite), kb = DEPO_KALITE_SIRA.indexOf(b.kalite);
+    if (ka !== kb) return (ka < 0 ? 99 : ka) - (kb < 0 ? 99 : kb) || a.kalite.localeCompare(b.kalite);
+    return (a.tip === "Standart" ? "" : a.tip).localeCompare(b.tip === "Standart" ? "" : b.tip, "tr") || depoSayi(a.genislik) - depoSayi(b.genislik) || depoSayi(a.gramaj) - depoSayi(b.gramaj);
+  });
+  if (!__depoSatirlar.length) return '<div class="mini" style="text-align:center;padding:16px">' + (stokArama.trim() ? '"' + esc(stokArama) + '" ile eşleşen ürün yok' : 'Bu kalitede ürün yok — "+ Yeni Ürün Ekle" ile ekleyebilirsin') + '</div>';
+  let h = '<div class="scroll depo-sarma"><table class="depo-tablo"><tr><th class="depo-ilk">Ürün</th>' + __depoSutunlar.map(c => '<th>' + esc(c.ad) + '</th>').join("") + '</tr>';
+  let sonKalite = null;
+  __depoSatirlar.forEach((r, ri) => {
+    if (r.kalite !== sonKalite) {
+      sonKalite = r.kalite;
+      h += '<tr class="depo-grup"><td class="depo-ilk ' + stokKaliteSinif(r.kalite) + '" colspan="' + (__depoSutunlar.length + 1) + '">' + esc(r.kalite) + '</td></tr>';
+    }
+    const etiket = esc(r.genislik) + (r.tip !== "Standart" ? ' ' + esc(r.tip) : '') + (r.gramaj && r.gramaj !== "-" ? ' ' + esc(r.gramaj) : '');
+    h += '<tr><td class="depo-ilk">' + etiket + '</td>';
+    r.hucre.forEach((idxs, ci) => {
+      if (!idxs.length) { h += '<td class="depo-bos" onclick="depoHucre(' + ri + ',' + ci + ')" title="Stoğa ekle">+</td>'; return; }
+      const adet = idxs.reduce((t, i) => t + (data.mamul[i].adet || 0), 0);
+      const renk = adet <= 0 ? "kirmizi" : (adet < STOK_ESIK ? "" : "yesil");
+      const uyari = idxs.some(i => masuraEksikMi(data.mamul[i])) ? ' <span class="kirmizi" title="Masura ağırlığı tanımsız">⚠</span>' : '';
+      h += '<td class="depo-dolu ' + renk + '" onclick="depoHucre(' + ri + ',' + ci + ')">' + adet + ' adet' + (idxs.length > 1 ? ' <span class="mini">(' + idxs.length + ')</span>' : '') + uyari + '</td>';
+    });
+    h += '</tr>';
+  });
+  h += '</table></div>';
+  h += '<div class="mini" style="margin-top:8px">Dolu hücreye dokun → yeni adedi yaz (<b>+20</b> ekler, <b>-5</b> düşer). <b>+</b> olan boş hücreye dokun → o ürünü stoğa ekle. Yeni bir ölçü için "+ Yeni Ürün Ekle".</div>';
+  return h;
+}
+function depoHucre(ri, ci) {
+  const r = __depoSatirlar[ri], c = __depoSutunlar[ci];
+  if (!r || !c) return;
+  const ad = r.kalite + " · " + r.genislik + (r.tip !== "Standart" ? " " + r.tip : "") + (r.gramaj !== "-" ? " " + r.gramaj : "") + " · " + c.ad;
+  const idxs = r.hucre[ci];
+  if (idxs.length) {
+    const i = idxs[0], m = data.mamul[i];
+    const v = prompt(ad + (idxs.length > 1 ? "\n(Bu hücrede " + idxs.length + " ayrı stok kaydı var — ilki düzenleniyor)" : "") + "\n\nŞu an: " + m.adet + " adet\n\nYeni adedi yaz — ya da +20 / -5 yazarak ekle/çıkar:", "");
+    if (v === null || !v.trim()) return;
+    const t = v.trim().replace(",", ".");
+    const n = parseInt(t, 10);
+    if (isNaN(n)) { toast("Geçerli bir sayı girin"); return; }
+    const yeni = /^[+-]/.test(t) ? m.adet + n : n;
+    if (yeni < 0) { toast("Adet eksiye düşemez (şu an " + m.adet + ")"); return; }
+    m.adet = yeni;
+    save(); render();
+    toast("✓ " + ad + ": " + yeni + " adet");
+    return;
+  }
+  // Boş hücre: bu ürün stokta yok — oluştur
+  const v = prompt(ad + "\n\nBu ürün stokta tanımlı değil. Kaç adet eklensin?", "");
+  if (v === null || !v.trim()) return;
+  const adet = parseInt(v.trim(), 10);
+  if (isNaN(adet) || adet < 0) { toast("Geçerli bir adet girin"); return; }
+  // Bobin kg: aynı satırdaki başka bir ürünün kg/bobin değeri öneri olarak gelir
+  const komsu = r.hucre.flat().map(i => data.mamul[i]).find(x => x && x.kgBobin > 0);
+  const kgStr = prompt(ad + "\n\nBir bobin kaç kg?", komsu ? String(komsu.kgBobin).replace(".", ",") : "");
+  if (kgStr === null) return;
+  const kgBobin = parseTL(kgStr);
+  if (isNaN(kgBobin) || kgBobin <= 0) { toast("Geçerli bir kg girin"); return; }
+  data.mamul.push({ kalite: r.kalite, tip: r.tip, genislik: r.genislik, gramaj: r.gramaj, adet, kgBobin, katSayisi: c.kat, masurali: c.masurali,
+    __id: "m_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7) });
+  save(); render();
+  toast("✓ " + ad + " stoğa eklendi: " + adet + " adet");
+  if (c.masurali && !masuraBul(r.kalite, r.genislik)) {
+    setTimeout(() => {
+      if (confirm(r.kalite + " · " + r.genislik + " masuralı, ama masura ağırlığı tanımlı değil. İşçilik hesabında masura düşülebilmesi için şimdi tanımlansın mı?")) masuraTanimlaHizli(r.kalite, r.genislik, kgBobin);
+    }, 50);
+  }
+}
+function stokGorunumSec(g) {
+  stokGorunum = g;
+  try { localStorage.setItem("raz-stok-gorunum", g); } catch(e) {}
+  render();
+}
+
 function stokMamulTablosuHtml() {
+  if (stokGorunum === "depo") return stokDepoTablosuHtml();
   let mamulDeger = 0;
   data.mamul.forEach(m => { mamulDeger += (m.adet||0) * (m.kgBobin||0) * fiyatBul(m.kalite) * 1.2; });
   let topKg = 0;
@@ -5250,7 +5371,13 @@ function rStok() {
     + '</div>';
   html += '<div class="card"><button class="chip" style="color:var(--blue);border-color:var(--blue)" onclick="sayimKarsilastirModal()">📋 Stok Sayım Karşılaştır</button><div class="mini" style="margin-top:6px">Muhasebe/depo ay sonunda sayım verdiğinde, panelin izlediği rakamla karşılaştır.</div></div>';
 
-  html += '<div class="card"><div class="mtitle">Mamul Stok <span class="pill">bobin</span></div>'
+  const depoBobin = data.mamul.reduce((t, m) => t + Math.max(0, m.adet || 0), 0);
+  const depoCesit = data.mamul.filter(m => (m.adet || 0) > 0).length;
+  html += '<div class="card"><div class="mtitle">Depo Stok Listesi <span class="pill">bobin</span><span style="flex:1"></span>'
+    + '<button class="chip' + (stokGorunum === "depo" ? " on" : "") + '" onclick="stokGorunumSec(\'depo\')">▦ Tablo</button> '
+    + '<button class="chip' + (stokGorunum === "liste" ? " on" : "") + '" onclick="stokGorunumSec(\'liste\')">☰ Ayrıntılı</button></div>'
+    + '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;font-size:13px">'
+    + '<span>Toplam stok değeri: <b>' + pg(fmtK(mamulDeger)) + '</b></span><span>Stok öğeleri: <b>' + depoCesit + '</b></span><span>Toplam bobin: <b>' + depoBobin + '</b></span></div>'
     + '<input type="text" id="stok-arama-input" value="'+esc(stokArama)+'" oninput="stokAramaGuncelle()" placeholder="🔍 Ürün ara (kalite, tip, genişlik...)" style="margin-bottom:10px">'
     + '<div class="stok-kalite-filtre" id="stok-kalite-filtre">'
     + ["Tümü","1. Kalite","2. Kalite","ECO-1"].map(k => '<button class="chip'+(stokKaliteFiltre===k?" on":"")+'" data-kalite="'+esc(k)+'" onclick="stokKaliteFiltreSec(\''+esc(k)+'\')">'+esc(k)+'</button>').join("")
