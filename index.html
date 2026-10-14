@@ -94,6 +94,8 @@ tr:last-child td { border-bottom: none; }
 .depo-tablo .depo-grup td { background: #1B1D28; color: var(--gold); font-size: 12px; letter-spacing: .05em; padding: 7px 10px; border-left: 4px solid var(--mut); }
 .depo-tablo .depo-grup td.k1 { border-left-color: #6EA8FE; } .depo-tablo .depo-grup td.k2 { border-left-color: #C9A227; } .depo-tablo .depo-grup td.keco { border-left-color: #4ADE80; }
 .depo-tablo .depo-dolu { cursor: pointer; font-weight: 800; }
+.depo-tablo th.kat3 { background: #8A6D12; }
+.depo-tablo td.kat3 { background: rgba(227,192,90,.10) !important; }
 .depo-tablo .depo-bos { cursor: pointer; color: #3A3D52; text-align: center; font-weight: 800; }
 .depo-tablo .depo-bos:hover, .depo-tablo .depo-dolu:hover { background: rgba(158,147,240,.12); }
 @media (max-width: 700px) {
@@ -3441,7 +3443,7 @@ function rUretimEmri() {
       + '<input type="text" inputmode="numeric" placeholder="adet" value="' + esc(r.adet) + '" oninput="uEmriSatirSet(' + i + ',\'adet\',this.value)" style="width:76px;flex-shrink:0">'
       + '<input type="text" placeholder="not (ör. müşteri, acil)" value="' + esc(r.not) + '" oninput="uEmriSatirSet(' + i + ',\'not\',this.value)" style="flex:1;min-width:0">'
       + '</div>'
-      + (m ? '<div class="mini" style="padding:4px 0 0 30px;line-height:1.35"><b style="color:var(--ink)">' + esc(uEmriUrunAdi(m)) + '</b> · stok: <b>' + m.adet + '</b> bobin</div>' : (r.id ? '<div class="mini kirmizi" style="padding:4px 0 0 30px">Bu ürün stoktan silinmiş</div>' : ''))
+      + (m ? '<div class="mini" style="padding:4px 0 0 30px;line-height:1.35">' + (/^3/.test(m.katSayisi || "") ? '<span class="pill" style="background:#FFD54F;color:#1a1400">3 KATLI</span> ' : '') + '<b style="color:var(--ink)">' + esc(uEmriUrunAdi(m)) + '</b> · stok: <b>' + m.adet + '</b> bobin</div>' : (r.id ? '<div class="mini kirmizi" style="padding:4px 0 0 30px">Bu ürün stoktan silinmiş</div>' : ''))
       + '</div>';
   });
   h += '</div>';
@@ -3463,14 +3465,22 @@ function uretimEmriYazdir() {
   const tipVar = satirlar.some(x => depoTipGoster(x.m.tip));
   const bos = '<span class="bos">—</span>';
   let govde = "";
+  const sutunSayisi = 1 + 5 + (tipVar ? 1 : 0) + 4;
+  let oncekiKat = null;
   satirlar.forEach((x, i) => {
     const m = x.m, tip = depoTipGoster(m.tip);
-    govde += '<tr><td class="no">' + (i + 1) + '</td>'
+    const kat = m.katSayisi || "";
+    // Kat değişince makine ayarı değişir — operatör önceden görsün
+    if (i > 0 && kat !== oncekiKat && (kat || oncekiKat)) {
+      govde += '<tr class="ayar"><td colspan="' + sutunSayisi + '">⚙ MAKİNE AYARI DEĞİŞİYOR: ' + esc(oncekiKat || "kat belirtilmemiş") + ' → ' + esc(kat || "kat belirtilmemiş") + '</td></tr>';
+    }
+    oncekiKat = kat;
+    govde += '<tr' + (/^3/.test(kat) ? ' class="kat3"' : '') + '><td class="no">' + (i + 1) + '</td>'
       + '<td class="oz">' + esc(m.kalite) + '</td>'
       + '<td class="oz b">' + esc(m.genislik || "") + '</td>'
       + (tipVar ? '<td class="oz">' + (tip ? esc(tip) : bos) + '</td>' : '')
       + '<td class="oz b">' + (m.gramaj && m.gramaj !== "-" ? esc(m.gramaj) : bos) + '</td>'
-      + '<td class="oz">' + (m.katSayisi ? esc(m.katSayisi) : bos) + '</td>'
+      + '<td class="oz kat">' + (m.katSayisi ? (/^3/.test(m.katSayisi) ? '3 KATLI' : esc(m.katSayisi)) : bos) + '</td>'
       + '<td class="oz' + (m.masurali ? ' b' : '') + '">' + (m.masurali ? "Masuralı" : "Masurasız") + '</td>'
       + '<td class="metraj">' + esc(x.r.metraj || "") + '</td>'
       + '<td class="adet">' + (parseInt(x.r.adet, 10) > 0 ? parseInt(x.r.adet, 10) : '') + '</td>'
@@ -3497,6 +3507,10 @@ function uretimEmriYazdir() {
     + 'td.uretilen { width: 20mm; } td.metraj { width: 18mm; text-align: center; }'
     + 'td.oz { text-align: center; font-size: 10.5pt; white-space: nowrap; padding: 0 1.5mm; } td.oz.b { font-weight: bold; }'
     + 'td.notc { font-size: 10pt; } .bos { color: #999; }'
+    + '* { -webkit-print-color-adjust: exact; print-color-adjust: exact; }'
+    + 'tr.kat3 td.kat { background: #FFD54F; font-weight: bold; font-size: 11pt; border: 2px solid #000; }'
+    + 'tr.kat3 td.no { background: #FFD54F; }'
+    + 'tr.ayar td { background: #FFF3C4; border: 2px dashed #000; height: 7mm; font-weight: bold; font-size: 10pt; text-align: center; letter-spacing: .3px; }'
     + 'th { text-align: center; } th:nth-child(2) { }'
     + 'tfoot td { font-weight: bold; background: #F2F2F2; }'
     + '.not { margin-top: 4mm; font-size: 10.5pt; }'
@@ -5355,7 +5369,7 @@ function stokDepoTablosuHtml() {
     return (a.tip === "Standart" ? "" : a.tip).localeCompare(b.tip === "Standart" ? "" : b.tip, "tr") || depoSayi(a.genislik) - depoSayi(b.genislik) || depoSayi(a.gramaj) - depoSayi(b.gramaj);
   });
   if (!__depoSatirlar.length) return '<div class="mini" style="text-align:center;padding:16px">' + (stokArama.trim() ? '"' + esc(stokArama) + '" ile eşleşen ürün yok' : 'Bu kalitede ürün yok — "+ Yeni Ürün Ekle" ile ekleyebilirsin') + '</div>';
-  let h = '<div class="scroll depo-sarma"><table class="depo-tablo"><tr><th class="depo-ilk">Ürün</th>' + __depoSutunlar.map(c => '<th>' + esc(c.ad) + '</th>').join("") + '</tr>';
+  let h = '<div class="scroll depo-sarma"><table class="depo-tablo"><tr><th class="depo-ilk">Ürün</th>' + __depoSutunlar.map(c => '<th' + (c.kat === "3 Katlı" ? ' class="kat3"' : '') + '>' + esc(c.ad) + '</th>').join("") + '</tr>';
   let sonKalite = null;
   __depoSatirlar.forEach((r, ri) => {
     if (r.kalite !== sonKalite) {
@@ -5365,11 +5379,12 @@ function stokDepoTablosuHtml() {
     const etiket = esc(r.genislik) + (r.tip !== "Standart" ? ' ' + esc(r.tip) : '') + (r.gramaj && r.gramaj !== "-" ? ' ' + esc(r.gramaj) : '');
     h += '<tr><td class="depo-ilk">' + etiket + '</td>';
     r.hucre.forEach((idxs, ci) => {
-      if (!idxs.length) { h += '<td class="depo-bos" onclick="depoHucre(' + ri + ',' + ci + ')" title="Stoğa ekle">+</td>'; return; }
+      const k3 = __depoSutunlar[ci].kat === "3 Katlı" ? " kat3" : "";
+      if (!idxs.length) { h += '<td class="depo-bos' + k3 + '" onclick="depoHucre(' + ri + ',' + ci + ')" title="Stoğa ekle">+</td>'; return; }
       const adet = idxs.reduce((t, i) => t + (data.mamul[i].adet || 0), 0);
       const renk = adet <= 0 ? "kirmizi" : (adet < STOK_ESIK ? "" : "yesil");
       const uyari = idxs.some(i => masuraEksikMi(data.mamul[i])) ? ' <span class="kirmizi" title="Masura ağırlığı tanımsız">⚠</span>' : '';
-      h += '<td class="depo-dolu ' + renk + '" onclick="depoHucre(' + ri + ',' + ci + ')">' + adet + ' adet' + (idxs.length > 1 ? ' <span class="mini">(' + idxs.length + ')</span>' : '') + uyari + '</td>';
+      h += '<td class="depo-dolu ' + renk + k3 + '" onclick="depoHucre(' + ri + ',' + ci + ')">' + adet + ' adet' + (idxs.length > 1 ? ' <span class="mini">(' + idxs.length + ')</span>' : '') + uyari + '</td>';
     });
     h += '</tr>';
   });
