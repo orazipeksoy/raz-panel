@@ -3392,7 +3392,7 @@ function uEmriSakla() { try { localStorage.setItem("raz-uretim-emri-v1", JSON.st
 function uEmriSet(k, v) { uEmri[k] = v; uEmriSakla(); }
 function uEmriTarihSet(iso) { uEmriSet("tarih", iso); }
 function uEmriSatirSet(i, k, v) { if (uEmri.satirlar[i]) { uEmri.satirlar[i][k] = v; uEmriSakla(); } }
-function uEmriSatirEkle() { uEmri.satirlar.push({ id: "", adet: "", not: "" }); uEmriSakla(); render(); }
+function uEmriSatirEkle() { uEmri.satirlar.push({ id: "", metraj: "", adet: "", not: "" }); uEmriSakla(); render(); }
 function uEmriSatirSil(i) { uEmri.satirlar.splice(i, 1); uEmriSakla(); render(); }
 function uEmriTasi(i, yon) {
   const j = i + yon;
@@ -3423,7 +3423,6 @@ function rUretimEmri() {
   let h = '<div class="card"><div class="mtitle">📄 Üretim Emri <span class="pill">üretime verilecek sıralı liste</span></div>';
   h += '<div class="formgrid">';
   h += '<div><div class="mini" style="margin-bottom:5px">Tarih</div>' + tarihSeciciHtml("ue-tarih", uEmri.tarih, "uEmriTarihSet") + '</div>';
-  h += '<div><div class="mini" style="margin-bottom:5px">Makine</div><div style="display:flex;gap:6px;flex-wrap:wrap">' + ["", ...MAKINELER].map(m => '<button type="button" class="chip' + (uEmri.makine === m ? " on" : "") + '" style="flex:1" onclick="uEmriSet(\'makine\',\'' + jsStr(m) + '\');render()">' + (m ? esc(m.replace(" Makinası", "")) : "Belirtme") + '</button>').join("") + '</div></div>';
   h += '</div>';
   h += '<div style="margin-top:12px">';
   if (!uEmri.satirlar.length) h += '<div class="mini" style="padding:8px 0">Henüz ürün eklenmedi. Aşağıdaki "+ Ürün Ekle" ile başla.</div>';
@@ -3438,7 +3437,8 @@ function rUretimEmri() {
       + '<button class="sil-x" onclick="uEmriSatirSil(' + i + ')">×</button>'
       + '</div>'
       + '<div style="display:flex;gap:8px;margin-top:6px;padding-left:30px">'
-      + '<input type="text" inputmode="numeric" placeholder="adet" value="' + esc(r.adet) + '" oninput="uEmriSatirSet(' + i + ',\'adet\',this.value)" style="width:90px;flex-shrink:0">'
+      + '<input type="text" placeholder="metraj" value="' + esc(r.metraj || "") + '" oninput="uEmriSatirSet(' + i + ',\'metraj\',this.value)" style="width:90px;flex-shrink:0">'
+      + '<input type="text" inputmode="numeric" placeholder="adet" value="' + esc(r.adet) + '" oninput="uEmriSatirSet(' + i + ',\'adet\',this.value)" style="width:76px;flex-shrink:0">'
       + '<input type="text" placeholder="not (ör. müşteri, acil)" value="' + esc(r.not) + '" oninput="uEmriSatirSet(' + i + ',\'not\',this.value)" style="flex:1;min-width:0">'
       + '</div>'
       + (m ? '<div class="mini" style="padding:4px 0 0 30px;line-height:1.35"><b style="color:var(--ink)">' + esc(uEmriUrunAdi(m)) + '</b> · stok: <b>' + m.adet + '</b> bobin</div>' : (r.id ? '<div class="mini kirmizi" style="padding:4px 0 0 30px">Bu ürün stoktan silinmiş</div>' : ''))
@@ -3459,12 +3459,9 @@ function uretimEmriYazdir() {
   const adetsiz = satirlar.filter(x => !(parseInt(x.r.adet, 10) > 0));
   if (adetsiz.length && !confirm(adetsiz.length + " satırda adet yazılmamış — çıktıda boş kalacak. Yine de yazdırılsın mı?")) return;
   const toplam = satirlar.reduce((t, x) => t + (parseInt(x.r.adet, 10) || 0), 0);
-  const kim = (window.__raz2KullaniciAdi && window.__raz2KullaniciAdi()) || "";
-  const kutu = '<span class="kutu"></span>';
-  const makineAlan = uEmri.makine ? '<b>' + esc(uEmri.makine) + '</b>' : MAKINELER.map(m => kutu + esc(m.replace(" Makinası", ""))).join(" ");
   let govde = "";
   satirlar.forEach((x, i) => {
-    govde += '<tr><td class="no">' + (i + 1) + '</td><td>' + esc(uEmriUrunAdi(x.m)) + '</td><td class="adet">' + (parseInt(x.r.adet, 10) > 0 ? parseInt(x.r.adet, 10) : '') + '</td><td class="uretilen"></td><td>' + esc(x.r.not || "") + '</td></tr>';
+    govde += '<tr><td class="no">' + (i + 1) + '</td><td>' + esc(uEmriUrunAdi(x.m)) + '</td><td class="metraj">' + esc(x.r.metraj || "") + '</td><td class="adet">' + (parseInt(x.r.adet, 10) > 0 ? parseInt(x.r.adet, 10) : '') + '</td><td class="uretilen"></td><td>' + esc(x.r.not || "") + '</td></tr>';
   });
   const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Üretim Emri</title><style>'
     + '@page { size: A4 portrait; margin: 9mm; }'
@@ -3483,7 +3480,7 @@ function uretimEmriYazdir() {
     + 'td { border: 1px solid #000; height: 10mm; font-size: 11pt; padding: 0 2mm; vertical-align: middle; }'
     + 'td.no { width: 11mm; text-align: center; font-weight: bold; font-size: 13pt; background: #F2F2F2; }'
     + 'td.adet { width: 24mm; text-align: center; font-weight: bold; font-size: 13pt; }'
-    + 'td.uretilen { width: 24mm; }'
+    + 'td.uretilen { width: 24mm; } td.metraj { width: 24mm; text-align: center; }'
     + 'tfoot td { font-weight: bold; background: #F2F2F2; }'
     + '.not { margin-top: 4mm; font-size: 10.5pt; }'
     + '.imza { display: flex; gap: 12mm; margin-top: 12mm; font-size: 10.5pt; }'
@@ -3492,11 +3489,11 @@ function uretimEmriYazdir() {
     + '</style></head><body><div class="ekran-sarma">'
     + '<button class="yazdir-btn" onclick="window.print()">🖨 Yazdır</button>'
     + '<div class="baslik"><h1>RAZ PLASTİK — ÜRETİM EMRİ</h1><span class="alt">Sıra numarasına göre üretilecek</span></div>'
-    + '<div class="bilgi"><span>Tarih: <b>' + fmtTarih(uEmri.tarih) + '</b></span><span>Makine: ' + makineAlan + '</span>' + (kim ? '<span>Hazırlayan: <b>' + esc(kim) + '</b></span>' : '') + '</div>'
-    + '<table><thead><tr><th>Sıra</th><th>Ürün</th><th>İstenen Adet</th><th>Üretilen</th><th>Not</th></tr></thead><tbody>' + govde + '</tbody>'
-    + '<tfoot><tr><td></td><td>TOPLAM</td><td class="adet">' + (toplam || '') + '</td><td></td><td></td></tr></tfoot></table>'
+    + '<div class="bilgi"><span>Tarih: <b>' + fmtTarih(uEmri.tarih) + '</b></span></div>'
+    + '<table><thead><tr><th>Sıra</th><th>Ürün</th><th>Metraj</th><th>İstenen Adet</th><th>Üretilen</th><th>Not</th></tr></thead><tbody>' + govde + '</tbody>'
+    + '<tfoot><tr><td></td><td>TOPLAM</td><td></td><td class="adet">' + (toplam || '') + '</td><td></td><td></td></tr></tfoot></table>'
     + (uEmri.not ? '<div class="not"><b>Not:</b> ' + esc(uEmri.not) + '</div>' : '')
-    + '<div class="imza"><div>Hazırlayan</div><div>Teslim alan usta</div></div>'
+    + '<div class="imza"><div style="flex:0 0 45%">Teslim alan usta</div></div>'
     + '</div></body></html>';
   const blob = new Blob([sayfa], { type: "text/html" });
   const url = URL.createObjectURL(blob);
