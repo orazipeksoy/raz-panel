@@ -771,7 +771,7 @@ function kimBilgisi(x) {
   if (x.__degistiren) m += " — ✎ " + esc(x.__degistiren) + " · " + fmtZaman(x.__degisti);
   return '<div class="notrow" style="opacity:.8">' + m + '</div>';
 }
-const KAYIT_TURU_ADI = { hareketler: "Hareket", uretimler: "Üretim", mamul: "Stok ürünü", hammadde: "Hammadde", fiyatlar: "Fiyat", krediler: "Kredi", notlar: "Not", sayimlar: "Stok sayımı", personeller: "Personel", ayarlar: "Maliyet ayarları", cariBakiyeler: "Cari bakiyeler", masuraTablosu: "Masura ağırlıkları", genislikEslenikleri: "Genişlik eşlemeleri", musteriEslenikleri: "Müşteri eşlemeleri", gizliUyarilar: "Gizlenen uyarılar" };
+const KAYIT_TURU_ADI = { hareketler: "Hareket", uretimler: "Üretim", mamul: "Stok ürünü", hammadde: "Hammadde", fiyatlar: "Fiyat", krediler: "Kredi", notlar: "Not", sayimlar: "Stok sayımı", personeller: "Personel", uretimEmirleri: "Üretim listesi", ayarlar: "Maliyet ayarları", cariBakiyeler: "Cari bakiyeler", masuraTablosu: "Masura ağırlıkları", genislikEslenikleri: "Genişlik eşlemeleri", musteriEslenikleri: "Müşteri eşlemeleri", gizliUyarilar: "Gizlenen uyarılar" };
 // İşlem geçmişi ve silinenler listesinde bir kaydın tek satırlık özeti
 window.__raz2Ozet = function(k, el, eski) {
   if (!el) return KAYIT_TURU_ADI[k] || k;
@@ -863,6 +863,7 @@ function saglaId(d) {
   if (!d.uretimler) d.uretimler = [];
   if (!d.sayimlar) d.sayimlar = [];
   if (!d.cariBakiyeler) d.cariBakiyeler = {}; // müşteri fazla ödemesi (kredi) — bir sonraki faturaya otomatik düşer
+  if (!d.uretimEmirleri) d.uretimEmirleri = []; // üretime verilmiş, stoğa eklenmeyi bekleyen emirler
   if (!d.personeller) d.personeller = []; // maaş bordrosu — Krediler'deki gibi tek dokunuşla ödeme kaydı
   // Genişlik eşlemeleri artık KALİTE BAZLI ({kalite: {normGenislik: hedefGenislik}}) — çünkü aynı özel
   // etiket (ör. "70-50") farklı kalitelerde farklı masuraya karşılık gelebilir. Eski (tek seviyeli) format
@@ -3403,7 +3404,7 @@ function uEmriTasi(i, yon) {
   uEmriSakla(); render();
 }
 function uEmriTemizle() {
-  if (!confirm("Üretim emri listesi temizlensin mi?")) return;
+  if (!confirm("Üretim listesi temizlensin mi?")) return;
   uEmri = { tarih: yerelTarihStr(), makine: uEmri.makine, not: "", satirlar: [] };
   uEmriSakla(); render();
 }
@@ -3422,7 +3423,7 @@ function uEmriSecenekler(seciliId) {
 }
 function rUretimEmri() {
   if (!uEmri) uEmriYukle();
-  let h = '<div class="card"><div class="mtitle">📄 Üretim Emri <span class="pill">üretime verilecek sıralı liste</span></div>';
+  let h = '<div class="card"><div class="mtitle">📄 Üretim Listesi <span class="pill">üretime verilecek sıralı liste</span></div>';
   h += '<div class="formgrid">';
   h += '<div><div class="mini" style="margin-bottom:5px">Tarih</div>' + tarihSeciciHtml("ue-tarih", uEmri.tarih, "uEmriTarihSet") + '</div>';
   h += '</div>';
@@ -3450,16 +3451,37 @@ function rUretimEmri() {
   h += '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="uEmriSatirEkle()">+ Ürün Ekle</button>'
     + (uEmri.satirlar.length ? '<button class="chip" style="color:var(--red);border-color:var(--red)" onclick="uEmriTemizle()">Temizle</button>' : '') + '</div>';
   h += '<div style="margin-top:10px"><div class="mini" style="margin-bottom:5px">Genel not (isteğe bağlı)</div><input type="text" value="' + esc(uEmri.not) + '" oninput="uEmriSet(\'not\',this.value)" placeholder="ör. önce acil siparişler"></div>';
-  h += '<button class="btn" style="background:var(--navy2);margin-top:12px" onclick="uretimEmriYazdir()">🖨 Üretim Emrini Yazdır</button>';
+  h += '<button class="btn" style="background:var(--navy2);margin-top:12px" onclick="uretimEmriYazdir()">🖨 Yazdır ve Bekleyen Üretime Al</button>';
   h += '</div>';
   return h;
 }
+// Yazdırınca taslak "bekleyen üretim" olarak buluta kaydedilir ve taslak temizlenir.
+// Bekleyen emre sonradan üretilen adetler girilip stoğa eklenir (Bekleyen Üretimler kartı).
 function uretimEmriYazdir() {
   if (!uEmri) uEmriYukle();
   const satirlar = uEmri.satirlar.map(r => ({ r, m: data.mamul.find(x => x.__id === r.id) })).filter(x => x.m);
   if (!satirlar.length) { toast("Önce en az bir ürün seç"); return; }
   const adetsiz = satirlar.filter(x => !(parseInt(x.r.adet, 10) > 0));
   if (adetsiz.length && !confirm(adetsiz.length + " satırda adet yazılmamış — çıktıda boş kalacak. Yine de yazdırılsın mı?")) return;
+  if (!data.uretimEmirleri) data.uretimEmirleri = [];
+  const emir = {
+    __id: "e_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    tarih: uEmri.tarih, not: uEmri.not || "", durum: "bekliyor",
+    satirlar: satirlar.map(x => ({ id: x.m.__id, metraj: x.r.metraj || "", adet: parseInt(x.r.adet, 10) || 0, not: x.r.not || "", eklenen: 0 }))
+  };
+  data.uretimEmirleri.push(emir);
+  save();
+  uEmri = { tarih: yerelTarihStr(), makine: "", not: "", satirlar: [] };
+  uEmriSakla();
+  render();
+  emirCiktiAc(emir);
+  toast("✓ Yazdırıldı ve Bekleyen Üretimler'e eklendi");
+}
+
+// Bir üretim emrinin A4 çıktısı (yeni emir ya da bekleyen emrin tekrar yazdırılması)
+function emirCiktiAc(emir) {
+  const satirlar = emir.satirlar.map(r => ({ r, m: data.mamul.find(x => x.__id === r.id) })).filter(x => x.m);
+  if (!satirlar.length) { toast("Bu listedeki ürünler stokta bulunamadı"); return; }
   const toplam = satirlar.reduce((t, x) => t + (parseInt(x.r.adet, 10) || 0), 0);
   // Ürün özellikleri ayrı sütunlarda, alt alta aynı hizada (operatör karıştırmasın)
   const tipVar = satirlar.some(x => depoTipGoster(x.m.tip));
@@ -3487,7 +3509,7 @@ function uretimEmriYazdir() {
       + '<td class="uretilen"></td><td class="notc">' + esc(x.r.not || "") + '</td></tr>';
   });
   const ozSutun = 5 + (tipVar ? 1 : 0);
-  const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Üretim Emri</title><style>'
+  const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Üretim Listesi</title><style>'
     + '@page { size: A4 portrait; margin: 9mm; }'
     + '* { box-sizing: border-box; margin: 0; padding: 0; }'
     + 'body { font-family: Arial, sans-serif; color: #000; background: #fff; }'
@@ -3519,18 +3541,122 @@ function uretimEmriYazdir() {
     + '@media print { .yazdir-btn { display: none; } .ekran-sarma { max-width: none; padding: 0; } }'
     + '</style></head><body><div class="ekran-sarma">'
     + '<button class="yazdir-btn" onclick="window.print()">🖨 Yazdır</button>'
-    + '<div class="baslik"><h1>RAZ PLASTİK — ÜRETİM EMRİ</h1><span class="alt">Sıra numarasına göre üretilecek</span></div>'
-    + '<div class="bilgi"><span>Tarih: <b>' + fmtTarih(uEmri.tarih) + '</b></span></div>'
+    + '<div class="baslik"><h1>RAZ PLASTİK — ÜRETİM LİSTESİ</h1><span class="alt">Sıra numarasına göre üretilecek</span></div>'
+    + '<div class="bilgi"><span>Tarih: <b>' + fmtTarih(emir.tarih) + '</b></span></div>'
     + '<table><thead><tr><th>Sıra</th><th>Kalite</th><th>En</th>' + (tipVar ? '<th>Tip</th>' : '') + '<th>Gramaj</th><th>Kat</th><th>Masura</th><th>Metraj</th><th>İstenen Adet</th><th>Üretilen</th><th>Not</th></tr></thead><tbody>' + govde + '</tbody>'
     + '<tfoot><tr><td></td><td colspan="' + ozSutun + '">TOPLAM</td><td></td><td class="adet">' + (toplam || '') + '</td><td></td><td></td></tr></tfoot></table>'
-    + (uEmri.not ? '<div class="not"><b>Not:</b> ' + esc(uEmri.not) + '</div>' : '')
+    + (emir.not ? '<div class="not"><b>Not:</b> ' + esc(emir.not) + '</div>' : '')
     + '<div class="imza"><div style="flex:0 0 45%">Teslim alan usta</div></div>'
     + '</div></body></html>';
   const blob = new Blob([sayfa], { type: "text/html" });
   const url = URL.createObjectURL(blob);
   const w = window.open(url, "_blank");
-  if (!w) { yazdirLinkGoster(url, "Üretim Emri Hazır", "Üretim Emrini Aç"); return; }
-  toast("Üretim emri yeni sekmede açıldı — Yazdır'a dokun");
+  if (!w) { yazdirLinkGoster(url, "Üretim Listesi Hazır", "Üretim Listesini Aç"); return; }
+  toast("Üretim listesi yeni sekmede açıldı — Yazdır'a dokun");
+}
+
+// ============ BEKLEYEN ÜRETİMLER ============
+// Girilen (henüz stoğa eklenmemiş) adetler sadece bu cihazda, ekranda tutulur — her tuşta buluta yazılmasın.
+const __emirGiris = {};
+function emirGirisSet(eid, i, v) { (__emirGiris[eid] = __emirGiris[eid] || {})[i] = v; }
+function emirKalaniDoldur(eid) {
+  const e = (data.uretimEmirleri || []).find(x => x.__id === eid); if (!e) return;
+  e.satirlar.forEach((r, i) => { const kalan = Math.max(0, (r.adet || 0) - (r.eklenen || 0)); emirGirisSet(eid, i, kalan ? String(kalan) : ""); });
+  render();
+}
+function emirStogaEkle(eid) {
+  const e = (data.uretimEmirleri || []).find(x => x.__id === eid); if (!e) return;
+  const giris = __emirGiris[eid] || {};
+  const eklenecek = [];
+  for (let i = 0; i < e.satirlar.length; i++) {
+    const v = String(giris[i] || "").trim();
+    if (!v) continue;
+    const n = parseInt(v, 10);
+    if (isNaN(n) || n < 0) { toast((i + 1) + ". satırda geçerli bir adet yazın"); return; }
+    if (n === 0) continue;
+    const m = data.mamul.find(x => x.__id === e.satirlar[i].id);
+    if (!m) { toast((i + 1) + ". satırdaki ürün stokta bulunamadı"); return; }
+    eklenecek.push({ i, n, m });
+  }
+  if (!eklenecek.length) { toast("Önce üretilen adetleri yazın"); return; }
+  const fazla = eklenecek.filter(x => (e.satirlar[x.i].eklenen || 0) + x.n > (e.satirlar[x.i].adet || 0) && e.satirlar[x.i].adet > 0);
+  const ozet = eklenecek.map(x => "• " + uEmriUrunAdi(x.m) + ": +" + x.n + " bobin").join("\n");
+  if (!confirm("Stoğa eklensin mi?\n\n" + ozet + (fazla.length ? "\n\nNot: " + fazla.length + " satırda istenenden fazla üretim giriliyor." : ""))) return;
+  eklenecek.forEach(x => { x.m.adet += x.n; e.satirlar[x.i].eklenen = (e.satirlar[x.i].eklenen || 0) + x.n; });
+  // Aylık üretim raporlarında görünsün diye üretim kaydı
+  const urunler = eklenecek.map(x => ({ key: x.m.kalite + "|" + x.m.tip + "|" + x.m.genislik + "|" + x.m.gramaj, ad: x.m.kalite + " " + x.m.tip + " " + x.m.genislik, adet: x.n, kg: x.n * (x.m.kgBobin || 0), masurali: !!x.m.masurali }));
+  if (!data.uretimler) data.uretimler = [];
+  data.uretimler.push({
+    __id: "u_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    kaynak: "emir", emirId: e.__id,
+    tarih: yerelTarihStr(), vardiya: "—", makine: "—", usta: "Üretim listesi", saat: 0,
+    not: "Üretim listesi (" + fmtTarih(e.tarih) + ")",
+    urunler, hammaddeler: [], uretilenKg: urunler.reduce((t, u) => t + u.kg, 0), hammaddeKg: 0, verimlilik: null
+  });
+  const bitti = e.satirlar.every(r => (r.eklenen || 0) >= (r.adet || 0));
+  if (bitti) { e.durum = "tamamlandi"; e.kapandi = yerelTarihStr(); }
+  delete __emirGiris[eid];
+  save(); render();
+  toast("✓ " + eklenecek.reduce((t, x) => t + x.n, 0) + " bobin stoğa eklendi" + (bitti ? " — liste tamamlandı" : ""));
+}
+function emirKapat(eid) {
+  const e = (data.uretimEmirleri || []).find(x => x.__id === eid); if (!e) return;
+  const eksik = e.satirlar.filter(r => (r.eklenen || 0) < (r.adet || 0)).length;
+  if (!confirm("Liste kapatılsın mı?" + (eksik ? "\n\n" + eksik + " satır istenen adede ulaşmadı; kalanlar üretilmeyecek sayılır." : ""))) return;
+  e.durum = "tamamlandi"; e.kapandi = yerelTarihStr();
+  delete __emirGiris[eid];
+  save(); render();
+}
+function emirSil(eid) {
+  const e = (data.uretimEmirleri || []).find(x => x.__id === eid); if (!e) return;
+  if (e.satirlar.some(r => (r.eklenen || 0) > 0)) { toast("Bu listeden stoğa ekleme yapılmış — silmek yerine Kapat'ı kullanın"); return; }
+  if (!confirm(fmtTarih(e.tarih) + " tarihli üretim listesi silinsin mi?")) return;
+  data.uretimEmirleri = data.uretimEmirleri.filter(x => x.__id !== eid);
+  save(); render();
+}
+function emirTekrarYazdir(eid) { const e = (data.uretimEmirleri || []).find(x => x.__id === eid); if (e) emirCiktiAc(e); }
+function rBekleyenUretimler() {
+  const tum = data.uretimEmirleri || [];
+  const bekleyen = tum.filter(e => e.durum !== "tamamlandi");
+  const biten = tum.filter(e => e.durum === "tamamlandi").slice(-5).reverse();
+  if (!bekleyen.length && !biten.length) return "";
+  let h = '<div class="card" style="border:1.5px solid var(--blue)"><div class="mtitle">⏳ Bekleyen Üretimler <span class="pill">' + bekleyen.length + '</span></div>';
+  if (!bekleyen.length) h += '<div class="mini">Bekleyen üretim listesi yok.</div>';
+  bekleyen.forEach(e => {
+    const istenen = e.satirlar.reduce((t, r) => t + (r.adet || 0), 0), eklenen = e.satirlar.reduce((t, r) => t + (r.eklenen || 0), 0);
+    const giris = __emirGiris[e.__id] || {};
+    h += '<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px;background:#1B1D28">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><b>' + fmtTarih(e.tarih) + ' listesi</b>'
+      + '<span class="mini">' + eklenen + ' / ' + istenen + ' bobin stoğa eklendi</span></div>'
+      + doluCubuk(eklenen, istenen || 1, "var(--blue)")
+      + (e.not ? '<div class="mini" style="margin-top:4px">Not: ' + esc(e.not) + '</div>' : '');
+    e.satirlar.forEach((r, i) => {
+      const m = data.mamul.find(x => x.__id === r.id);
+      const tamam = (r.eklenen || 0) >= (r.adet || 0) && r.adet > 0;
+      const k3 = m && /^3/.test(m.katSayisi || "");
+      h += '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #262837">'
+        + '<b style="width:20px;text-align:center;color:var(--gold);flex-shrink:0">' + (i + 1) + '</b>'
+        + '<div style="flex:1;min-width:0;font-size:13px;line-height:1.3">' + (k3 ? '<span class="pill" style="background:#FFD54F;color:#1a1400">3 KATLI</span> ' : '') + (m ? esc(uEmriUrunAdi(m)) : '<span class="kirmizi">ürün stokta yok</span>')
+        + '<div class="mini">' + (r.metraj ? esc(r.metraj) + ' · ' : '') + 'istenen <b>' + (r.adet || 0) + '</b> · eklenen <b class="' + (tamam ? 'yesil' : '') + '">' + (r.eklenen || 0) + '</b>' + (r.not ? ' · ' + esc(r.not) : '') + '</div></div>'
+        + '<input type="text" inputmode="numeric" placeholder="' + (tamam ? "✓" : "üretilen") + '" value="' + esc(giris[i] || "") + '" oninput="emirGirisSet(\'' + e.__id + '\',' + i + ',this.value)" style="width:86px;flex-shrink:0;text-align:right;padding:9px 10px">'
+        + '</div>';
+    });
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">'
+      + '<button class="chip" style="color:var(--green);border-color:var(--green)" onclick="emirStogaEkle(\'' + e.__id + '\')">✓ Stoğa Ekle</button>'
+      + '<button class="chip" onclick="emirKalaniDoldur(\'' + e.__id + '\')">Kalanı doldur</button>'
+      + '<button class="chip" onclick="emirTekrarYazdir(\'' + e.__id + '\')">🖨 Tekrar yazdır</button>'
+      + '<button class="chip" onclick="emirKapat(\'' + e.__id + '\')">Kapat</button>'
+      + (eklenen === 0 ? '<button class="chip" style="color:var(--red);border-color:var(--red)" onclick="emirSil(\'' + e.__id + '\')">Sil</button>' : '')
+      + '</div></div>';
+  });
+  if (biten.length) {
+    h += '<div class="mini" style="font-weight:800;margin:6px 0 4px">Son tamamlananlar</div>';
+    biten.forEach(e => {
+      const istenen = e.satirlar.reduce((t, r) => t + (r.adet || 0), 0), eklenen = e.satirlar.reduce((t, r) => t + (r.eklenen || 0), 0);
+      h += '<div class="mini" style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #262837"><span>✓ ' + fmtTarih(e.tarih) + ' listesi — ' + e.satirlar.length + ' ürün</span><span>' + eklenen + ' / ' + istenen + ' bobin' + (e.kapandi ? ' · ' + fmtTarih(e.kapandi) : '') + '</span></div>';
+    });
+  }
+  return h + '</div>';
 }
 
 // Ustaların dolduracağı boş vardiya formu — bir A4'te 4 vardiya, her vardiyada 5 ürün satırı.
@@ -3597,6 +3723,7 @@ function rUretim() {
     + '<div class="kpi"><div class="lbl">Bu Ay Satılan Masura</div><div class="v" style="color:var(--amber)">'+fmtKg(masAn.toplamMasuraKg)+' kg</div><span class="mini">2. Kalite satışlarından — hammaddesi ödenmemiş, faturaya yansıyan ağırlık</span></div>'
     + '</div>';
 
+  html += rBekleyenUretimler();
   html += rUretimEmri();
   html += rHizliGiris();
 
@@ -5471,6 +5598,7 @@ function tekrarBirlestir(gi) {
   // Bu cihazdaki taslaklarda silinen ürüne bağlı satırlar kalan ürüne aktarılır
   try {
     if (uEmri) { uEmri.satirlar.forEach(r => { if (silinecek.has(r.id)) r.id = kalan.__id; }); uEmriSakla(); }
+    (data.uretimEmirleri || []).forEach(e => e.satirlar.forEach(r => { if (silinecek.has(r.id)) r.id = kalan.__id; }));
     if (hizli && hizli.adet) {
       silinecek.forEach(id => { if (hizli.adet[id]) { if (!hizli.adet[kalan.__id]) hizli.adet[kalan.__id] = hizli.adet[id]; delete hizli.adet[id]; } });
       hizliSakla();
