@@ -692,6 +692,22 @@ const MASURALAR = { "120 cm": {masura: 1.74, bobin: 12.4}, "145 cm": {masura: 2.
 // Genişlik yazımındaki küçük farkları (boşluksuz "160cm", fazla boşluk, büyük/küçük harf) tolere eder —
 // böylece bir yazım farkı yüzünden satışlar sessizce masura hesabından düşmez.
 function genislikNormalize(g) { return String(g||"").trim().toLowerCase().replace(/\s+/g," ").replace(/(\d)\s*cm/,"$1 cm"); }
+// Gramaj yazımını tek biçime çevirir: "40", "40gr", "40 GR/M2", "40 gr/m²" → "40 gr/m²"; boş → "-"
+function gramajNormalize(g) {
+  const s = String(g == null ? "" : g).trim();
+  if (!s || s === "-") return "-";
+  const m = s.match(/\d+(?:[.,]\d+)?/);
+  return m ? m[0].replace(".", ",") + " gr/m²" : s;
+}
+// Ürünün yazım farklarından bağımsız kimliği (kalite · tip · genişlik · gramaj).
+// "Standart" ve kat bilgisi taşıyan eski tipler ("3 Katlı") tip sayılmaz — kat ayrı alanda tutulur.
+function urunAnahtarNorm(kalite, tip, genislik, gramaj) {
+  const t = (!tip || tip === "Standart" || /katl/i.test(tip)) ? "" : String(tip).trim();
+  return [String(kalite || "").trim(), t, genislikNormalize(genislik), gramajNormalize(gramaj)].join("|").toLocaleLowerCase("tr");
+}
+function urunAnahtarNormKey(key) { const p = String(key || "").split("|"); return urunAnahtarNorm(p[0], p[1], p[2], p[3]); }
+// Aynı ürün sayılanlar: normal kimlik + kat + masuralı/masurasız aynı
+function mamulTekrarAnahtari(m) { return urunAnahtarNorm(m.kalite, m.tip, m.genislik, m.gramaj) + "|" + (m.katSayisi || "") + "|" + (m.masurali ? 1 : 0); }
 const MASURALAR_NORM = {};
 const MASURALAR_KANONIK = {}; // normalize edilmiş -> gerçek MASURALAR anahtarı (raporlarda tutarlı isim göstermek için)
 Object.keys(MASURALAR).forEach(k => { const n = genislikNormalize(k); MASURALAR_NORM[n] = MASURALAR[k]; MASURALAR_KANONIK[n] = k; });
@@ -833,6 +849,11 @@ function saglaId(d) {
   if (!d.mamul) d.mamul = [];
   // Ürünlerin kalıcı kimliği (hızlı giriş ekranı adetleri ürün kimliğiyle tutar)
   d.mamul.forEach(m => { if (!m.__id) m.__id = "m_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); });
+  // Yazım farklarını standartlaştır ("40" / "40gr" → "40 gr/m²", "100cm" → "100 cm") — aynı ürün iki kez görünmesin
+  d.mamul.forEach(m => {
+    const gr = gramajNormalize(m.gramaj); if (gr !== m.gramaj) m.gramaj = gr;
+    if (m.genislik) { const gn = genislikNormalize(m.genislik); if (gn !== m.genislik) m.genislik = gn; }
+  });
   if (!d.hammadde) d.hammadde = [];
   d.hammadde.forEach(h => { if (!h.kalite) h.kalite = "Genel"; });
   if (!d.fiyatlar) d.fiyatlar = [];
@@ -2463,16 +2484,17 @@ function urunSatisAyOzeti(ayKey) {
   const urunler = {};
   satislar.forEach(h => {
     (h.kalemler||[]).forEach(k => {
-      if (!urunler[k.key]) urunler[k.key] = { ad: k.ad, adet: 0, kg: 0, islemSayisi: 0 };
+      const nk = urunAnahtarNormKey(k.key);
+      if (!urunler[nk]) urunler[nk] = { ad: k.ad, adet: 0, kg: 0, islemSayisi: 0 };
       const adet = k.adet||0;
-      urunler[k.key].adet += adet;
+      urunler[nk].adet += adet;
       if (k.kg != null) {
-        urunler[k.key].kg += k.kg;
+        urunler[nk].kg += k.kg;
       } else {
         const m = mamulBulKeyIle(k.key, k.masurali);
-        urunler[k.key].kg += adet * (m ? (m.kgBobin||0) : 0);
+        urunler[nk].kg += adet * (m ? (m.kgBobin||0) : 0);
       }
-      urunler[k.key].islemSayisi += 1;
+      urunler[nk].islemSayisi += 1;
     });
   });
   return { urunler, tanimliOlmayanSatisSayisi };
@@ -3833,7 +3855,12 @@ function editKalemUrunSec(i, stokIdx) {
 // bilgisi verilirse ONUNLA eşleşeni tercih eder; verilmezse ya da eşleşen yoksa (geriye dönük
 // uyumluluk) key'e uyan ilk kaydı döndürür.
 function keyToMamulIdx(key, masurali) {
-  const adaylar = data.mamul.map((m,i) => i).filter(i => { const m = data.mamul[i]; return m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj === key; });
+  let adaylar = data.mamul.map((m,i) => i).filter(i => { const m = data.mamul[i]; return m.kalite+"|"+m.tip+"|"+m.genislik+"|"+m.gramaj === key; });
+  // Birebir eşleşme yoksa yazım farkını yok sayarak ara (ör. kayıtta "40", üründe "40 gr/m²")
+  if (!adaylar.length) {
+    const nk = urunAnahtarNormKey(key);
+    adaylar = data.mamul.map((m,i) => i).filter(i => { const m = data.mamul[i]; return urunAnahtarNorm(m.kalite, m.tip, m.genislik, m.gramaj) === nk; });
+  }
   if (!adaylar.length) return -1;
   if (masurali != null) {
     const tam = adaylar.find(i => !!data.mamul[i].masurali === !!masurali);
@@ -5303,7 +5330,7 @@ function stokDepoTablosuHtml() {
   const satirMap = {};
   liste.forEach(({ m, i }) => {
     const tipG = depoTipGoster(m.tip);
-    const anahtar = m.kalite + "|" + tipG + "|" + genislikNormalize(m.genislik) + "|" + String(m.gramaj || "-").toLowerCase().replace(/\s+/g, "");
+    const anahtar = urunAnahtarNorm(m.kalite, m.tip, m.genislik, m.gramaj);
     if (!satirMap[anahtar]) satirMap[anahtar] = { kalite: m.kalite, tip: tipG || "Standart", genislik: m.genislik, gramaj: m.gramaj || "-", hucre: __depoSutunlar.map(() => []) };
     const c = __depoSutunlar.findIndex(s => s.masurali === !!m.masurali && s.kat === (m.katSayisi || ""));
     if (c >= 0) satirMap[anahtar].hucre[c].push(i);
@@ -5333,6 +5360,13 @@ function stokDepoTablosuHtml() {
     h += '</tr>';
   });
   h += '</table></div>';
+  // Masuralı ama masura ağırlığı tanımsız ölçüler — işçilik hesabında masura düşülemez
+  const eksikler = {};
+  liste.forEach(({ m }) => { if (masuraEksikMi(m)) eksikler[m.kalite + "|" + genislikNormalize(m.genislik)] = m; });
+  Object.values(eksikler).forEach(m => {
+    h += '<div class="uyari krit" style="margin-top:8px"><span class="uyari-ikon">⚠</span><span><b>' + esc(m.kalite + " " + m.genislik) + '</b>: masuralı ama masura ağırlığı yok — işçilik hesabında masura düşülemez.</span>'
+      + '<button class="chip" style="flex-shrink:0" onclick="masuraTanimlaHizli(\'' + jsStr(m.kalite) + '\',\'' + jsStr(m.genislik) + '\',' + (m.kgBobin || 0) + ')">masura ağırlığı yok — tanımla</button></div>';
+  });
   h += '<div class="mini" style="margin-top:8px">Dolu hücreye dokun → yeni adedi yaz (<b>+20</b> ekler, <b>-5</b> düşer). <b>+</b> olan boş hücreye dokun → o ürünü stoğa ekle. Yeni bir ölçü için "+ Yeni Ürün Ekle".</div>';
   return h;
 }
@@ -5376,6 +5410,47 @@ function depoHucre(ri, ci) {
     }, 50);
   }
 }
+// Standart yazıma çevrildikten sonra hâlâ iki kez duran ürünler (aynı ölçü, kat ve masura durumu)
+function tekrarEdenUrunler() {
+  const g = {};
+  data.mamul.forEach(m => { const a = mamulTekrarAnahtari(m); (g[a] = g[a] || []).push(m); });
+  return Object.values(g).filter(l => l.length > 1);
+}
+function tekrarUyarisiHtml() {
+  const gruplar = tekrarEdenUrunler();
+  if (!gruplar.length) return "";
+  let h = '<div class="uyari krit" style="flex-direction:column;align-items:stretch;gap:6px;margin-bottom:10px"><div><b>⚠ Aynı ürün birden fazla kez kayıtlı</b> — yazım farkından açılmış olabilir. Birleştirince adetler toplanır, tek ürün kalır.</div>';
+  gruplar.forEach((l, gi) => {
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px;border-top:1px solid #4A2328;padding-top:6px">'
+      + '<span><b>' + esc(uEmriUrunAdi(l[0])) + '</b><br><span class="mini">' + l.map(m => m.adet + ' adet' + (m.kgBobin ? ' (' + fmtKg(m.kgBobin) + ' kg/bobin)' : '')).join(' + ') + '</span></span>'
+      + '<button class="chip" style="flex-shrink:0;color:var(--green);border-color:var(--green)" onclick="tekrarBirlestir(' + gi + ')">Birleştir</button></div>';
+  });
+  return h + '</div>';
+}
+function tekrarBirlestir(gi) {
+  const l = tekrarEdenUrunler()[gi];
+  if (!l) return;
+  const kalan = l[0], digerleri = l.slice(1);
+  const toplam = l.reduce((t, m) => t + (m.adet || 0), 0);
+  const kglar = Array.from(new Set(l.map(m => m.kgBobin).filter(Boolean)));
+  if (!confirm(uEmriUrunAdi(kalan) + "\n\n" + l.length + " kayıt tek ürüne birleşecek: " + l.map(m => m.adet).join(" + ") + " = " + toplam + " adet."
+    + (kglar.length > 1 ? "\nKg/bobin değerleri farklı (" + kglar.map(fmtKg).join(", ") + ") — " + fmtKg(kalan.kgBobin) + " kullanılacak." : "")
+    + "\n\nBirleştirilsin mi?")) return;
+  kalan.adet = toplam;
+  const silinecek = new Set(digerleri.map(m => m.__id));
+  data.mamul = data.mamul.filter(m => !silinecek.has(m.__id));
+  // Bu cihazdaki taslaklarda silinen ürüne bağlı satırlar kalan ürüne aktarılır
+  try {
+    if (uEmri) { uEmri.satirlar.forEach(r => { if (silinecek.has(r.id)) r.id = kalan.__id; }); uEmriSakla(); }
+    if (hizli && hizli.adet) {
+      silinecek.forEach(id => { if (hizli.adet[id]) { if (!hizli.adet[kalan.__id]) hizli.adet[kalan.__id] = hizli.adet[id]; delete hizli.adet[id]; } });
+      hizliSakla();
+    }
+  } catch(e) {}
+  save(); render();
+  toast("✓ Birleştirildi: " + toplam + " adet");
+}
+
 function stokGorunumSec(g) {
   stokGorunum = g;
   try { localStorage.setItem("raz-stok-gorunum", g); } catch(e) {}
@@ -5510,6 +5585,7 @@ function rStok() {
     + '<div class="stok-kalite-filtre" id="stok-kalite-filtre">'
     + ["Tümü","1. Kalite","2. Kalite","ECO-1"].map(k => '<button class="chip'+(stokKaliteFiltre===k?" on":"")+'" data-kalite="'+esc(k)+'" onclick="stokKaliteFiltreSec(\''+esc(k)+'\')">'+esc(k)+'</button>').join("")
     + '</div>'
+    + tekrarUyarisiHtml()
     + '<div id="stok-mamul-tablosu">' + stokMamulTablosuHtml() + '</div>'
     + '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="mamulEkle()">+ Yeni Ürün Ekle</button></div>'
     + '<div class="mini" style="margin-top:8px">Değer, ürünün Satış Fiyatları listesindeki KDV hariç fiyatı üzerinden KDV dahil hesaplanır. Fiyatı olmayan ürünler için değer boş görünür.</div></div>';
@@ -5733,8 +5809,8 @@ function urunKaydet(idx) {
   let kalite = gv("um-kalite");
   if (kalite === "__diger") kalite = (gv("um-kalite-serbest")||"").trim();
   const tip = gv("um-tip").trim() || "Standart";
-  const genislik = gv("um-genislik").trim();
-  const gramaj = gv("um-gramaj").trim() || "-";
+  const genislik = genislikNormalize(gv("um-genislik"));
+  const gramaj = gramajNormalize(gv("um-gramaj"));
   const katSayisi = gv("um-kat");
   const masuraliRaw = gv("um-masurali");
   const adet = parseInt(gv("um-adet"));
@@ -5752,6 +5828,10 @@ function urunKaydet(idx) {
     if (!gramaj || gramaj === "-" || !/\d/.test(gramaj)) { toast("1. Kalite için Gramaj (gr/m²) girmen gerekiyor"); return; }
   }
   const kayit = {kalite, tip, genislik, gramaj, adet: isNaN(adet)?0:adet, kgBobin, katSayisi, masurali};
+  // Aynı ürün (yazımı farklı olsa da, aynı kat ve masura durumuyla) zaten varsa ikinci kez açılmasın
+  const tekrarAnahtar = mamulTekrarAnahtari(kayit);
+  const tekrar = data.mamul.find((m, i) => i !== idx && mamulTekrarAnahtari(m) === tekrarAnahtar);
+  if (tekrar) { toast("Bu ürün zaten var: " + uEmriUrunAdi(tekrar) + " (" + tekrar.adet + " adet) — onun adedini düzenleyin"); return; }
   if (idx != null && idx >= 0) {
     ["__id","__olusturan","__olusturuldu"].forEach(a => { if (data.mamul[idx][a]) kayit[a] = data.mamul[idx][a]; });
     data.mamul[idx] = kayit;
@@ -5759,8 +5839,6 @@ function urunKaydet(idx) {
   } else {
     // aynı ürün var mı kontrol — masuralı/masurasız artık ürünü ayırt eden bir özellik: aynı
     // kalite/tip/genişlik/gramaj'ın hem masuralı hem masurasız versiyonu AYRI stok kalemi olabilir.
-    const ayni = data.mamul.find(m => m.kalite===kalite && m.tip===tip && m.genislik===genislik && m.gramaj===gramaj && !!m.masurali===masurali);
-    if (ayni) { toast("Bu ürün (aynı masuralı/masurasız durumuyla) zaten var — adedini düzenleyin"); urunModalKapat(); return; }
     data.mamul.push(kayit);
     toast("✓ Yeni ürün eklendi");
     // Satış ekranından "yeni ürün" ile açıldıysa o satıra otomatik seç + fiyatı öner
