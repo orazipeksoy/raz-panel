@@ -1802,7 +1802,7 @@ function faturaUrunBul(s) {
     if (p > enIyiPuan) { enIyi = m; enIyiPuan = p; esitSayisi = 1; }
     else if (p === enIyiPuan) { esitSayisi++; if ((m.adet || 0) > (enIyi.adet || 0)) enIyi = m; }
   });
-  if (!enIyi || (!kalite && genislik == null)) return { id: "", guven: "yok" };
+  if (!enIyi || (!kalite && genislik == null)) return { id: "", guven: "yok", kalite, genislik };
   return { id: enIyi.__id, guven: esitSayisi > 1 ? "belirsiz" : "tahmin" };
 }
 
@@ -1829,7 +1829,14 @@ function faturaKartOlustur(f) {
     const fiyat = tonMu ? s.fiyat / 1000 : s.fiyat;
     const bul = faturaUrunBul(s);
     const stokDisi = !bul.id && /nakliye|navlun|taşıma|tasima|kargo|hizmet/.test(trFold(s.ad));
-    return { ad: s.ad, anahtar: faturaUrunAnahtari(s), birim: s.birim, kgMi, mamulId: bul.id, guven: bul.guven, stokDisi,
+    // Ürün bulunamadıysa faturadan okunan kalite/ölçü seçiciye ön seçim olarak konur
+    const secim = {};
+    if (!bul.id && bul.kalite && data.mamul.some(m => m.kalite === bul.kalite)) {
+      secim.kalite = bul.kalite;
+      const g = data.mamul.find(m => m.kalite === bul.kalite && parseInt(m.genislik, 10) === bul.genislik);
+      if (g) secim.genislik = g.genislik;
+    }
+    return { ad: s.ad, anahtar: faturaUrunAnahtari(s), birim: s.birim, kgMi, mamulId: bul.id, guven: bul.guven, stokDisi, secim,
       adet: kgMi ? "" : sayiStr(miktar), kg: kgMi ? sayiStr(miktar) : "", fiyatTuru: kgMi ? "kg" : "adet", fiyat: sayiStr(fiyat), kdv: s.kdv };
   });
   if (kart.kalemler.some(k => k.kdv != null && k.kdv !== 20)) kart.uyarilar.push("KDV oranı %20 değil — satır tutarları faturadan farklı görünebilir, fatura toplamı esas alınır");
@@ -1937,9 +1944,92 @@ function fkUrunSec(id, ki, v) {
   if (v === "__yeni") { window.__yeniUrunFatura = { id, ki }; urunModal(null); return; }
   x.stokDisi = v === "__disi";
   x.mamulId = x.stokDisi ? "" : v;
+  if (!v) x.secim = {};
+  x.acik = !v;
   x.guven = "elle";
   faturaKuyrukSakla(); renderKorumali();
 }
+// --- Adım adım ürün seçici: Kalite → Ölçü → Özellik → Masura ---
+// Uzun açılır liste yerine her adımda sadece o ana kadarki seçime uyan seçenekler düğme olarak gösterilir.
+const FK_ADIMLAR = [["kalite", "Kalite"], ["genislik", "Ölçü"], ["varyant", "Özellik"], ["masura", "Masura"]];
+function fkVaryant(m) {
+  const p = [];
+  const tip = m.tip || "";
+  if (tip && tip !== "Standart" && !/katl/i.test(tip)) p.push(tip);
+  if (m.gramaj && m.gramaj !== "-") p.push(m.gramaj);
+  const kat = m.katSayisi || (/(\d)\s*katl/i.test(tip) ? tip.match(/(\d)/)[1] + " Katlı" : "");
+  if (kat) p.push(kat);
+  return p.join(" · ") || "Standart";
+}
+function fkMamulDeger(m, alan) {
+  if (alan === "kalite") return m.kalite;
+  if (alan === "genislik") return m.genislik;
+  if (alan === "varyant") return fkVaryant(m);
+  return m.masurali ? "Masuralı" : "Masurasız";
+}
+function fkAdaylar(secim, kadar) {
+  return data.mamul.filter(m => FK_ADIMLAR.slice(0, kadar).every(([a]) => secim[a] == null || fkMamulDeger(m, a) === secim[a]));
+}
+// Tek seçenek kalan adımları kendiliğinden doldurur; dört adım da belliyse ürünü döner
+function fkSecimCoz(secim) {
+  for (let i = 0; i < FK_ADIMLAR.length; i++) {
+    const a = FK_ADIMLAR[i][0];
+    if (secim[a] != null) continue;
+    const secenek = Array.from(new Set(fkAdaylar(secim, i).map(m => fkMamulDeger(m, a))));
+    if (secenek.length !== 1) return null;
+    secim[a] = secenek[0];
+  }
+  return fkAdaylar(secim, FK_ADIMLAR.length)[0] || null;
+}
+function fkSeciciAc(id, ki) { const k = faturaKart(id); if (k && k.kalemler[ki]) { k.kalemler[ki].acik = true; renderKorumali(); } }
+function fkSecimSec(id, ki, alan, deger) {
+  const k = faturaKart(id); if (!k || !k.kalemler[ki]) return;
+  const x = k.kalemler[ki];
+  const sira = FK_ADIMLAR.findIndex(a => a[0] === alan);
+  const secim = {};
+  const m = data.mamul.find(mm => mm.__id === x.mamulId);
+  FK_ADIMLAR.slice(0, sira).forEach(([a]) => { secim[a] = m ? fkMamulDeger(m, a) : (x.secim || {})[a]; });
+  secim[alan] = deger;
+  const bulunan = fkSecimCoz(secim);
+  x.secim = secim; x.mamulId = bulunan ? bulunan.__id : ""; x.stokDisi = false; x.guven = "elle"; x.acik = !bulunan;
+  faturaKuyrukSakla(); renderKorumali();
+}
+function fkSeciciHtml(id, ki, x) {
+  const m = x.stokDisi ? null : data.mamul.find(mm => mm.__id === x.mamulId);
+  const secim = m ? { kalite: m.kalite, genislik: m.genislik, varyant: fkVaryant(m), masura: fkMamulDeger(m, "masura") } : Object.assign({}, x.secim || {});
+  const dugme = (on, etiket, onclick) => '<button type="button" class="chip" style="min-height:36px;padding:7px 12px;font-size:13px' + (on ? ';background:#1E4535;border-color:var(--green);color:#fff' : '') + '" onclick="' + onclick + '">' + (on ? "✓ " : "") + etiket + '</button>';
+  // Ürün belliyse satır kısa gösterilir; "Değiştir" ile seçici açılır
+  if (m && !x.acik) {
+    return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13.5px;padding:8px 10px;border-radius:8px;background:var(--green-bg);border:1px solid #1E4535">'
+      + '<span style="flex:1;min-width:200px"><b>' + esc(mamulEtiket(m)) + '</b> <span class="mini">(stok: ' + m.adet + ')</span></span>'
+      + '<button type="button" class="chip" style="min-height:34px;padding:6px 14px" onclick="fkSeciciAc(\'' + id + '\',' + ki + ')">Değiştir</button></div>';
+  }
+  if (x.stokDisi && !x.acik) {
+    return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13.5px;padding:8px 10px;border-radius:8px;border:1px solid var(--line)">'
+      + '<span style="flex:1;min-width:200px">Stok dışı satır — stoktan düşmez</span>'
+      + '<button type="button" class="chip" style="min-height:34px;padding:6px 14px" onclick="fkSeciciAc(\'' + id + '\',' + ki + ')">Değiştir</button></div>';
+  }
+  let h = '<div style="display:flex;flex-direction:column;gap:6px">';
+  for (let i = 0; i < FK_ADIMLAR.length; i++) {
+    const [a, ad] = FK_ADIMLAR[i];
+    if (x.stokDisi || (i > 0 && secim[FK_ADIMLAR[i - 1][0]] == null)) break;
+    let secenek = Array.from(new Set(fkAdaylar(secim, i).map(mm => fkMamulDeger(mm, a))));
+    if (a === "genislik") secenek.sort((p, q) => (parseInt(p, 10) || 0) - (parseInt(q, 10) || 0));
+    else secenek.sort((p, q) => p.localeCompare(q, "tr"));
+    h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="mini" style="width:58px;flex-shrink:0;font-weight:700">' + ad + '</span>'
+      + secenek.map(v => dugme(secim[a] === v, esc(v), "fkSecimSec('" + id + "'," + ki + ",'" + a + "','" + jsStr(v) + "')")).join("")
+      + '</div>';
+  }
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="mini" style="width:58px;flex-shrink:0"></span>'
+    + dugme(x.stokDisi, "Stok dışı (nakliye vb.)", "fkUrunSec('" + id + "'," + ki + ",'" + (x.stokDisi ? "" : "__disi") + "')")
+    + dugme(false, "+ Stokta yok, yeni ürün", "fkUrunSec('" + id + "'," + ki + ",'__yeni')")
+    + '</div>';
+  h += m
+    ? '<div style="font-size:13.5px;padding:8px 10px;border-radius:8px;background:var(--green-bg);border:1px solid #1E4535">Seçilen: <b>' + esc(mamulEtiket(m)) + '</b> <span class="mini">(stok: ' + m.adet + ')</span></div>'
+    : (x.stokDisi ? '' : '<div id="fk-' + id + '-' + ki + '-urun" class="fk-eksik" style="font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid var(--red);color:var(--red);font-weight:700">Ürün seçilmedi — yukarıdan adım adım seç</div>');
+  return h + '</div>';
+}
+
 // Yazarken ekran yeniden çizilmesin diye sadece özet kısmı güncellenir
 function fkOzetGuncelle(id) {
   const k = faturaKart(id), el = document.getElementById("fk-ozet-" + id);
@@ -2052,10 +2142,7 @@ function rFaturaOnay() {
           + '<input type="text" inputmode="decimal" id="fk-' + id + '-' + ki + '-' + alan + '" class="' + (fkSayi(x[alan]) ? "" : "fk-eksik") + '" placeholder="' + esc(ph) + '" value="' + esc(x[alan]) + '" oninput="fkKalemSet(\'' + id + '\',' + ki + ',\'' + alan + '\',this.value,this)"></div>';
         html += '<div style="border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--card)">'
           + '<div class="mini">Faturada: <b style="color:var(--ink)">' + esc(x.ad) + '</b> — ' + (x.kgMi ? esc(x.kg) + ' kg × ₺' + esc(x.fiyat) + '/kg' : esc(x.adet) + ' ' + (x.birim && ["NIU", "C62", "ADET", "PCE", "H87"].indexOf(x.birim) < 0 ? esc(x.birim) : "adet") + ' × ₺' + esc(x.fiyat) + '/adet') + '</div>'
-          + '<select id="fk-' + id + '-' + ki + '-urun" class="' + (!x.stokDisi && !m ? "fk-eksik" : "") + '" onchange="fkUrunSec(\'' + id + '\',' + ki + ',this.value)"><option value="">— ürün seç —</option>'
-          + data.mamul.map(mm => '<option value="' + esc(mm.__id) + '"' + (mm.__id === x.mamulId && !x.stokDisi ? " selected" : "") + '>' + esc(mamulEtiket(mm)) + ' (stok: ' + mm.adet + ')</option>').join("")
-          + '<option value="__disi"' + (x.stokDisi ? " selected" : "") + '>Stok dışı (nakliye, hizmet vb.) — stoktan düşmez</option>'
-          + '<option value="__yeni">+ yeni ürün oluştur…</option></select>'
+          + fkSeciciHtml(id, ki, x)
           + (guven ? '<div class="mini" style="color:' + guven[0] + '">' + guven[1] + '</div>' : '');
         if (!x.stokDisi) {
           html += '<div style="display:flex;gap:8px;flex-wrap:wrap">'
