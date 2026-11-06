@@ -1741,14 +1741,33 @@ function faturaXmlCoz(metin, dosya) {
 }
 
 function faturaBizMi(t) { return !!t && (BIZIM_VKN.indexOf(t.vkn) >= 0 || /poliwood|raz plastik/.test(trFold(t.ad))); }
-function faturaZatenVarMi(no) {
-  if (!no) return null;
-  return data.hareketler.find(h => h.faturaNo === no || (h.not && String(h.not).indexOf(no) >= 0)) || null;
+// Fatura numarasını yazım farkından bağımsız anahtara çevirir: "PLW2026000000065", "PLW20260000000065",
+// "PLW-2026000000065" → "PLW2026-65". Bulunamazsa "".
+function faturaNoAnahtar(metin) {
+  const m = String(metin || "").toUpperCase().match(/(?:^|[^A-Z0-9])([A-Z]{3})\s*-?\s*(20\d\d)(\d{3,12})(?![0-9])/);
+  return m ? m[1] + m[2] + "-" + parseInt(m[3], 10) : "";
+}
+function hareketFaturaAnahtar(h) { return faturaNoAnahtar(h.faturaNo) || faturaNoAnahtar(h.not) || faturaNoAnahtar(h.aciklama); }
+function gunFarki(a, b) { return Math.abs((new Date(a) - new Date(b)) / 86400000); }
+// Panelde bu fatura var mı: önce fatura no ile (kesin), yoksa aynı müşteri + aynı tutar + yakın tarih (muhtemel)
+function faturaKayitBul(no, adlar, tutar, tarih) {
+  const a = faturaNoAnahtar(no);
+  if (a) { const h = data.hareketler.find(h => hareketFaturaAnahtar(h) === a); if (h) return { h, kesin: true }; }
+  if (!(tutar > 0) || !tarih) return null;
+  // Tutar kuruşu kuruşuna aynı + 10 gün içinde; birden çoksa ismi benzeyen, sonra tarihi en yakın
+  const adaylar = data.hareketler.filter(h => h.gelir && Math.abs(h.gelir - tutar) < 0.01 && h.tarih && gunFarki(h.tarih, tarih) <= 10 && !(a && hareketFaturaAnahtar(h)));
+  if (!adaylar.length) return null;
+  const puan = h => gunFarki(h.tarih, tarih) + (adlar.some(ad => ad && muhIsimBenzerMi(h.aciklama, ad)) ? 0 : 100);
+  adaylar.sort((x, y) => puan(x) - puan(y));
+  return { h: adaylar[0], kesin: false };
+}
+function faturaTekrarNeden(v) {
+  return (v.kesin ? "Bu fatura zaten kayıtlı (" : "Muhtemelen zaten kayıtlı — aynı tutar, yakın tarih (") + fmtTarih(v.h.tarih) + " · " + v.h.aciklama + " · " + fmt(v.h.gelir) + ")";
 }
 
 // --- Müşteri tanıma ---
-const FIRMA_EKLERI = new Set(["san","sanayi","sanayii","tic","ticaret","ltd","şti","sti","limited","şirketi","sirketi","anonim","ve","dış","dis","ith","ihr","ithalat","ihracat","paz","pazarlama","koll","kollektif"]);
-function adKelimeleri(s) { return trFold(s).replace(/[^a-z0-9çğıöşü]+/g, " ").split(" ").filter(w => w.length > 1 && !FIRMA_EKLERI.has(w)); }
+const FIRMA_EKLERI = new Set(["san","sanayi","sanayii","tic","ticaret","ltd","sti","limited","sirketi","anonim","ve","dis","ith","ihr","ithalat","ihracat","paz","pazarlama","koll","kollektif"]);
+function adKelimeleri(s) { return aramaKatla(s).replace(/[^a-z0-9]+/g, " ").split(" ").filter(w => w.length > 1 && !FIRMA_EKLERI.has(w)); }
 function trBaslik(s) { return s.split(" ").map(w => w ? w.charAt(0).toLocaleUpperCase("tr") + w.slice(1).toLocaleLowerCase("tr") : w).join(" "); }
 function faturaMusteriBul(alici) {
   const es = (data.faturaEslemeleri && data.faturaEslemeleri.musteri) || {};
@@ -1765,7 +1784,7 @@ function faturaMusteriBul(alici) {
   // Yeni müşteri: unvanın şirket ekleri öncesini al ("REKOR PLASTİK SAN. TİC. LTD. ŞTİ." → "Rekor Plastik")
   const parcalar = alici.ad.split(" ");
   const kisa = [];
-  for (const p of parcalar) { const f = trFold(p).replace(/[^a-z0-9çğıöşü]/g, ""); if (FIRMA_EKLERI.has(f) || f === "aş" || f === "as") break; kisa.push(p); }
+  for (const p of parcalar) { const f = aramaKatla(p).replace(/[^a-z0-9]/g, ""); if (FIRMA_EKLERI.has(f) || f === "as") break; kisa.push(p); }
   let ad = (kisa.length ? kisa.join(" ") : alici.ad).replace(/[\s.,-]+$/, "");
   if (ad === ad.toLocaleUpperCase("tr")) ad = trBaslik(ad);
   return { ad, kaynak: "yeni" };
@@ -1777,6 +1796,14 @@ function faturaUrunBul(s) {
   const es = (data.faturaEslemeleri && data.faturaEslemeleri.urun) || {};
   const ogr = es[faturaUrunAnahtari(s)];
   if (ogr && data.mamul.some(m => m.__id === ogr)) return { id: ogr, guven: "ogrenilmis" };
+  const puanlar = faturaUrunPuanla(s);
+  const enIyi = puanlar.length ? puanlar[0].m : null;
+  const esitSayisi = puanlar.filter(x => x.p === puanlar[0].p).length;
+  if (!enIyi || (!puanlar.kaliteVar && !puanlar.genislikVar)) return { id: "", guven: "yok" };
+  return { id: enIyi.__id, guven: esitSayisi > 1 ? "belirsiz" : "tahmin" };
+}
+// Fatura satırına uyan stok ürünlerini puanlar (en uygun başta). Öneri düğmeleri de bunu kullanır.
+function faturaUrunPuanla(s) {
   const metin = trFold(s.ad + " " + (s.aciklama || ""));
   const sikisik = metin.replace(/[^a-z0-9çğıöşü]/g, "");
   let kalite = null;
@@ -1787,7 +1814,7 @@ function faturaUrunBul(s) {
   const gramaj = grm ? parseFloat(grm[1].replace(",", ".")) : null;
   const masura = /masuras[ıi]z/.test(metin) ? false : (/masural[ıi]/.test(metin) ? true : null);
   const kat3 = /3\s*kat/.test(metin) ? true : (/2\s*kat/.test(metin) ? false : null);
-  let enIyi = null, enIyiPuan = -Infinity, esitSayisi = 0;
+  const liste = [];
   data.mamul.forEach(m => {
     if (kalite && m.kalite !== kalite) return;
     let p = kalite ? 5 : 0;
@@ -1799,11 +1826,12 @@ function faturaUrunBul(s) {
     const mKat3 = /3/.test(m.katSayisi || "") || /3\s*katl/i.test(tip);
     p += (kat3 === true) ? (mKat3 ? 3 : -3) : (mKat3 ? -2 : 0);
     if (masura != null && m.masurali != null) p += (!!m.masurali === masura) ? 2 : -3;
-    if (p > enIyiPuan) { enIyi = m; enIyiPuan = p; esitSayisi = 1; }
-    else if (p === enIyiPuan) { esitSayisi++; if ((m.adet || 0) > (enIyi.adet || 0)) enIyi = m; }
+    liste.push({ m, p });
   });
-  if (!enIyi || (!kalite && genislik == null)) return { id: "", guven: "yok" };
-  return { id: enIyi.__id, guven: esitSayisi > 1 ? "belirsiz" : "tahmin" };
+  // Eşit puanda stoğu fazla olan önce
+  liste.sort((a, b) => b.p - a.p || (b.m.adet || 0) - (a.m.adet || 0));
+  liste.kaliteVar = !!kalite; liste.genislikVar = genislik != null;
+  return liste;
 }
 
 function faturaKartOlustur(f) {
@@ -1816,9 +1844,9 @@ function faturaKartOlustur(f) {
   };
   if (!faturaBizMi(f.satici) && faturaBizMi(f.alici)) { kart.durum = "atlandi"; kart.neden = "Alış faturası (satıcı: " + f.satici.ad + ") — bu ekran şimdilik sadece satış faturalarını işler"; }
   else if (f.tip === "IADE") { kart.durum = "atlandi"; kart.neden = "İade faturası — iadeyi elle gir"; }
-  else { const v = faturaZatenVarMi(f.no); if (v) { kart.durum = "atlandi"; kart.neden = "Bu fatura zaten kayıtlı (" + fmtTarih(v.tarih) + " · " + v.aciklama + ")"; kart.tekrar = true; } }
   if (f.para !== "TRY") kart.uyarilar.push("Döviz faturası (" + f.para + ") — tutarları kontrol et");
   const mus = faturaMusteriBul(f.alici);
+  if (kart.durum === "bekliyor") { const v = faturaKayitBul(f.no, [mus.ad, f.alici.ad], f.toplam, f.tarih); if (v) { kart.durum = "atlandi"; kart.neden = faturaTekrarNeden(v); kart.tekrar = true; } }
   kart.musteri = mus.ad; kart.musteriKaynak = mus.kaynak;
   const son = musteriSonSatislar(mus.ad, 1)[0];
   if (son) kart.kategori = son.kategori;
@@ -1829,7 +1857,7 @@ function faturaKartOlustur(f) {
     const fiyat = tonMu ? s.fiyat / 1000 : s.fiyat;
     const bul = faturaUrunBul(s);
     const stokDisi = !bul.id && /nakliye|navlun|taşıma|tasima|kargo|hizmet/.test(trFold(s.ad));
-    return { ad: s.ad, anahtar: faturaUrunAnahtari(s), birim: s.birim, kgMi, mamulId: bul.id, guven: bul.guven, stokDisi,
+    return { ad: s.ad, anahtar: faturaUrunAnahtari(s), birim: s.birim, kgMi, mamulId: bul.id, guven: bul.guven, stokDisi, ara: "",
       adet: kgMi ? "" : sayiStr(miktar), kg: kgMi ? sayiStr(miktar) : "", fiyatTuru: kgMi ? "kg" : "adet", fiyat: sayiStr(fiyat), kdv: s.kdv };
   });
   if (kart.kalemler.some(k => k.kdv != null && k.kdv !== 20)) kart.uyarilar.push("KDV oranı %20 değil — satır tutarları faturadan farklı görünebilir, fatura toplamı esas alınır");
@@ -1905,7 +1933,7 @@ function faturaKartEksikler(k) {
       if (!x.mamulId || !data.mamul.some(m => m.__id === x.mamulId)) e.push(n + "ürün seç");
       if (!fkSayi(x.adet)) e.push(n + "adet (bobin)");
       if (!fkSayi(x.kg)) e.push(n + "kg");
-      if (!fkSayi(x.fiyat)) e.push(n + "fiyat");
+      if (k.kaynak !== "excel" && !fkSayi(x.fiyat)) e.push(n + "fiyat");
     });
   }
   return e;
@@ -1928,7 +1956,7 @@ function fkSet(id, alan, v) { const k = faturaKart(id); if (!k) return; k[alan] 
 function fkKalemSet(id, ki, alan, v, el) {
   const k = faturaKart(id); if (!k || !k.kalemler[ki]) return;
   k.kalemler[ki][alan] = v; faturaKuyrukSakla();
-  if (el) el.classList.toggle("fk-eksik", !fkSayi(v));
+  if (el) el.classList.toggle("fk-eksik", !fkSayi(v) && !(alan === "fiyat" && k.kaynak === "excel"));
   fkOzetGuncelle(id);
 }
 function fkUrunSec(id, ki, v) {
@@ -1937,9 +1965,60 @@ function fkUrunSec(id, ki, v) {
   if (v === "__yeni") { window.__yeniUrunFatura = { id, ki }; urunModal(null); return; }
   x.stokDisi = v === "__disi";
   x.mamulId = x.stokDisi ? "" : v;
+  x.acik = !v;
+  x.ara = "";
   x.guven = "elle";
   faturaKuyrukSakla(); renderKorumali();
 }
+// --- Ürün seçici: faturadaki satıra en uygun ürünler hazır düğme; değilse yazarak arama ---
+function aramaKatla(s) { return trFold(s).replace(/ç/g, "c").replace(/ğ/g, "g").replace(/ı/g, "i").replace(/ö/g, "o").replace(/ş/g, "s").replace(/ü/g, "u"); }
+function fkUrunDugme(id, ki, m, secili) {
+  return '<button type="button" onclick="fkUrunSec(\'' + id + '\',' + ki + ',\'' + jsStr(m.__id) + '\')" style="text-align:left;padding:10px 12px;border-radius:10px;cursor:pointer;font-size:14px;line-height:1.35;border:1.5px solid ' + (secili ? 'var(--green)' : 'var(--line)') + ';background:' + (secili ? '#1E4535' : '#22232F') + ';color:var(--ink)">'
+    + (secili ? '✓ ' : '') + '<b>' + esc(mamulEtiket(m)) + '</b> <span class="mini">· stok ' + m.adet + '</span></button>';
+}
+function fkAramaSonucHtml(id, ki) {
+  const k = faturaKart(id), x = k && k.kalemler[ki];
+  if (!x) return "";
+  const kelimeler = aramaKatla(x.ara || "").split(/\s+/).filter(Boolean);
+  if (!kelimeler.length) return "";
+  const bulunan = data.mamul.filter(m => { const e = aramaKatla(mamulEtiket(m)); return kelimeler.every(w => e.indexOf(w) >= 0); });
+  if (!bulunan.length) return '<div class="mini">Eşleşen ürün yok — farklı yaz ya da "+ Stokta yok, yeni ürün" ile ekle.</div>';
+  return bulunan.slice(0, 10).map(m => fkUrunDugme(id, ki, m, m.__id === x.mamulId)).join("")
+    + (bulunan.length > 10 ? '<div class="mini">+' + (bulunan.length - 10) + ' ürün daha — biraz daha yaz (ör. "masurasız")</div>' : '');
+}
+function fkAra(id, ki, v) {
+  const k = faturaKart(id); if (!k || !k.kalemler[ki]) return;
+  k.kalemler[ki].ara = v;
+  const el = document.getElementById("fk-" + id + "-" + ki + "-sonuc");
+  if (el) el.innerHTML = fkAramaSonucHtml(id, ki);
+}
+function fkSeciciAc(id, ki) { const k = faturaKart(id); if (k && k.kalemler[ki]) { k.kalemler[ki].acik = true; renderKorumali(); } }
+function fkSeciciHtml(id, ki, x) {
+  const m = x.stokDisi ? null : data.mamul.find(mm => mm.__id === x.mamulId);
+  // Ürün belliyse satır kısa gösterilir; "Değiştir" ile seçici açılır
+  if ((m || x.stokDisi) && !x.acik) {
+    return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:14px;padding:8px 10px;border-radius:8px;' + (m ? 'background:var(--green-bg);border:1px solid #1E4535' : 'border:1px solid var(--line)') + '">'
+      + '<span style="flex:1;min-width:200px">' + (m ? '<b>' + esc(mamulEtiket(m)) + '</b> <span class="mini">(stok: ' + m.adet + ')</span>' : 'Stok dışı satır — stoktan düşmez') + '</span>'
+      + '<button type="button" class="chip" style="min-height:34px;padding:6px 14px" onclick="fkSeciciAc(\'' + id + '\',' + ki + ')">Değiştir</button></div>';
+  }
+  const puan = x.ad ? faturaUrunPuanla({ ad: x.ad }) : [];
+  const oneriler = (puan.kaliteVar || puan.genislikVar) ? puan.slice(0, 4).map(o => o.m) : [];
+  let h = '<div style="display:flex;flex-direction:column;gap:6px;padding:8px;border:1.5px solid ' + (m || x.stokDisi ? 'var(--line)' : 'var(--red)') + ';border-radius:10px">';
+  if (oneriler.length) {
+    h += '<div class="mini" style="font-weight:700">Faturadaki ürüne en yakınlar — dokun, seçilsin:</div>'
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px">' + oneriler.map(mm => fkUrunDugme(id, ki, mm, m && mm.__id === m.__id)).join("") + '</div>';
+  }
+  h += '<input type="text" id="fk-' + id + '-' + ki + '-ara" placeholder="' + (oneriler.length ? '🔍 Burada yoksa yaz: ör. 120 bal masuralı' : '🔍 Ürünü yaz: ör. 120 bal masuralı') + '" value="' + esc(x.ara || "") + '" oninput="fkAra(\'' + id + '\',' + ki + ',this.value)" autocomplete="off">'
+    + '<div id="fk-' + id + '-' + ki + '-sonuc" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px">' + fkAramaSonucHtml(id, ki) + '</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
+    + '<button type="button" class="chip" style="min-height:34px;padding:6px 12px" onclick="fkUrunSec(\'' + id + '\',' + ki + ',\'__disi\')">Stok dışı (nakliye vb.)</button>'
+    + '<button type="button" class="chip" style="min-height:34px;padding:6px 12px" onclick="fkUrunSec(\'' + id + '\',' + ki + ',\'__yeni\')">+ Stokta yok, yeni ürün</button>'
+    + (m || x.stokDisi ? '<button type="button" class="chip" style="min-height:34px;padding:6px 12px" onclick="fkSeciciKapat(\'' + id + '\',' + ki + ')">Vazgeç</button>' : '')
+    + '</div></div>';
+  return h;
+}
+function fkSeciciKapat(id, ki) { const k = faturaKart(id); if (k && k.kalemler[ki]) { k.kalemler[ki].acik = false; renderKorumali(); } }
+
 // Yazarken ekran yeniden çizilmesin diye sadece özet kısmı güncellenir
 function fkOzetGuncelle(id) {
   const k = faturaKart(id), el = document.getElementById("fk-ozet-" + id);
@@ -1958,12 +2037,33 @@ function fkOzetHtml(k) {
   return h;
 }
 
+// Excel (ortaklar defteri) satırından satış onay kartı — ürün satırlarını kullanıcı ekler
+function fkBosKalem() { return { ad: "", anahtar: "", birim: "", kgMi: null, mamulId: "", guven: "elle", stokDisi: false, ara: "", adet: "", kg: "", fiyatTuru: "kg", fiyat: "", kdv: null, acik: true }; }
+function excelSatisKarti(x, kategori) {
+  const noM = String(x.aciklama).toUpperCase().match(/[A-Z]{3}\s*-?\s*20\d{5,14}/);
+  const no = noM ? noM[0].replace(/[\s-]/g, "") : "";
+  let ad = String(x.aciklama);
+  if (noM) ad = ad.slice(0, noM.index) + " " + ad.slice(noM.index + noM[0].length);
+  ad = ad.replace(/^\s*PER[AE]KENDE\s+SATI[SŞ]\s*-?/i, "").replace(/\s+/g, " ").replace(/^[\s-]+|[\s-]+$/g, "");
+  const mus = faturaMusteriBul({ ad: ad || x.aciklama, vkn: "" });
+  const tahsil = /geld|nakit|tahsil|al[ıi]nd|k\.\s*k|link|pos|hesab|dilek|oraz/.test(trFold(x.detay || ""));
+  const vade = new Date(x.tarih); vade.setDate(vade.getDate() + 30);
+  const kart = { id: "fk_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), kaynak: "excel",
+    no, dosya: "", faturaTarih: x.tarih, faturaToplam: x.tutar, alici: { ad: x.aciklama, vkn: "" }, detay: x.detay || "",
+    durum: "bekliyor", neden: "", uyarilar: [], tarih: x.tarih, kategori, musteri: mus.ad, musteriKaynak: mus.kaynak,
+    tutar: sayiStr(x.tutar), vade: tahsil ? "" : yerelTarihStr(vade), not: no ? "Fatura " + no : "Excel'den", kalemler: [fkBosKalem()] };
+  if (!tahsil) kart.uyarilar.push("Excel'de tahsil bilgisi yok — 30 gün vadeli işaretlendi. Ödeme geldiyse vadeyi sil.");
+  return kart;
+}
+function fkKalemEkle(id) { const k = faturaKart(id); if (!k) return; k.kalemler.push(fkBosKalem()); faturaKuyrukSakla(); renderKorumali(); }
+function fkKalemSil(id, ki) { const k = faturaKart(id); if (!k || k.kalemler.length < 2) return; k.kalemler.splice(ki, 1); faturaKuyrukSakla(); renderKorumali(); }
+
 function faturaOnaylaTek(id) {
   const k = faturaKart(id); if (!k) return false;
   const eksik = faturaKartEksikler(k);
   if (eksik.length) { alert("Bu faturada eksik bilgi var:\n• " + eksik.join("\n• ")); return false; }
-  const v = faturaZatenVarMi(k.no);
-  if (v && !k.yineDeIsle) { k.durum = "atlandi"; k.neden = "Bu fatura zaten kayıtlı (" + fmtTarih(v.tarih) + " · " + v.aciklama + ")"; k.tekrar = true; toast(k.no + " zaten kayıtlı — atlandı"); return false; }
+  const v = faturaKayitBul(k.no, [k.musteri, k.alici && k.alici.ad], parseTL(k.tutar), k.tarih);
+  if (v && !k.yineDeIsle) { k.durum = "atlandi"; k.neden = faturaTekrarNeden(v); k.tekrar = true; toast((k.no || k.musteri) + " zaten kayıtlı görünüyor — atlandı"); return false; }
   const satis = fkSatisMi(k);
   const urunler = satis ? k.kalemler.filter(x => !x.stokDisi) : [];
   const formBenzeri = { tur: "GELİR", tarih: k.tarih, aciklama: String(k.musteri), kategori: k.kategori, tutar: k.tutar, not: k.not || "",
@@ -2027,8 +2127,11 @@ function rFaturaOnay() {
     const id = k.id;
     const musRozet = { ogrenilmis: ["var(--green)", "tanındı"], eslesti: ["var(--green)", "kayıtlı müşteri"], yeni: ["var(--amber)", "yeni müşteri — adı kontrol et"] }[k.musteriKaynak] || null;
     html += '<div style="background:#1B1D28;border:1.5px solid var(--line);border-radius:14px;padding:12px;margin-bottom:12px;display:flex;flex-direction:column;gap:10px">';
-    html += '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap"><b style="font-size:15px">📄 ' + esc(k.no) + '</b><span class="mini">' + (k.faturaTarih ? fmtTarih(k.faturaTarih) : "") + ' · fatura toplamı <b>' + pg(fmt(k.faturaToplam)) + '</b></span></div>';
-    html += '<div class="mini">Faturadaki alıcı: <b>' + esc(k.alici.ad) + '</b>' + (k.alici.vkn ? ' (' + (k.alici.vkn.length === 11 ? "TCKN" : "VKN") + ' ' + esc(k.alici.vkn) + ')' : '') + '</div>';
+    const excelMi = k.kaynak === "excel";
+    html += '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap"><b style="font-size:15px">' + (excelMi ? '📗 ' : '📄 ') + esc(k.no || "Excel satırı") + '</b><span class="mini">' + (k.faturaTarih ? fmtTarih(k.faturaTarih) : "") + ' · ' + (excelMi ? "Excel tutarı" : "fatura toplamı") + ' <b>' + pg(fmt(k.faturaToplam)) + '</b></span></div>';
+    html += excelMi
+      ? '<div class="mini">Excel\'deki satır: <b>' + esc(k.alici.ad) + '</b>' + (k.detay ? ' — ' + esc(k.detay) : '') + '</div>'
+      : '<div class="mini">Faturadaki alıcı: <b>' + esc(k.alici.ad) + '</b>' + (k.alici.vkn ? ' (' + (k.alici.vkn.length === 11 ? "TCKN" : "VKN") + ' ' + esc(k.alici.vkn) + ')' : '') + '</div>';
     k.uyarilar.forEach(u => { html += '<div class="mini" style="color:var(--amber)">⚠ ' + esc(u) + '</div>'; });
     html += '<div class="row2">'
       + '<div><div class="mini" style="margin-bottom:5px">Tarih</div><input type="date" id="fk-' + id + '-tarih" value="' + esc(k.tarih) + '" onchange="fkSet(\'' + id + '\',\'tarih\',this.value)"></div>'
@@ -2051,21 +2154,21 @@ function rFaturaOnay() {
         const kutu = (alan, etiket, faturadan, ph) => '<div style="flex:1;min-width:110px"><div class="mini" style="margin-bottom:3px">' + etiket + (faturadan ? ' <span style="color:var(--green)">· faturadan</span>' : ' <span style="color:var(--red);font-weight:700">· sen gir</span>') + '</div>'
           + '<input type="text" inputmode="decimal" id="fk-' + id + '-' + ki + '-' + alan + '" class="' + (fkSayi(x[alan]) ? "" : "fk-eksik") + '" placeholder="' + esc(ph) + '" value="' + esc(x[alan]) + '" oninput="fkKalemSet(\'' + id + '\',' + ki + ',\'' + alan + '\',this.value,this)"></div>';
         html += '<div style="border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--card)">'
-          + '<div class="mini">Faturada: <b style="color:var(--ink)">' + esc(x.ad) + '</b> — ' + (x.kgMi ? esc(x.kg) + ' kg × ₺' + esc(x.fiyat) + '/kg' : esc(x.adet) + ' ' + (x.birim && ["NIU", "C62", "ADET", "PCE", "H87"].indexOf(x.birim) < 0 ? esc(x.birim) : "adet") + ' × ₺' + esc(x.fiyat) + '/adet') + '</div>'
-          + '<select id="fk-' + id + '-' + ki + '-urun" class="' + (!x.stokDisi && !m ? "fk-eksik" : "") + '" onchange="fkUrunSec(\'' + id + '\',' + ki + ',this.value)"><option value="">— ürün seç —</option>'
-          + data.mamul.map(mm => '<option value="' + esc(mm.__id) + '"' + (mm.__id === x.mamulId && !x.stokDisi ? " selected" : "") + '>' + esc(mamulEtiket(mm)) + ' (stok: ' + mm.adet + ')</option>').join("")
-          + '<option value="__disi"' + (x.stokDisi ? " selected" : "") + '>Stok dışı (nakliye, hizmet vb.) — stoktan düşmez</option>'
-          + '<option value="__yeni">+ yeni ürün oluştur…</option></select>'
+          + (x.ad
+            ? '<div class="mini">Faturada: <b style="color:var(--ink)">' + esc(x.ad) + '</b> — ' + (x.kgMi ? esc(x.kg) + ' kg × ₺' + esc(x.fiyat) + '/kg' : esc(x.adet) + ' ' + (x.birim && ["NIU", "C62", "ADET", "PCE", "H87"].indexOf(x.birim) < 0 ? esc(x.birim) : "adet") + ' × ₺' + esc(x.fiyat) + '/adet') + '</div>'
+            : '<div style="display:flex;justify-content:space-between;align-items:center"><span class="mini" style="font-weight:700">Ürün ' + (ki + 1) + '</span>' + (k.kalemler.length > 1 ? '<button type="button" class="sil-x" onclick="fkKalemSil(\'' + id + '\',' + ki + ')">×</button>' : '') + '</div>')
+          + fkSeciciHtml(id, ki, x)
           + (guven ? '<div class="mini" style="color:' + guven[0] + '">' + guven[1] + '</div>' : '');
         if (!x.stokDisi) {
           html += '<div style="display:flex;gap:8px;flex-wrap:wrap">'
-            + kutu("adet", "Adet (bobin)", !x.kgMi, tahminAdet ? "≈ " + fmtKg(tahminAdet) + " (stok kg'sına göre)" : "ör. 12")
-            + kutu("kg", "Net kg", x.kgMi, tahminKg ? "≈ " + fmtKg(tahminKg) + " (stok kg'sına göre)" : "ör. 233,5")
-            + '<div style="flex:1;min-width:110px"><div class="mini" style="margin-bottom:3px">Fiyat ₺/' + (x.fiyatTuru === "adet" ? "adet" : "kg") + ' (KDV hariç)</div><input type="text" inputmode="decimal" id="fk-' + id + '-' + ki + '-fiyat" class="' + (fkSayi(x.fiyat) ? "" : "fk-eksik") + '" value="' + esc(x.fiyat) + '" oninput="fkKalemSet(\'' + id + '\',' + ki + ',\'fiyat\',this.value,this)"></div>'
+            + kutu("adet", "Adet (bobin)", x.kgMi === false, tahminAdet ? "≈ " + fmtKg(tahminAdet) + " (stok kg'sına göre)" : "ör. 12")
+            + kutu("kg", "Net kg", x.kgMi === true, tahminKg ? "≈ " + fmtKg(tahminKg) + " (stok kg'sına göre)" : "ör. 233,5")
+            + '<div style="flex:1;min-width:110px"><div class="mini" style="margin-bottom:3px">Fiyat ₺/' + (x.fiyatTuru === "adet" ? "adet" : "kg") + ' (KDV hariç)' + (excelMi ? ' · isteğe bağlı' : '') + '</div><input type="text" inputmode="decimal" id="fk-' + id + '-' + ki + '-fiyat" class="' + (fkSayi(x.fiyat) || excelMi ? "" : "fk-eksik") + '" value="' + esc(x.fiyat) + '" oninput="fkKalemSet(\'' + id + '\',' + ki + ',\'fiyat\',this.value,this)"></div>'
             + '</div>';
         }
         html += '</div>';
       });
+      html += '<button type="button" class="chip" style="align-self:flex-start" onclick="fkKalemEkle(\'' + id + '\')">+ Ürün Satırı Ekle</button>';
     }
     html += '<div id="fk-ozet-' + id + '">' + fkOzetHtml(k) + '</div>';
     html += '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" style="background:var(--green);flex:1;min-width:180px" onclick="faturaOnayla(\'' + id + '\')">✓ Onayla ve Kaydet</button>'
@@ -3230,8 +3333,8 @@ function muhasebeKarsilastirAc() {
   overlay.id = "muh-karsilastir-modal";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.8);z-index:500;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto";
   overlay.innerHTML = '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:800px;margin:auto 0;max-height:90vh;overflow:auto" id="muh-karsilastir-icerik">'
-    + '<div class="mtitle">📊 Muhasebe Dosyasıyla Karşılaştır</div>'
-    + '<div class="mini" style="margin-bottom:10px">Muhasebecinin Excel dosyasını seç — "...GİDER" ve "...GELİR" adlı sayfaları otomatik bulup, seçtiğin aydaki kayıtları panelinle karşılaştırırım. Hiçbir şey otomatik değişmez, sadece fark listesi gösterilir.</div>'
+    + '<div class="mtitle">📊 Excel Defteriyle Karşılaştır</div>'
+    + '<div class="mini" style="margin-bottom:10px">Gelir/gider Excel dosyanı seç (ör. POLİWOOD MASRAF ORTAKLAR) — "…GİDER" ve "…GELİR" sayfalarını bulup panelle karşılaştırırım. Excel\'de olup panelde olmayan satırları buradan işleyebilirsin; sen seçmeden hiçbir şey eklenmez.</div>'
     + '<div style="margin-bottom:10px"><div class="mini" style="margin-bottom:5px">Hangi dönem?</div><div style="display:flex;gap:6px"><input type="month" id="muh-ay" value="'+buAyKey()+'" style="flex:1" onchange="muhDonemDegisti()"><button type="button" class="chip" id="muh-tum-zaman-btn" onclick="muhTumZamanSec()">Tüm Zamanlar</button></div><div class="mini" style="margin-top:4px">Sadece tek bir ay yerine, o zamana kadarki HER ŞEYİ görmek için "Tüm Zamanlar"ı seç — toplamların gerçekten tuttuğundan emin olmanın en güvenli yolu budur.</div></div>'
     + '<input type="file" accept=".xlsx,.xls" onchange="muhasebeDosyaSecildi(event)" style="width:100%;padding:12px;background:var(--bg);border:1.5px dashed var(--line);border-radius:10px;color:var(--ink)">'
     + '<button class="btn" style="background:#2A2C3A;margin-top:12px" onclick="muhasebeKarsilastirKapat()">Kapat</button>'
@@ -3275,88 +3378,164 @@ function muhBaslikBul(kolonlar, aranan) {
   return -1;
 }
 // ayKey "TUM" ise dönem filtrelemesi hiç yapılmaz — dosyadaki/paneldeki HER kayıt dahil edilir.
-function muhSayfaOku(sheet, ayKey, tarihBaslik, aciklamaBaslik, tutarBaslik) {
+// Sayfanın altındaki TOPLAM satırına (tarihsiz ama tutarlı ilk satır) gelince durur: onun altına
+// yazılan notlar ("…GİDECEK GALİBA" gibi) defterin toplamına dahil değildir, kayıt sayılmaz.
+// sutunlar: { tarih, aciklama, tutar, detay?, grup?, faturaNo? } — başlık satırında aranacak kelimeler
+function muhSayfaOku(sheet, ayKey, sutunlar) {
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
   if (!rows.length) return [];
   const kolon = (rows[0]||[]).map(xlsHucre);
-  const iT = muhBaslikBul(kolon, tarihBaslik), iA = muhBaslikBul(kolon, aciklamaBaslik), iTutar = muhBaslikBul(kolon, tutarBaslik);
+  const iT = muhBaslikBul(kolon, sutunlar.tarih), iA = muhBaslikBul(kolon, sutunlar.aciklama), iTutar = muhBaslikBul(kolon, sutunlar.tutar);
+  const iD = sutunlar.detay ? muhBaslikBul(kolon, sutunlar.detay) : -1;
+  const iF = sutunlar.faturaNo ? muhBaslikBul(kolon, sutunlar.faturaNo) : -1;
+  // Gider sayfasında fatura no'nun yanındaki başlıksız sütun grup bilgisi (MAKİNA, BOBİN, VERGİ…)
+  const iG = iF >= 0 && !kolon[iF + 1] ? iF + 1 : -1;
   const sonuc = [];
   if (iT < 0 || iTutar < 0) return sonuc;
+  const bugun = yerelTarihStr();
+  let oncekiTarih = null;
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r] || [];
     const tarih = row[iT];
-    if (!(tarih instanceof Date) || isNaN(tarih)) continue;
-    const tarihStr = yerelTarihStr(tarih);
-    if (ayKey !== "TUM" && tarihStr.slice(0,7) !== ayKey) continue;
     const tutar = row[iTutar];
-    if (tutar == null || isNaN(tutar) || tutar === 0) continue;
-    sonuc.push({ tarih: tarihStr, aciklama: xlsHucre(iA>=0?row[iA]:""), tutar: parseFloat(tutar) });
+    const acik = xlsHucre(iA>=0?row[iA]:"");
+    const tarihVar = tarih instanceof Date && !isNaN(tarih);
+    const tutarVar = typeof tutar === "number" && tutar !== 0;
+    // Toplam satırı (açıklamasız ya da "TOPLAM"/"FARK" yazan tutarlı satır) → defter burada biter
+    if (!tarihVar && tutarVar && (!acik || /toplam|fark/i.test(trFold(acik)))) break;
+    if (!tutarVar) continue;
+    const tarihStr = tarihVar ? yerelTarihStr(tarih) : oncekiTarih;
+    if (!tarihStr) continue;
+    if (tarihVar) oncekiTarih = tarihStr;
+    if (ayKey !== "TUM" && tarihStr.slice(0,7) !== ayKey) continue;
+    const x = { tarih: tarihStr, aciklama: acik, tutar: Math.round(parseFloat(tutar) * 100) / 100,
+      detay: iD >= 0 ? xlsHucre(row[iD]) : "", grup: iG >= 0 ? xlsHucre(row[iG]) : "", faturaNoMetin: iF >= 0 ? xlsHucre(row[iF]) : "" };
+    x.fAnahtar = faturaNoAnahtar(x.faturaNoMetin) || faturaNoAnahtar(x.aciklama);
+    if (!tarihVar) x.uyari = "Excel'de tarihi boş — bir üstteki satırın tarihi (" + fmtTarih(tarihStr) + ") kullanıldı";
+    else if (tarihStr > bugun) x.uyari = "Tarih ileride görünüyor (" + fmtTarih(tarihStr) + ") — Excel'de yıl yanlış yazılmış olabilir";
+    sonuc.push(x);
   }
   return sonuc;
 }
 
 function panelGiderleriAy(ayKey) {
   return data.hareketler.filter(h => h.gider && h.tarih && (ayKey==="TUM" || h.tarih.slice(0,7)===ayKey))
-    .map(h => ({ tarih: h.tarih, aciklama: h.aciklama, tutar: h.gider }));
+    .map(h => ({ tarih: h.tarih, aciklama: h.aciklama, tutar: h.gider, fAnahtar: hareketFaturaAnahtar(h) }));
 }
-// Muhasebeci GELİR'i tahsilat anını takip ettiği için, panelin fatura tarihi (h.tarih) değil,
-// paranın GERÇEKTEN geldiği tarihle eşleştirilir. İki kaynaktan derlenir:
-//  1) Gerçek tahsilat kayıtları (h.tahsilatlar[]) — vadeli satışlarda sonradan girilen ödemeler.
-//  2) VADESİZ (peşin) satışlar — bunlar için ayrıca "tahsilat" girilmez, çünkü satış anında zaten
-//     nakit tahsil edilmiştir; h.vade yoksa ve hiç tahsilatlar[] kaydı yoksa, satışın kendi tarihi
-//     ve tutarı doğrudan "o gün tahsil edildi" sayılır. Bu adım olmadan, işi ağırlıkla peşin olan
-//     bir işletmenin satışlarının neredeyse tamamı bu karşılaştırmada hiç görünmez.
+// Defterin GELİR sayfasında her satır çoğunlukla bir fatura/satıştır (tutar = fatura tutarı) —
+// bu yüzden önce paneldeki gelir KAYITLARIYLA eşleştirilir. Kalanlar (ör. "ÖZCAN BOZKURT 45.000 —
+// hesaba geldi" gibi sadece ödeme satırları) ikinci adımda paneldeki tahsilat girişleriyle eşleştirilir.
+function panelGelirleriAy(ayKey) {
+  return data.hareketler.filter(h => h.gelir && h.tarih && (ayKey==="TUM" || h.tarih.slice(0,7)===ayKey))
+    .map(h => ({ tarih: h.tarih, aciklama: h.aciklama, tutar: h.gelir, fAnahtar: hareketFaturaAnahtar(h) }));
+}
 function panelTahsilatlariAy(ayKey) {
   const sonuc = [];
-  data.hareketler.forEach(h => {
-    if (h.tahsilatlar && h.tahsilatlar.length) {
-      h.tahsilatlar.forEach(t => {
-        if (t.tarih && (ayKey==="TUM" || t.tarih.slice(0,7)===ayKey)) sonuc.push({ tarih: t.tarih, aciklama: h.aciklama, tutar: t.tutar });
-      });
-    } else if (h.gelir && !h.vade && h.tarih && (ayKey==="TUM" || h.tarih.slice(0,7)===ayKey)) {
-      // Peşin satış — vade yok, hiç tahsilat kaydı da yok → satış anında nakit alınmış kabul edilir.
-      sonuc.push({ tarih: h.tarih, aciklama: h.aciklama, tutar: h.gelir });
-    }
-  });
+  data.hareketler.forEach(h => (h.tahsilatlar || []).forEach(t => {
+    if (t.tarih && (ayKey==="TUM" || t.tarih.slice(0,7)===ayKey)) sonuc.push({ tarih: t.tarih, aciklama: h.aciklama, tutar: t.tutar, fAnahtar: "" });
+  }));
   return sonuc;
 }
 // Bu kelimeler o kadar yaygın (birçok farklı firma adında geçiyor) ki "ortak kelime" saymak
 // TAMAMEN FARKLI iki firmayı (ör. "Bizim Ambalaj" ile "Ege Ambalaj") yanlışlıkla eşleştirebilir.
-// Eşleşme kontrolünde bu kelimeler yok sayılır — sadece AYIRT EDİCİ kelimeler (firma/kişi adının
-// kendine özgü kısmı) sayılır.
 const MUH_GENEL_KELIME = new Set(["ambalaj","plastik","ticaret","sanayi","sanayii","ltd","şti","sti","a.ş","as",
   "perakende","satış","satis","gıda","gida","mobilya","yazılım","yazilim","teknik","endüstri","endustri",
   "kapak","hırdavat","hirdavat","nalburiye","kimya","polimer","makina","makine","fatura","dan","tan","den","ten",
-  "kestirme","atık","atik","iade","kredi","kullanımı","kullanimi","faturası","faturasi","için","icin","ile","ve"]);
-// İki açıklama/isim en az bir ANLAMLI ve AYIRT EDİCİ (3+ harfli, jenerik olmayan) kelimeyi paylaşıyor
-// mu — yazım farkına ("Bizim Ambalaj-Emine Keser" ile "Bizim Ambalaj (Emine Keser)" gibi) toleranslı,
-// ama sadece ortak "Ambalaj"/"Plastik" gibi genel bir kelime yüzünden yanlış eşleşmeyi engeller.
+  "kestirme","atık","atik","iade","kredi","kullanımı","kullanimi","faturası","faturasi","için","icin","ile","ve",
+  "eft","gelen","nakit","bedeli","maaş","maas","avans","poliwood"].map(w => aramaKatla(w)));
 function muhIsimBenzerMi(a, b) {
-  const kelimeler = s => trFold(String(s||"")).replace(/[^a-zçğıöşü0-9\s]/g," ").split(/\s+/).filter(w=>w.length>=3 && !MUH_GENEL_KELIME.has(w));
+  const kelimeler = s => aramaKatla(String(s||"")).replace(/[^a-z0-9\s]/g," ").split(/\s+/).filter(w=>w.length>=3 && !/\d/.test(w) && !MUH_GENEL_KELIME.has(w));
   const wa = kelimeler(a), wb = kelimeler(b);
   if (!wa.length || !wb.length) return false;
   return wa.some(w => wb.indexOf(w) >= 0);
 }
-// Sadece TUTAR eşleşmesi yeterli değil — aynı tutar tesadüfen farklı iki kayıtta da çıkabilir
-// (aynı tutar farklı müşteri/tedarikçi). Önce tutar VE isim benzerliği olan eşleşme aranır; isim
-// hiç benzemese bile o tutara sahip TEK bir aday varsa (başka rakip yoksa, sadece yazım tamamen
-// farklıysa) yine de eşleştirilir — ama aynı tutara sahip BİRDEN FAZLA aday varsa, isim benzerliği
-// olmadan rastgele biriyle eşleştirilmez.
-function muhEslestir(muhListesi, panelListesi) {
-  const panelKullanildi = new Array(panelListesi.length).fill(false);
-  const eksik = []; // muhasebecide var, panelde yok
+// Eşleştirme: (1) aynı fatura no → kesin; (2) tutar kuruşu kuruşuna aynı ve tarih en çok gunTol gün farklı.
+// İsim şart değildir (Excel'de ve panelde farklı yazılabilir); aynı tutarda birden çok aday varsa önce tarihi
+// en yakın olan, eşitse ismi benzeyen seçilir. Tüm çiftler tarih farkına göre sıralanıp en yakın önce bağlanır —
+// her ay tekrarlanan aynı tutarlı kalemlerde (KDV, maaş…) bir ayın satırı komşu ayın kaydını kapmasın diye.
+// Bir panel kaydı yalnızca bir Excel satırıyla eşleşir.
+function muhEslestir(muhListesi, panelListesi, gunTol) {
+  const kullanildi = new Array(panelListesi.length).fill(false);
+  const bagla = (m, idx) => { kullanildi[idx] = true; m.eslesen = panelListesi[idx]; };
+  muhListesi.forEach(m => { m.eslesen = null; });
   muhListesi.forEach(m => {
-    let idx = panelListesi.findIndex((p,i) => !panelKullanildi[i] && Math.abs(p.tutar-m.tutar) < 0.5 && muhIsimBenzerMi(p.aciklama, m.aciklama));
-    if (idx < 0) {
-      const adaylar = [];
-      panelListesi.forEach((p,i) => { if (!panelKullanildi[i] && Math.abs(p.tutar-m.tutar) < 0.5) adaylar.push(i); });
-      if (adaylar.length === 1) idx = adaylar[0]; // tek aday varsa (rastgele tutar çakışması riski yok) kabul et
-    }
-    if (idx >= 0) panelKullanildi[idx] = true; else eksik.push(m);
+    if (!m.fAnahtar) return;
+    const idx = panelListesi.findIndex((p,i) => !kullanildi[i] && p.fAnahtar === m.fAnahtar);
+    if (idx >= 0) bagla(m, idx);
   });
-  const fazla = panelListesi.filter((p,i) => !panelKullanildi[i]); // panelde var, muhasebecide yok
+  const ciftler = [];
+  muhListesi.forEach(m => {
+    if (m.eslesen) return;
+    panelListesi.forEach((p,i) => {
+      if (kullanildi[i] || Math.abs(p.tutar - m.tutar) >= 0.01 || (m.fAnahtar && p.fAnahtar)) return;
+      const g = gunFarki(p.tarih, m.tarih);
+      if (g <= gunTol) ciftler.push({ m, i, g: g + (muhIsimBenzerMi(p.aciklama, m.aciklama) ? 0 : 0.5) });
+    });
+  });
+  ciftler.sort((x,y) => x.g - y.g);
+  ciftler.forEach(c => { if (!c.m.eslesen && !kullanildi[c.i]) bagla(c.m, c.i); });
+  const eksik = muhListesi.filter(m => !m.eslesen);
+  const fazla = panelListesi.filter((p,i) => !kullanildi[i]);
   return { eksik, fazla };
 }
+// Panelde benzer açıklamalı kayıtları en çok hangi kategoriye koyduğunu bulur (senin alışkanlığın).
+// Kelime kümeleri bir kez hazırlanır — yüzlerce satırda hızlı kalsın diye.
+function muhGecmisKategoriHazirla(tur) {
+  const kelimeler = s => aramaKatla(String(s||"")).replace(/[^a-z0-9\s]/g," ").split(/\s+/).filter(w=>w.length>=3 && !/\d/.test(w) && !MUH_GENEL_KELIME.has(w));
+  // Sadece firma/kişi adının ilk ayırt edici kelimesi aynı olan kayıtlara bakılır (ör. "KOÇER POLİMER…" ↔ "Koçer…")
+  const liste = data.hareketler.filter(h => (tur === "gider" ? h.gider : h.gelir) && h.kategori).map(h => ({ k: h.kategori, ilk: kelimeler(h.aciklama)[0] })).filter(h => h.ilk);
+  return x => {
+    const ilk = kelimeler(x.aciklama)[0];
+    if (!ilk) return null;
+    const sayac = {};
+    liste.forEach(h => { if (h.ilk === ilk) sayac[h.k] = (sayac[h.k] || 0) + 1; });
+    const enCok = Object.keys(sayac).sort((a,b) => sayac[b] - sayac[a])[0];
+    return enCok && sayac[enCok] >= 2 ? { kategori: enCok, adet: sayac[enCok] } : null;
+  };
+}
+// Önce açıklamadaki kesin kelimeler (maaş, avans, SGK/KDV, kredi), sonra panelde benzer kayıtların
+// kategorisi, en son açıklamadaki diğer ipuçları. x.kategoriKaynak ekranda gösterilir.
+function muhGiderKategoriTahmin(x, gecmis) {
+  const t = trFold(x.aciklama + " " + (x.grup || ""));
+  const kesin = muhGiderKesinKategori(t);
+  if (kesin) { x.kategoriKaynak = "açıklamada geçiyor"; return kesin; }
+  const kural = muhGiderKuralKategori(t);
+  if (kural) { x.kategoriKaynak = "açıklamadan tahmin"; return kural; }
+  const g = gecmis && gecmis(x);
+  if (g) { x.kategoriKaynak = "panelde aynı firmanın " + g.adet + " kaydı bu kategoride"; return g.kategori; }
+  x.kategoriKaynak = "tahmin edilemedi — kontrol et";
+  return "Genel Gider";
+}
+function muhGiderKesinKategori(t) {
+  if (/maaş|maas|\bprim\b|ikramiye|yol parası|yol parasi/.test(t)) return "Personel";
+  if (/avans/.test(t)) return "Avans";
+  if (/sgk|muhtasar|vergi|stopaj|damga/.test(t) || (/\bkdv\b/.test(t) && !/\+\s*kdv/.test(t))) return "Vergi/SGK";
+  if (/kredi/.test(t) && !/kredi kart/.test(t)) return "Kredi Ödemesi";
+  if (/motorin|yakıt|yakit|benzin|ad blue/.test(t)) return "Araç/Yakıt";
+  if (/nakliye|kargo|navlun/.test(t)) return "Nakliye";
+  return null;
+}
+function muhGiderKuralKategori(t) {
+  if (/fabrika maliyet|komisyon|muhasebe|reklam|ilan\b/.test(t)) return "Genel Gider";
+  if (/beser|karton|masura|bobin|torba|bant|kürek|kurek|hortum/.test(t)) return "Ekipman/Malzeme";
+  if (/bilet|otel|konaklama|hastane/.test(t)) return "Genel Gider";
+  if (/hammadde|hammade|granür|granur|granül|granul|polietilen|polimer|lineer|katkı|katki|compound|lavera|yeşileko|yesileko|özmüş|ozmus|geri dönüşüm|\d\s*kg\s*[x*]/.test(t)) return "Hammadde";
+  if (/iveco|araç|arac|kasa bedel|\blastik|otoyol|hgs|\bcyr\b/.test(t)) return "Araç/Yakıt";
+  if (/makina|makine|tartı|tarti|pompa|terminal|sulama|elektrik|şalter|salter|kompresör|kompresor|encoder/.test(t)) return "Ekipman/Malzeme";
+  return null;
+}
+function muhGelirKategoriTahmin(x) {
+  const t = trFold(x.aciklama);
+  if (/per[ae]kende/.test(t)) return "Perakende Satış";
+  if (/iade/.test(t)) return "Hammadde Satışı";
+  if (x.fAnahtar) return "Satış-Fatura";
+  if (/sermaye/.test(t)) return "Sermaye";
+  if (/kredi/.test(t)) return "Kredi Kullanımı";
+  if (/nakliye/.test(t)) return "Nakliye";
+  return "Diğer Gelir";
+}
+function muhSatisKategorisiMi(k) { return k === "Satış-Fatura" || k === "Perakende Satış"; }
+
 function muhasebeAyristirVeKarsilastir(wb, ayKey) {
   const giderSayfaAdi = wb.SheetNames.find(a => a.toUpperCase().indexOf("GİDER") >= 0 && a.toUpperCase().indexOf("ORAZ") < 0);
   const gelirSayfaAdi = wb.SheetNames.find(a => a.toUpperCase().indexOf("GELİR") >= 0);
@@ -3364,151 +3543,195 @@ function muhasebeAyristirVeKarsilastir(wb, ayKey) {
     document.getElementById("muh-sonuc").innerHTML = '<div class="mini" style="color:var(--red);margin-top:10px">Dosyada "GİDER" ya da "GELİR" adında bir sayfa bulunamadı. Sayfa adları: ' + wb.SheetNames.join(", ") + '</div>';
     return;
   }
-  const muhGiderler = giderSayfaAdi ? muhSayfaOku(wb.Sheets[giderSayfaAdi], ayKey, "TARİH", "AÇIKLAMA", "TUTAR") : [];
-  const muhGelirler = gelirSayfaAdi ? muhSayfaOku(wb.Sheets[gelirSayfaAdi], ayKey, "TARİH", "ÖDEME YAPAN", "TUTAR") : [];
-  const panelGiderler = panelGiderleriAy(ayKey);
-  const panelTahsilatlar = panelTahsilatlariAy(ayKey);
-  const giderFark = muhEslestir(muhGiderler, panelGiderler);
-  const gelirFark = muhEslestir(muhGelirler, panelTahsilatlar);
+  // Eşleştirme her zaman TÜM kayıtlar üzerinden yapılır, sonra seçilen aya süzülür: böylece Excel'de
+  // 1 Ekim, panelde 29 Eylül yazan aynı kayıt bir ayda "eksik", öbür ayda "fazla" görünmez.
+  const muhGiderTum = giderSayfaAdi ? muhSayfaOku(wb.Sheets[giderSayfaAdi], "TUM", { tarih: "TARİH", aciklama: "AÇIKLAMA", tutar: "TUTAR", detay: "EK AÇIKLAMA", faturaNo: "FATURA" }) : [];
+  const muhGelirTum = gelirSayfaAdi ? muhSayfaOku(wb.Sheets[gelirSayfaAdi], "TUM", { tarih: "TARİH", aciklama: "ÖDEME YAPAN", tutar: "TUTAR", detay: "DETAY" }) : [];
+  const ayda = t => ayKey === "TUM" || (t || "").slice(0,7) === ayKey;
+  const muhGiderler = muhGiderTum.filter(x => ayda(x.tarih));
+  const muhGelirler = muhGelirTum.filter(x => ayda(x.tarih));
+  const panelGiderTum = panelGiderleriAy("TUM");
+  const panelGelirTum = panelGelirleriAy("TUM");
+  const giderFarkTum = muhEslestir(muhGiderTum, panelGiderTum, 10);
+  const gelirFark1Tum = muhEslestir(muhGelirTum, panelGelirTum, 10);
+  // Faturayla eşleşmeyen gelir satırları ödeme satırı olabilir — tahsilat girişlerinde ara
+  const gelirFark2Tum = muhEslestir(gelirFark1Tum.eksik.filter(x => !x.fAnahtar), panelTahsilatlariAy("TUM"), 10);
+  const giderFark = { eksik: giderFarkTum.eksik.filter(x => ayda(x.tarih)), fazla: giderFarkTum.fazla.filter(p => ayda(p.tarih)) };
+  const gelirFark1 = { fazla: gelirFark1Tum.fazla.filter(p => ayda(p.tarih)) };
+  const gelirEksik = gelirFark1Tum.eksik.filter(x => x.fAnahtar).concat(gelirFark2Tum.eksik).filter(x => ayda(x.tarih)).sort((a,b) => a.tarih.localeCompare(b.tarih));
+  const panelGiderler = panelGiderTum, panelGelirler = panelGelirTum;
+  // Eşleşmiş ama tarihi ay sınırının öbür tarafında kalan kayıtlar — ay toplamlarındaki farkın açıklaması
+  const kayanlar = [];
+  if (ayKey !== "TUM") {
+    [["Gider", muhGiderTum], ["Gelir", muhGelirTum]].forEach(([tur, liste]) => liste.forEach(m => {
+      if (m.eslesen && ayda(m.tarih) !== ayda(m.eslesen.tarih)) kayanlar.push({ tur, m, p: m.eslesen });
+    }));
+  }
+  giderFark.eksik.sort((a,b) => a.tarih.localeCompare(b.tarih));
+  const giderGecmis = muhGecmisKategoriHazirla("gider");
+  giderFark.eksik.forEach(x => { x.kategori = muhGiderKategoriTahmin(x, giderGecmis); });
+  gelirEksik.forEach(x => { x.kategori = muhGelirKategoriTahmin(x); });
 
-  // Eklenebilir ("eksik") satırları global dizilerde tut — "Ekle" butonu bu index'lerle çağrılır.
   window.__muhEksikGider = giderFark.eksik;
-  window.__muhEksikGelir = gelirFark.eksik;
+  window.__muhEksikGelir = gelirEksik;
+  window.__muhPanelListesi = { gider: panelGiderler, gelir: panelGelirler };
 
-  window.__muhPanelListesi = { gider: panelGiderler, gelir: panelTahsilatlar };
-  const eksikSatirHtml = (liste, tur) => liste.length
-    ? liste.map((x,i) => muhSatirHtml(tur, i, x, (tur==="gider"?GIDER_KAT:GELIR_KAT)[0])).join("")
-    : '<div class="mini" style="color:var(--mut)">Fark yok</div>';
-
+  const eksikBolum = (liste, tur) => {
+    if (!liste.length) return '<div class="mini" style="color:var(--mut)">Fark yok</div>';
+    return '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">'
+      + '<label class="mini" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" style="width:18px;height:18px" onchange="muhHepsiniSec(\'' + tur + '\',this.checked)"> Hepsini seç</label>'
+      + '<span style="flex:1"></span>'
+      + '<button class="chip" style="color:var(--green);border-color:var(--green)" onclick="muhSecilenleriIsle(\'' + tur + '\')">✓ Seçilenleri işle</button></div>'
+      + liste.map((x,i) => muhSatirHtml(tur, i, x, x.kategori)).join("");
+  };
   const fazlaSatirHtml = (liste, renk) => liste.length
-    ? liste.map(x => '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #262837;font-size:12.5px"><span>'+fmtTarih(x.tarih)+' · '+esc(x.aciklama)+'</span><b style="color:'+renk+'">'+fmt(x.tutar)+'</b></div>').join("")
+    ? liste.map(x => '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #262837;font-size:12.5px"><span>'+fmtTarih(x.tarih)+' · '+esc(x.aciklama)+'</span><b style="color:'+renk+';white-space:nowrap">'+fmt(x.tutar)+'</b></div>').join("")
     : '<div class="mini" style="color:var(--mut)">Fark yok</div>';
 
-  // Toplam/fark özeti — "her şeyi ekledim ama toplam tutmuyor" durumunu hemen görünür kılar,
-  // ve "Ekle" bastıkça (muhOzetGuncelle ile) CANLI güncellenir, tekrar dosya yüklemeye gerek kalmaz.
   const muhGiderToplam = muhGiderler.reduce((s,x)=>s+x.tutar,0);
   const muhGelirToplam = muhGelirler.reduce((s,x)=>s+x.tutar,0);
   window.__muhOzet = { ayKey, muhGiderToplam, muhGelirToplam };
   const donemEtiketi = ayKey === "TUM" ? "Tüm Zamanlar" : fmtTarih(ayKey+"-01").replace(/^\d{2}\./,"");
+  const satisSayi = gelirEksik.filter(x => muhSatisKategorisiMi(x.kategori)).length;
 
   document.getElementById("muh-sonuc").innerHTML =
     '<div class="card" style="margin-top:14px;border:1.5px solid var(--gold)"><div class="mtitle" style="font-size:14px">🔎 Toplam Özet — '+esc(donemEtiketi)+'</div>'
     + '<div id="muh-ozet-icerik"></div>'
-    + '<div class="mini" style="margin-top:6px">İsim/tutar otomatik eşleşmesi kesin değil — her "eksik" satırın altında panelde tutar bazlı en yakın kayıt(lar) gösteriliyor. Baktığında "evet bu zaten o" diyorsan <b>Zaten Var — Atla</b> düğmesine bas, gerçekten yeni bir kayıtsa <b>✓ Ekle</b> düğmesine bas. Fark sıfıra yaklaşana kadar devam et.</div>'
+    + '<div class="mini" style="margin-top:6px">Eşleştirme önce <b>fatura no</b> (PLW…) ile, sonra <b>kuruşu kuruşuna aynı tutar</b> ve en çok 10 gün tarih farkıyla yapılır; isim şart değil. Sayfanın altındaki toplam satırından sonraki notlar sayılmaz.<br>'
+    + '<b>Satışlar</b> "Satış kartı aç" ile Hareketler\'in üstündeki onay listesine gider; orada ürün, adet ve kg girip onaylarsın (stoktan düşer). '
+    + '<b>Giderler</b> ve satış olmayan gelirler kategorisiyle doğrudan eklenir. Panelde zaten olduğunu gördüğün satırda <b>Zaten Var</b>\'a bas.</div>'
     + '</div>'
-    + '<div class="card"><div class="mtitle" style="font-size:14px">GİDER — Muhasebecide var, panelde yok <span class="pill">'+giderFark.eksik.length+'</span></div>' + eksikSatirHtml(giderFark.eksik, "gider") + '</div>'
-    + '<div class="card"><div class="mtitle" style="font-size:14px">GİDER — Panelde var, muhasebecide yok <span class="pill">'+giderFark.fazla.length+'</span></div>' + fazlaSatirHtml(giderFark.fazla, "var(--amber)") + '</div>'
-    + '<div class="card"><div class="mtitle" style="font-size:14px">GELİR/TAHSİLAT — Muhasebecide var, panelde yok <span class="pill">'+gelirFark.eksik.length+'</span></div>' + eksikSatirHtml(gelirFark.eksik, "gelir") + '<div class="mini" style="margin-top:6px">Not: muhasebeci parayı ne zaman aldıysa o günü yazar. Panel tarafında bu, tahsilat tarihine göre karşılaştırılıyor — fatura tarihine göre değil. Buradan eklediğin bir gelir, tam tahsil edilmiş olarak kaydedilir.</div></div>'
-    + '<div class="card"><div class="mtitle" style="font-size:14px">GELİR/TAHSİLAT — Panelde var, muhasebecide yok <span class="pill">'+gelirFark.fazla.length+'</span></div>' + fazlaSatirHtml(gelirFark.fazla, "var(--amber)") + '</div>';
+    + (kayanlar.length ? '<div class="card"><div class="mtitle" style="font-size:14px">↔ Tarihi ay sınırında kayan kayıtlar <span class="pill">'+kayanlar.length+'</span></div>'
+      + '<div class="mini" style="margin-bottom:6px">Bunlar panelde VAR, sadece tarihleri birkaç gün farklı olduğu için biri bu aya, öbürü komşu aya düşüyor. Eksik değiller; yukarıdaki ay toplamı farkının bir kısmı bunlardan gelir.</div>'
+      + kayanlar.map(k => '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #262837;font-size:12.5px"><span>'+k.tur+' · '+esc(k.m.aciklama)+' — Excel: <b>'+fmtTarih(k.m.tarih)+'</b>, panel: <b>'+fmtTarih(k.p.tarih)+'</b></span><b style="white-space:nowrap">'+fmt(k.m.tutar)+'</b></div>').join("") + '</div>' : '')
+    + '<div class="card"><div class="mtitle" style="font-size:14px">GELİR — Excel\'de var, panelde yok <span class="pill">'+gelirEksik.length+'</span>' + (satisSayi ? ' <span class="pill" style="background:var(--green-bg);color:var(--green)">'+satisSayi+' satış</span>' : '') + '</div>' + eksikBolum(gelirEksik, "gelir") + '</div>'
+    + '<div class="card"><div class="mtitle" style="font-size:14px">GİDER — Excel\'de var, panelde yok <span class="pill">'+giderFark.eksik.length+'</span></div>' + eksikBolum(giderFark.eksik, "gider") + '</div>'
+    + '<div class="card"><div class="mtitle" style="font-size:14px">GELİR — Panelde var, Excel\'de yok <span class="pill">'+gelirFark1.fazla.length+'</span></div>' + fazlaSatirHtml(gelirFark1.fazla, "var(--amber)") + '</div>'
+    + '<div class="card"><div class="mtitle" style="font-size:14px">GİDER — Panelde var, Excel\'de yok <span class="pill">'+giderFark.fazla.length+'</span></div>' + fazlaSatirHtml(giderFark.fazla, "var(--amber)") + '</div>';
   muhOzetGuncelle();
 }
 function muhOzetSatirHtml(baslik, muhT, panelT) {
   const fark = muhT - panelT;
-  return '<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:13px"><span>'+baslik+'</span>'
-    + '<span>Muhasebeci: <b>'+fmt(muhT)+'</b> · Panel: <b>'+fmt(panelT)+'</b> · Fark: <b style="color:'+(Math.abs(fark)<1?"var(--green)":"var(--red)")+'">'+fmt(fark)+'</b></span></div>';
+  return '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:5px 0;font-size:13px"><span>'+baslik+'</span>'
+    + '<span>Excel: <b>'+fmt(muhT)+'</b> · Panel: <b>'+fmt(panelT)+'</b> · Fark: <b style="color:'+(Math.abs(fark)<1?"var(--green)":"var(--red)")+'">'+fmt(fark)+'</b></span></div>';
 }
-// Panel toplamını YENİDEN hesaplayıp özet kartını günceller — "Ekle" ile her yeni kayıt eklendikçe
-// çağrılır, fark canlı olarak sıfıra yaklaştığı görülebilir, tekrar dosya yüklemeye gerek kalmaz.
+// "İşle" ile her yeni kayıt eklendikçe çağrılır — fark canlı olarak sıfıra yaklaşır.
+// (Onay listesine gönderilen satışlar, sen onaylayınca panele girer; özet ancak o zaman değişir.)
 function muhOzetGuncelle() {
   const o = window.__muhOzet;
   if (!o) return;
   const panelGiderToplam = panelGiderleriAy(o.ayKey).reduce((s,x)=>s+x.tutar,0);
-  const panelGelirToplam = panelTahsilatlariAy(o.ayKey).reduce((s,x)=>s+x.tutar,0);
+  const panelGelirToplam = panelGelirleriAy(o.ayKey).reduce((s,x)=>s+x.tutar,0);
   const el = document.getElementById("muh-ozet-icerik");
-  if (el) el.innerHTML = muhOzetSatirHtml("Gider", o.muhGiderToplam, panelGiderToplam) + muhOzetSatirHtml("Gelir/Tahsilat", o.muhGelirToplam, panelGelirToplam);
+  if (el) el.innerHTML = muhOzetSatirHtml("Gider", o.muhGiderToplam, panelGiderToplam) + muhOzetSatirHtml("Gelir", o.muhGelirToplam, panelGelirToplam);
 }
 
-// Kg/hammadde alanı sadece anlamlı olduğu kategorilerde gösterilir — normal +Kayıt formundaki
-// mantıkla aynı: satış kategorilerinde kg, "Hammadde" giderinde ise hangi hammadde stoğuna kaç kg
-// eklendiği. Diğer kategorilerde (Personel, Vergi/SGK, Kredi Ödemesi vb.) kg kavramı yok, gösterilmez.
-const MUH_KG_GELIR_KAT = ["Satış-Fatura","Perakende Satış","Hammadde Satışı"];
+// Kg/hammadde alanı sadece anlamlı olduğu kategorilerde gösterilir. Satış kategorilerinde ise
+// ürünler onay kartında girileceği için burada ek alan yoktur.
 function muhSatirHtml(tur, i, x, kategoriSecili) {
   const katListesi = tur==="gider" ? GIDER_KAT : GELIR_KAT;
   const hammaddeliMi = tur==="gider" && kategoriSecili==="Hammadde";
-  const gelirKgliMi = tur==="gelir" && MUH_KG_GELIR_KAT.indexOf(kategoriSecili) >= 0;
+  const satisMi = tur==="gelir" && muhSatisKategorisiMi(kategoriSecili);
   let ekAlan = "";
   if (hammaddeliMi) {
-    ekAlan = '<select id="muh-ham-'+i+'" style="flex:1.4;font-size:12px;padding:4px 6px"><option value="">— hangi hammadde —</option>'
+    ekAlan = '<select id="muh-ham-'+i+'" style="flex:1.4;min-width:140px;font-size:12px;padding:4px 6px"><option value="">— hangi hammadde —</option>'
       + data.hammadde.map((hm,hi)=>'<option value="'+hi+'">'+esc(hm.tedarikci+" ("+hm.aciklama+")")+'</option>').join("") + '</select>'
       + '<input type="text" id="muh-hamkg-'+i+'" inputmode="decimal" placeholder="Kg" style="width:64px;font-size:12px;padding:4px 6px">';
-  } else if (gelirKgliMi) {
-    ekAlan = '<input type="text" id="muh-kg-'+i+'" inputmode="decimal" placeholder="Satış Kg" style="width:90px;font-size:12px;padding:4px 6px">';
+  } else if (tur==="gelir" && kategoriSecili==="Hammadde Satışı") {
+    ekAlan = '<input type="text" id="muh-kg-'+i+'" inputmode="decimal" placeholder="Kg" style="width:80px;font-size:12px;padding:4px 6px">';
   }
-  // Otomatik eşleştirme bu kayda karar veremedi (isim de tutar da net değil) — kararı sana bırakıyorum.
-  // En yakın tutarlı 2 panel kaydını gösteriyorum, sen bakıp "bu zaten o mu" karar veriyorsun.
   const panelListesi = (window.__muhPanelListesi && window.__muhPanelListesi[tur]) || [];
-  const adaylar = panelListesi
-    .map(p => ({ p, fark: Math.abs(p.tutar - x.tutar) }))
-    .sort((a,b) => a.fark - b.fark)
-    .slice(0, 2);
-  let adayHtml = "";
-  if (adaylar.length) {
-    adayHtml = '<div class="mini" style="margin-top:4px;color:var(--mut)">Panelde tutar bazlı en yakın: ' + adaylar.map(a =>
-      esc(fmtTarih(a.p.tarih)+' · '+a.p.aciklama+' · '+fmt(a.p.tutar)) + (a.fark>0.5 ? ' (fark: '+fmt(a.fark)+')' : ' (birebir aynı tutar!)')
-    ).join(' &nbsp;|&nbsp; ') + '</div>';
-  }
-  return '<div id="muh-satir-'+tur+'-'+i+'" style="padding:6px 0;border-bottom:1px solid #262837;font-size:12.5px">'
-    + '<div style="display:flex;justify-content:space-between;gap:8px"><span>'+fmtTarih(x.tarih)+' · '+esc(x.aciklama)+'</span><b style="color:var(--red);white-space:nowrap">'+fmt(x.tutar)+'</b></div>'
+  const adaylar = panelListesi.map(p => ({ p, fark: Math.abs(p.tutar - x.tutar) })).sort((a,b) => a.fark - b.fark).slice(0, 2);
+  const adayHtml = adaylar.length
+    ? '<div class="mini" style="margin-top:3px;color:var(--mut)">Panelde tutarı en yakın: ' + adaylar.map(a =>
+        esc(fmtTarih(a.p.tarih)+' · '+a.p.aciklama+' · '+fmt(a.p.tutar)) + (a.fark>0.5 ? '' : ' <b style="color:var(--amber)">(aynı tutar!)</b>')).join(' &nbsp;|&nbsp; ') + '</div>'
+    : '';
+  return '<div id="muh-satir-'+tur+'-'+i+'" style="padding:7px 0;border-bottom:1px solid #262837;font-size:12.5px">'
+    + '<div style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" class="muh-sec-'+tur+'" data-i="'+i+'" style="width:18px;height:18px;flex-shrink:0;margin-top:1px">'
+    + '<span style="flex:1">'+fmtTarih(x.tarih)+' · <b>'+esc(x.aciklama)+'</b>'+(x.detay?' <span class="mini">— '+esc(x.detay)+'</span>':'')+'</span><b style="color:var(--red);white-space:nowrap">'+fmt(x.tutar)+'</b></div>'
+    + (x.uyari ? '<div class="mini" style="color:var(--amber);margin-top:3px">⚠ '+esc(x.uyari)+'</div>' : '')
+    + (x.kategoriKaynak && kategoriSecili === x.kategori ? '<div class="mini" style="margin-top:3px">Kategori: <b>'+esc(x.kategori)+'</b> — '+esc(x.kategoriKaynak)+'</div>' : '')
     + adayHtml
-    + '<div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">'
-    + '<select id="muh-kat-'+tur+'-'+i+'" onchange="muhSatirYenile(\''+tur+'\','+i+')" style="flex:1;min-width:110px;font-size:12px;padding:4px 6px">'+katListesi.map(k=>'<option value="'+esc(k)+'"'+(k===kategoriSecili?" selected":"")+'>'+esc(k)+'</option>').join("")+'</select>'
+    + '<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">'
+    + '<select id="muh-kat-'+tur+'-'+i+'" onchange="muhSatirYenile(\''+tur+'\','+i+')" style="flex:1;min-width:130px;font-size:12px;padding:4px 6px">'+katListesi.map(k=>'<option value="'+esc(k)+'"'+(k===kategoriSecili?" selected":"")+'>'+esc(k)+'</option>').join("")+'</select>'
     + ekAlan
-    + '<button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap;flex-shrink:0" onclick="muhEksikEkle(\''+tur+'\','+i+')">✓ Ekle</button>'
-    + '<button class="chip" style="white-space:nowrap;flex-shrink:0" onclick="muhAtla(\''+tur+'\','+i+')">Zaten Var — Atla</button>'
+    + '<button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap;flex-shrink:0" onclick="muhIsle(\''+tur+'\','+i+')">'+(satisMi ? '→ Satış kartı aç' : '✓ Ekle')+'</button>'
+    + '<button class="chip" style="white-space:nowrap;flex-shrink:0" onclick="muhAtla(\''+tur+'\','+i+')">Zaten Var</button>'
     + '</div></div>';
 }
-// "Zaten Var — Atla": makine bu kaydı otomatik eşleştiremedi ama sen panelde zaten olduğunu görüyorsun.
-// Hiçbir veri eklemez/değiştirmez — sadece o satırı listeden kaldırır, tekrar sorulmaz.
-function muhAtla(tur, i) {
-  const satirEl = document.getElementById("muh-satir-"+tur+"-"+i);
-  if (satirEl) satirEl.innerHTML = '<div style="padding:6px 0;color:var(--mut);font-size:12.5px">— Atlandı (zaten panelde olduğu kabul edildi)</div>';
+function muhSatirBitti(tur, i, mesaj, renk) {
+  const x = (tur==="gider" ? window.__muhEksikGider : window.__muhEksikGelir)[i];
+  if (x) x.bitti = true;
+  const el = document.getElementById("muh-satir-"+tur+"-"+i);
+  if (el) el.innerHTML = '<div style="padding:4px 0;color:'+(renk||"var(--mut)")+';font-size:12.5px">'+mesaj+'</div>';
 }
-// Kategori değişince (Hammadde seçilip seçilmediğine göre kg/hammadde alanı görünürlüğü değişir)
-// SADECE o satırı yeniden çizer — diğer satırlara ve girilmiş değerlerine dokunmaz.
+function muhAtla(tur, i) { muhSatirBitti(tur, i, "— Atlandı (zaten panelde olduğu kabul edildi)"); }
 function muhSatirYenile(tur, i) {
   const x = (tur==="gider" ? window.__muhEksikGider : window.__muhEksikGelir)[i];
-  const yeniKategori = gv("muh-kat-"+tur+"-"+i);
   const el = document.getElementById("muh-satir-"+tur+"-"+i);
-  if (el && x) el.outerHTML = muhSatirHtml(tur, i, x, yeniKategori);
+  if (!x || !el) return;
+  x.kategori = gv("muh-kat-"+tur+"-"+i);
+  el.outerHTML = muhSatirHtml(tur, i, x, x.kategori);
 }
-// "Ekle" butonuna basılınca: gider → yeni GİDER hareketi (Hammadde ise seçilen stok kalemine kg
-// eklenir, normal +Kayıt formuyla aynı mantık); gelir → yeni GELİR hareketi, satış kg'si varsa
-// eklenir, muhasebeci zaten "para geldi" dediği için TAM TAHSİL EDİLMİŞ olarak kaydedilir.
-function muhEksikEkle(tur, i) {
+function muhHepsiniSec(tur, acik) { document.querySelectorAll(".muh-sec-"+tur).forEach(c => { c.checked = acik; }); }
+// Tek satırı işler. sessiz: toplu işlemde her satırda ayrı kaydetme/yenileme yapılmaz.
+// Dönüş: "kayit" (panele eklendi), "kart" (onay listesine gitti) ya da false.
+function muhIsle(tur, i, sessiz) {
   const x = (tur==="gider" ? window.__muhEksikGider : window.__muhEksikGelir)[i];
-  if (!x) return;
-  const kategori = gv("muh-kat-"+tur+"-"+i);
-  if (!kategori) { toast("Kategori seç"); return; }
+  if (!x || x.bitti) return false;
+  const kategori = gv("muh-kat-"+tur+"-"+i) || x.kategori;
+  if (tur === "gelir" && muhSatisKategorisiMi(kategori)) {
+    const kart = excelSatisKarti(x, kategori);
+    if (kart.no && faturaKuyruk.some(k => k.no && faturaNoAnahtar(k.no) === faturaNoAnahtar(kart.no) && k.durum !== "atlandi")) {
+      muhSatirBitti(tur, i, "— Bu fatura zaten onay listesinde"); return false;
+    }
+    faturaKuyruk.push(kart);
+    if (!sessiz) { faturaKuyrukSakla(); render(); toast("→ Satış kartı onay listesine eklendi"); }
+    muhSatirBitti(tur, i, "→ Satış kartı açıldı — Hareketler'in üstündeki onay listesinde ürünleri girip onayla", "var(--green)");
+    return "kart";
+  }
   const yeniKayit = {
-    __id: (Date.now()+"_"+Math.random().toString(36).slice(2)),
+    __id: "h_" + Date.now() + "_" + Math.random().toString(36).slice(2,7),
     tur: tur==="gider" ? "GİDER" : "GELİR",
-    tarih: x.tarih,
-    kategori: kategori,
-    aciklama: x.aciklama,
-    not: "Muhasebe karşılaştırmasından eklendi"
+    tarih: x.tarih, kategori, aciklama: x.aciklama,
+    not: [x.faturaNoMetin, x.detay].filter(Boolean).join(" · ") || "Excel karşılaştırmasından eklendi"
   };
+  if (x.fAnahtar) yeniKayit.faturaNo = (String(x.faturaNoMetin || x.aciklama).toUpperCase().match(/[A-Z]{3}\s*-?\s*20\d{5,14}/) || [""])[0].replace(/[\s-]/g, "") || undefined;
+  if (!yeniKayit.faturaNo) delete yeniKayit.faturaNo;
   if (tur==="gider") {
     yeniKayit.gider = x.tutar;
     if (kategori === "Hammadde") {
       const hamIdx = gv("muh-ham-"+i);
       const hamKg = parseTL(gv("muh-hamkg-"+i));
-      if (hamIdx !== "" && !isNaN(hamKg) && hamKg > 0) {
+      if (hamIdx && !isNaN(hamKg) && hamKg > 0) {
         const hm = data.hammadde[parseInt(hamIdx)];
         if (hm) { hm.kalan = (hm.kalan||0) + hamKg; hm.alinan = (hm.alinan||0) + hamKg; }
       }
     }
   } else {
     yeniKayit.gelir = x.tutar;
-    yeniKayit.tahsilatlar = [{ tarih: x.tarih, tutar: x.tutar }]; // muhasebeci zaten tahsil edildiğini bildiriyor
-    const satisKg = parseTL(gv("muh-kg-"+i));
-    if (!isNaN(satisKg) && satisKg > 0) yeniKayit.kg = satisKg;
+    yeniKayit.tahsilatlar = [{ tarih: x.tarih, tutar: x.tutar }]; // defterde para gelmiş olarak yazılı
+    const kg = parseTL(gv("muh-kg-"+i));
+    if (!isNaN(kg) && kg > 0) yeniKayit.kg = kg;
   }
   data.hareketler.push(yeniKayit);
-  save();
-  const satirEl = document.getElementById("muh-satir-"+tur+"-"+i);
-  if (satirEl) satirEl.innerHTML = '<div style="padding:6px 0;color:var(--green);font-size:12.5px">✓ Eklendi — '+esc(x.aciklama)+' ('+fmt(x.tutar)+')</div>';
-  toast("✓ Eklendi: " + x.aciklama);
-  muhOzetGuncelle();
+  muhSatirBitti(tur, i, "✓ Eklendi — "+esc(x.aciklama)+" ("+fmt(x.tutar)+") · "+esc(kategori), "var(--green)");
+  if (!sessiz) { save(); render(); toast("✓ Eklendi: " + x.aciklama); muhOzetGuncelle(); }
+  return "kayit";
+}
+function muhSecilenleriIsle(tur) {
+  const secili = Array.from(document.querySelectorAll(".muh-sec-"+tur)).filter(c => c.checked).map(c => parseInt(c.getAttribute("data-i")));
+  if (!secili.length) { toast("Önce satırların solundaki kutucukları işaretle"); return; }
+  const liste = tur==="gider" ? window.__muhEksikGider : window.__muhEksikGelir;
+  const satis = secili.filter(i => tur === "gelir" && muhSatisKategorisiMi(gv("muh-kat-"+tur+"-"+i) || liste[i].kategori)).length;
+  const diger = secili.length - satis;
+  if (!confirm(secili.length + " satır işlenecek:\n" + (diger ? "• " + diger + " tanesi seçili kategorisiyle panele eklenecek\n" : "") + (satis ? "• " + satis + " satış için onay kartı açılacak (ürünleri sen girip onaylayacaksın)\n" : "") + "\nKategorileri kontrol ettin mi?")) return;
+  let kayit = 0, kart = 0;
+  secili.forEach(i => { const r = muhIsle(tur, i, true); if (r === "kayit") kayit++; else if (r === "kart") kart++; });
+  if (kart) faturaKuyrukSakla();
+  if (kayit) save();
+  render(); muhOzetGuncelle();
+  toast((kayit ? "✓ " + kayit + " kayıt eklendi" : "") + (kayit && kart ? " · " : "") + (kart ? "→ " + kart + " satış kartı açıldı" : ""));
 }
 
 function xlsAyristir(wb) {
@@ -4284,7 +4507,7 @@ function rHareketler(H) {
   const q = arama.trim().toLocaleLowerCase("tr");
   if (q) liste = liste.filter(h => (h.aciklama||"").toLocaleLowerCase("tr").indexOf(q) >= 0 || (h.not||"").toLocaleLowerCase("tr").indexOf(q) >= 0 || (h.kategori||"").toLocaleLowerCase("tr").indexOf(q) >= 0);
 
-  let html = rFaturaOnay() + '<div class="card"><div class="mtitle" style="flex-wrap:wrap;row-gap:8px">Hareketler <span class="pill">'+liste.length+' kayıt</span><span style="flex:1"></span><button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap" onclick="faturaSec()">📄 Fatura Yükle</button><input type="file" id="fatura-dosya" accept=".xml,.zip" multiple style="display:none" onchange="faturaDosyalariOku(this.files)"> <button class="chip" style="color:var(--blue);border-color:var(--blue);white-space:nowrap" onclick="gunlukRaporSec()">📆 Günlük Rapor</button> <button class="chip" style="white-space:nowrap" onclick="muhasebeKarsilastirAc()">📊 Muhasebe ile Karşılaştır</button></div>';
+  let html = rFaturaOnay() + '<div class="card"><div class="mtitle" style="flex-wrap:wrap;row-gap:8px">Hareketler <span class="pill">'+liste.length+' kayıt</span><span style="flex:1"></span><button class="chip" style="color:var(--green);border-color:var(--green);white-space:nowrap" onclick="faturaSec()">📄 Fatura Yükle</button><input type="file" id="fatura-dosya" accept=".xml,.zip" multiple style="display:none" onchange="faturaDosyalariOku(this.files)"> <button class="chip" style="color:var(--blue);border-color:var(--blue);white-space:nowrap" onclick="gunlukRaporSec()">📆 Günlük Rapor</button> <button class="chip" style="white-space:nowrap" onclick="muhasebeKarsilastirAc()">📊 Excel ile Karşılaştır</button></div>';
   html += '<input type="text" id="h-arama" placeholder="🔍 Ara: firma, kategori, not…" value="'+esc(arama)+'" oninput="arama=this.value;renderKorumali()" style="margin-bottom:10px">';
   html += '<div class="chips">'+filtreler.map(f => '<button class="chip'+(hFiltre===f[0]?" on":"")+'" onclick="hFiltre=\''+f[0]+'\';render()">'+f[1]+'</button>').join("")+'</div>';
 
