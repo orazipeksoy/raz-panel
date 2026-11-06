@@ -1754,12 +1754,15 @@ function faturaKayitBul(no, adlar, tutar, tarih) {
   const a = faturaNoAnahtar(no);
   if (a) { const h = data.hareketler.find(h => hareketFaturaAnahtar(h) === a); if (h) return { h, kesin: true }; }
   if (!(tutar > 0) || !tarih) return null;
-  const h = data.hareketler.find(h => h.gelir && Math.abs(h.gelir - tutar) < 1 && h.tarih && gunFarki(h.tarih, tarih) <= 10
-    && !(a && hareketFaturaAnahtar(h)) && adlar.some(ad => ad && muhIsimBenzerMi(h.aciklama, ad)));
-  return h ? { h, kesin: false } : null;
+  // Tutar kuruşu kuruşuna aynı + 10 gün içinde; birden çoksa ismi benzeyen, sonra tarihi en yakın
+  const adaylar = data.hareketler.filter(h => h.gelir && Math.abs(h.gelir - tutar) < 0.01 && h.tarih && gunFarki(h.tarih, tarih) <= 10 && !(a && hareketFaturaAnahtar(h)));
+  if (!adaylar.length) return null;
+  const puan = h => gunFarki(h.tarih, tarih) + (adlar.some(ad => ad && muhIsimBenzerMi(h.aciklama, ad)) ? 0 : 100);
+  adaylar.sort((x, y) => puan(x) - puan(y));
+  return { h: adaylar[0], kesin: false };
 }
 function faturaTekrarNeden(v) {
-  return (v.kesin ? "Bu fatura zaten kayıtlı (" : "Muhtemelen zaten kayıtlı — aynı müşteri ve tutar (") + fmtTarih(v.h.tarih) + " · " + v.h.aciklama + " · " + fmt(v.h.gelir) + ")";
+  return (v.kesin ? "Bu fatura zaten kayıtlı (" : "Muhtemelen zaten kayıtlı — aynı tutar, yakın tarih (") + fmtTarih(v.h.tarih) + " · " + v.h.aciklama + " · " + fmt(v.h.gelir) + ")";
 }
 
 // --- Müşteri tanıma ---
@@ -3446,25 +3449,32 @@ function muhIsimBenzerMi(a, b) {
   if (!wa.length || !wb.length) return false;
   return wa.some(w => wb.indexOf(w) >= 0);
 }
-// Eşleştirme sırası: (1) aynı fatura no → kesin; (2) aynı tutar + benzer isim, en yakın tarihli;
-// (3) isim benzemese de o tutarda yakın tarihte TEK aday varsa. Tarih farkı en çok gunTol gün.
+// Eşleştirme: (1) aynı fatura no → kesin; (2) tutar kuruşu kuruşuna aynı ve tarih en çok gunTol gün farklı.
+// İsim şart değildir (Excel'de ve panelde farklı yazılabilir); aynı tutarda birden çok aday varsa önce tarihi
+// en yakın olan, eşitse ismi benzeyen seçilir. Tüm çiftler tarih farkına göre sıralanıp en yakın önce bağlanır —
+// her ay tekrarlanan aynı tutarlı kalemlerde (KDV, maaş…) bir ayın satırı komşu ayın kaydını kapmasın diye.
 // Bir panel kaydı yalnızca bir Excel satırıyla eşleşir.
-function muhEslestir(muhListesi, panelListesi, gunTol, kullanildi) {
-  kullanildi = kullanildi || new Array(panelListesi.length).fill(false);
-  const eksik = [];
+function muhEslestir(muhListesi, panelListesi, gunTol) {
+  const kullanildi = new Array(panelListesi.length).fill(false);
+  const bagla = (m, idx) => { kullanildi[idx] = true; m.eslesen = panelListesi[idx]; };
+  muhListesi.forEach(m => { m.eslesen = null; });
   muhListesi.forEach(m => {
-    let idx = -1;
-    if (m.fAnahtar) idx = panelListesi.findIndex((p,i) => !kullanildi[i] && p.fAnahtar === m.fAnahtar);
-    if (idx < 0) {
-      const adaylar = [];
-      panelListesi.forEach((p,i) => { if (!kullanildi[i] && Math.abs(p.tutar-m.tutar) < 1 && gunFarki(p.tarih, m.tarih) <= gunTol && !(m.fAnahtar && p.fAnahtar)) adaylar.push(i); });
-      adaylar.sort((a,b) => gunFarki(panelListesi[a].tarih, m.tarih) - gunFarki(panelListesi[b].tarih, m.tarih));
-      const benzer = adaylar.filter(i => muhIsimBenzerMi(panelListesi[i].aciklama, m.aciklama));
-      if (benzer.length) idx = benzer[0];
-      else if (adaylar.length === 1) idx = adaylar[0];
-    }
-    if (idx >= 0) kullanildi[idx] = true; else eksik.push(m);
+    if (!m.fAnahtar) return;
+    const idx = panelListesi.findIndex((p,i) => !kullanildi[i] && p.fAnahtar === m.fAnahtar);
+    if (idx >= 0) bagla(m, idx);
   });
+  const ciftler = [];
+  muhListesi.forEach(m => {
+    if (m.eslesen) return;
+    panelListesi.forEach((p,i) => {
+      if (kullanildi[i] || Math.abs(p.tutar - m.tutar) >= 0.01 || (m.fAnahtar && p.fAnahtar)) return;
+      const g = gunFarki(p.tarih, m.tarih);
+      if (g <= gunTol) ciftler.push({ m, i, g: g + (muhIsimBenzerMi(p.aciklama, m.aciklama) ? 0 : 0.5) });
+    });
+  });
+  ciftler.sort((x,y) => x.g - y.g);
+  ciftler.forEach(c => { if (!c.m.eslesen && !kullanildi[c.i]) bagla(c.m, c.i); });
+  const eksik = muhListesi.filter(m => !m.eslesen);
   const fazla = panelListesi.filter((p,i) => !kullanildi[i]);
   return { eksik, fazla };
 }
@@ -3503,15 +3513,30 @@ function muhasebeAyristirVeKarsilastir(wb, ayKey) {
     document.getElementById("muh-sonuc").innerHTML = '<div class="mini" style="color:var(--red);margin-top:10px">Dosyada "GİDER" ya da "GELİR" adında bir sayfa bulunamadı. Sayfa adları: ' + wb.SheetNames.join(", ") + '</div>';
     return;
   }
-  const muhGiderler = giderSayfaAdi ? muhSayfaOku(wb.Sheets[giderSayfaAdi], ayKey, { tarih: "TARİH", aciklama: "AÇIKLAMA", tutar: "TUTAR", detay: "EK AÇIKLAMA", faturaNo: "FATURA" }) : [];
-  const muhGelirler = gelirSayfaAdi ? muhSayfaOku(wb.Sheets[gelirSayfaAdi], ayKey, { tarih: "TARİH", aciklama: "ÖDEME YAPAN", tutar: "TUTAR", detay: "DETAY" }) : [];
-  const panelGiderler = panelGiderleriAy(ayKey);
-  const panelGelirler = panelGelirleriAy(ayKey);
-  const giderFark = muhEslestir(muhGiderler, panelGiderler, 45);
-  const gelirFark1 = muhEslestir(muhGelirler, panelGelirler, 45);
+  // Eşleştirme her zaman TÜM kayıtlar üzerinden yapılır, sonra seçilen aya süzülür: böylece Excel'de
+  // 1 Ekim, panelde 29 Eylül yazan aynı kayıt bir ayda "eksik", öbür ayda "fazla" görünmez.
+  const muhGiderTum = giderSayfaAdi ? muhSayfaOku(wb.Sheets[giderSayfaAdi], "TUM", { tarih: "TARİH", aciklama: "AÇIKLAMA", tutar: "TUTAR", detay: "EK AÇIKLAMA", faturaNo: "FATURA" }) : [];
+  const muhGelirTum = gelirSayfaAdi ? muhSayfaOku(wb.Sheets[gelirSayfaAdi], "TUM", { tarih: "TARİH", aciklama: "ÖDEME YAPAN", tutar: "TUTAR", detay: "DETAY" }) : [];
+  const ayda = t => ayKey === "TUM" || (t || "").slice(0,7) === ayKey;
+  const muhGiderler = muhGiderTum.filter(x => ayda(x.tarih));
+  const muhGelirler = muhGelirTum.filter(x => ayda(x.tarih));
+  const panelGiderTum = panelGiderleriAy("TUM");
+  const panelGelirTum = panelGelirleriAy("TUM");
+  const giderFarkTum = muhEslestir(muhGiderTum, panelGiderTum, 10);
+  const gelirFark1Tum = muhEslestir(muhGelirTum, panelGelirTum, 10);
   // Faturayla eşleşmeyen gelir satırları ödeme satırı olabilir — tahsilat girişlerinde ara
-  const gelirFark2 = muhEslestir(gelirFark1.eksik.filter(x => !x.fAnahtar), panelTahsilatlariAy(ayKey), 45);
-  const gelirEksik = gelirFark1.eksik.filter(x => x.fAnahtar).concat(gelirFark2.eksik).sort((a,b) => a.tarih.localeCompare(b.tarih));
+  const gelirFark2Tum = muhEslestir(gelirFark1Tum.eksik.filter(x => !x.fAnahtar), panelTahsilatlariAy("TUM"), 10);
+  const giderFark = { eksik: giderFarkTum.eksik.filter(x => ayda(x.tarih)), fazla: giderFarkTum.fazla.filter(p => ayda(p.tarih)) };
+  const gelirFark1 = { fazla: gelirFark1Tum.fazla.filter(p => ayda(p.tarih)) };
+  const gelirEksik = gelirFark1Tum.eksik.filter(x => x.fAnahtar).concat(gelirFark2Tum.eksik).filter(x => ayda(x.tarih)).sort((a,b) => a.tarih.localeCompare(b.tarih));
+  const panelGiderler = panelGiderTum, panelGelirler = panelGelirTum;
+  // Eşleşmiş ama tarihi ay sınırının öbür tarafında kalan kayıtlar — ay toplamlarındaki farkın açıklaması
+  const kayanlar = [];
+  if (ayKey !== "TUM") {
+    [["Gider", muhGiderTum], ["Gelir", muhGelirTum]].forEach(([tur, liste]) => liste.forEach(m => {
+      if (m.eslesen && ayda(m.tarih) !== ayda(m.eslesen.tarih)) kayanlar.push({ tur, m, p: m.eslesen });
+    }));
+  }
   giderFark.eksik.sort((a,b) => a.tarih.localeCompare(b.tarih));
   giderFark.eksik.forEach(x => { x.kategori = muhGiderKategoriTahmin(x); });
   gelirEksik.forEach(x => { x.kategori = muhGelirKategoriTahmin(x); });
@@ -3541,10 +3566,13 @@ function muhasebeAyristirVeKarsilastir(wb, ayKey) {
   document.getElementById("muh-sonuc").innerHTML =
     '<div class="card" style="margin-top:14px;border:1.5px solid var(--gold)"><div class="mtitle" style="font-size:14px">🔎 Toplam Özet — '+esc(donemEtiketi)+'</div>'
     + '<div id="muh-ozet-icerik"></div>'
-    + '<div class="mini" style="margin-top:6px">Eşleştirme önce <b>fatura no</b> (PLW…) ile, sonra aynı tutar + benzer isim + yakın tarih ile yapılır. Sayfanın altındaki toplam satırından sonraki notlar sayılmaz.<br>'
+    + '<div class="mini" style="margin-top:6px">Eşleştirme önce <b>fatura no</b> (PLW…) ile, sonra <b>kuruşu kuruşuna aynı tutar</b> ve en çok 10 gün tarih farkıyla yapılır; isim şart değil. Sayfanın altındaki toplam satırından sonraki notlar sayılmaz.<br>'
     + '<b>Satışlar</b> "Satış kartı aç" ile Hareketler\'in üstündeki onay listesine gider; orada ürün, adet ve kg girip onaylarsın (stoktan düşer). '
     + '<b>Giderler</b> ve satış olmayan gelirler kategorisiyle doğrudan eklenir. Panelde zaten olduğunu gördüğün satırda <b>Zaten Var</b>\'a bas.</div>'
     + '</div>'
+    + (kayanlar.length ? '<div class="card"><div class="mtitle" style="font-size:14px">↔ Tarihi ay sınırında kayan kayıtlar <span class="pill">'+kayanlar.length+'</span></div>'
+      + '<div class="mini" style="margin-bottom:6px">Bunlar panelde VAR, sadece tarihleri birkaç gün farklı olduğu için biri bu aya, öbürü komşu aya düşüyor. Eksik değiller; yukarıdaki ay toplamı farkının bir kısmı bunlardan gelir.</div>'
+      + kayanlar.map(k => '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #262837;font-size:12.5px"><span>'+k.tur+' · '+esc(k.m.aciklama)+' — Excel: <b>'+fmtTarih(k.m.tarih)+'</b>, panel: <b>'+fmtTarih(k.p.tarih)+'</b></span><b style="white-space:nowrap">'+fmt(k.m.tutar)+'</b></div>').join("") + '</div>' : '')
     + '<div class="card"><div class="mtitle" style="font-size:14px">GELİR — Excel\'de var, panelde yok <span class="pill">'+gelirEksik.length+'</span>' + (satisSayi ? ' <span class="pill" style="background:var(--green-bg);color:var(--green)">'+satisSayi+' satış</span>' : '') + '</div>' + eksikBolum(gelirEksik, "gelir") + '</div>'
     + '<div class="card"><div class="mtitle" style="font-size:14px">GİDER — Excel\'de var, panelde yok <span class="pill">'+giderFark.eksik.length+'</span></div>' + eksikBolum(giderFark.eksik, "gider") + '</div>'
     + '<div class="card"><div class="mtitle" style="font-size:14px">GELİR — Panelde var, Excel\'de yok <span class="pill">'+gelirFark1.fazla.length+'</span></div>' + fazlaSatirHtml(gelirFark1.fazla, "var(--amber)") + '</div>'
