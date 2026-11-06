@@ -3478,21 +3478,51 @@ function muhEslestir(muhListesi, panelListesi, gunTol) {
   const fazla = panelListesi.filter((p,i) => !kullanildi[i]);
   return { eksik, fazla };
 }
-function muhGiderKategoriTahmin(x) {
+// Panelde benzer açıklamalı kayıtları en çok hangi kategoriye koyduğunu bulur (senin alışkanlığın).
+// Kelime kümeleri bir kez hazırlanır — yüzlerce satırda hızlı kalsın diye.
+function muhGecmisKategoriHazirla(tur) {
+  const kelimeler = s => aramaKatla(String(s||"")).replace(/[^a-z0-9\s]/g," ").split(/\s+/).filter(w=>w.length>=3 && !/\d/.test(w) && !MUH_GENEL_KELIME.has(w));
+  // Sadece firma/kişi adının ilk ayırt edici kelimesi aynı olan kayıtlara bakılır (ör. "KOÇER POLİMER…" ↔ "Koçer…")
+  const liste = data.hareketler.filter(h => (tur === "gider" ? h.gider : h.gelir) && h.kategori).map(h => ({ k: h.kategori, ilk: kelimeler(h.aciklama)[0] })).filter(h => h.ilk);
+  return x => {
+    const ilk = kelimeler(x.aciklama)[0];
+    if (!ilk) return null;
+    const sayac = {};
+    liste.forEach(h => { if (h.ilk === ilk) sayac[h.k] = (sayac[h.k] || 0) + 1; });
+    const enCok = Object.keys(sayac).sort((a,b) => sayac[b] - sayac[a])[0];
+    return enCok && sayac[enCok] >= 2 ? { kategori: enCok, adet: sayac[enCok] } : null;
+  };
+}
+// Önce açıklamadaki kesin kelimeler (maaş, avans, SGK/KDV, kredi), sonra panelde benzer kayıtların
+// kategorisi, en son açıklamadaki diğer ipuçları. x.kategoriKaynak ekranda gösterilir.
+function muhGiderKategoriTahmin(x, gecmis) {
   const t = trFold(x.aciklama + " " + (x.grup || ""));
-  if (/fabrika maliyet|komisyon/.test(t)) return "Genel Gider";
+  const kesin = muhGiderKesinKategori(t);
+  if (kesin) { x.kategoriKaynak = "açıklamada geçiyor"; return kesin; }
+  const kural = muhGiderKuralKategori(t);
+  if (kural) { x.kategoriKaynak = "açıklamadan tahmin"; return kural; }
+  const g = gecmis && gecmis(x);
+  if (g) { x.kategoriKaynak = "panelde aynı firmanın " + g.adet + " kaydı bu kategoride"; return g.kategori; }
+  x.kategoriKaynak = "tahmin edilemedi — kontrol et";
+  return "Genel Gider";
+}
+function muhGiderKesinKategori(t) {
   if (/maaş|maas|\bprim\b|ikramiye|yol parası|yol parasi/.test(t)) return "Personel";
   if (/avans/.test(t)) return "Avans";
-  if (/kredi/.test(t) && !/kredi kart/.test(t)) return "Kredi Ödemesi";
-  if (/nakliye|kargo|navlun/.test(t)) return "Nakliye";
-  if (/beser|karton|masura|bobin|torba|bant|kürek|kurek|hortum/.test(t)) return "Ekipman/Malzeme";
-  if (/motorin|yakıt|yakit|benzin|ad blue/.test(t)) return "Araç/Yakıt";
-  if (/bilet|otel|konaklama/.test(t)) return "Genel Gider";
-  if (/hammadde|hammade|granür|granur|granül|granul|polietilen|polimer|lineer|katkı|katki|compound|lavera|yeşileko|yesileko|özmüş|ozmus|geri dönüşüm|\d\s*kg\s*[x*]/.test(t)) return "Hammadde";
   if (/sgk|muhtasar|vergi|stopaj|damga/.test(t) || (/\bkdv\b/.test(t) && !/\+\s*kdv/.test(t))) return "Vergi/SGK";
-  if (/motorin|yakıt|yakit|benzin|ad blue|iveco|araç|arac|kasa bedel|\blastik|otoyol|hgs|\bcyr\b/.test(t)) return "Araç/Yakıt";
-  if (/makina|makine|tartı|tarti|pompa|kürek|kurek|hortum|terminal|sulama|elektrik|şalter|salter/.test(t)) return "Ekipman/Malzeme";
-  return "Genel Gider";
+  if (/kredi/.test(t) && !/kredi kart/.test(t)) return "Kredi Ödemesi";
+  if (/motorin|yakıt|yakit|benzin|ad blue/.test(t)) return "Araç/Yakıt";
+  if (/nakliye|kargo|navlun/.test(t)) return "Nakliye";
+  return null;
+}
+function muhGiderKuralKategori(t) {
+  if (/fabrika maliyet|komisyon|muhasebe|reklam|ilan\b/.test(t)) return "Genel Gider";
+  if (/beser|karton|masura|bobin|torba|bant|kürek|kurek|hortum/.test(t)) return "Ekipman/Malzeme";
+  if (/bilet|otel|konaklama|hastane/.test(t)) return "Genel Gider";
+  if (/hammadde|hammade|granür|granur|granül|granul|polietilen|polimer|lineer|katkı|katki|compound|lavera|yeşileko|yesileko|özmüş|ozmus|geri dönüşüm|\d\s*kg\s*[x*]/.test(t)) return "Hammadde";
+  if (/iveco|araç|arac|kasa bedel|\blastik|otoyol|hgs|\bcyr\b/.test(t)) return "Araç/Yakıt";
+  if (/makina|makine|tartı|tarti|pompa|terminal|sulama|elektrik|şalter|salter|kompresör|kompresor|encoder/.test(t)) return "Ekipman/Malzeme";
+  return null;
 }
 function muhGelirKategoriTahmin(x) {
   const t = trFold(x.aciklama);
@@ -3538,7 +3568,8 @@ function muhasebeAyristirVeKarsilastir(wb, ayKey) {
     }));
   }
   giderFark.eksik.sort((a,b) => a.tarih.localeCompare(b.tarih));
-  giderFark.eksik.forEach(x => { x.kategori = muhGiderKategoriTahmin(x); });
+  const giderGecmis = muhGecmisKategoriHazirla("gider");
+  giderFark.eksik.forEach(x => { x.kategori = muhGiderKategoriTahmin(x, giderGecmis); });
   gelirEksik.forEach(x => { x.kategori = muhGelirKategoriTahmin(x); });
 
   window.__muhEksikGider = giderFark.eksik;
@@ -3619,6 +3650,7 @@ function muhSatirHtml(tur, i, x, kategoriSecili) {
     + '<div style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" class="muh-sec-'+tur+'" data-i="'+i+'" style="width:18px;height:18px;flex-shrink:0;margin-top:1px">'
     + '<span style="flex:1">'+fmtTarih(x.tarih)+' · <b>'+esc(x.aciklama)+'</b>'+(x.detay?' <span class="mini">— '+esc(x.detay)+'</span>':'')+'</span><b style="color:var(--red);white-space:nowrap">'+fmt(x.tutar)+'</b></div>'
     + (x.uyari ? '<div class="mini" style="color:var(--amber);margin-top:3px">⚠ '+esc(x.uyari)+'</div>' : '')
+    + (x.kategoriKaynak && kategoriSecili === x.kategori ? '<div class="mini" style="margin-top:3px">Kategori: <b>'+esc(x.kategori)+'</b> — '+esc(x.kategoriKaynak)+'</div>' : '')
     + adayHtml
     + '<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">'
     + '<select id="muh-kat-'+tur+'-'+i+'" onchange="muhSatirYenile(\''+tur+'\','+i+')" style="flex:1;min-width:130px;font-size:12px;padding:4px 6px">'+katListesi.map(k=>'<option value="'+esc(k)+'"'+(k===kategoriSecili?" selected":"")+'>'+esc(k)+'</option>').join("")+'</select>'
