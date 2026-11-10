@@ -2050,6 +2050,7 @@ function fkSeciciKapat(id, ki) { const k = faturaKart(id); if (k && k.kalemler[k
 function fkOzetGuncelle(id) {
   const k = faturaKart(id), el = document.getElementById("fk-ozet-" + id);
   if (k && el) el.innerHTML = fkOzetHtml(k);
+  fkBakiyeGuncelle();
 }
 function fkOzetHtml(k) {
   const t = fkToplamlar(k), eksik = faturaKartEksikler(k);
@@ -2139,6 +2140,20 @@ function faturaListeKapat() {
   faturaKuyruk = []; faturaKuyrukSakla(); render();
 }
 
+// Onay listesinin para özeti: bekleyen kartların toplamı (işlenince gelire eklenecek tutar) ve bu listeden kaydedilenler
+function fkBakiyeHtml() {
+  const topla = d => faturaKuyruk.filter(k => k.durum === d).reduce((t, k) => { const v = parseTL(k.tutar); return t + (v > 0 ? v : 0); }, 0);
+  const say = d => faturaKuyruk.filter(k => k.durum === d).length;
+  const bek = topla("bekliyor"), kay = topla("kaydedildi");
+  const hazir = faturaKuyruk.filter(k => k.durum === "bekliyor" && !faturaKartEksikler(k).length);
+  const hazirT = hazir.reduce((t, k) => t + (parseTL(k.tutar) || 0), 0);
+  const kutu = (etiket, tutar, alt, renk) => '<div style="flex:1;min-width:150px;background:#1B1D28;border:1px solid var(--line);border-radius:10px;padding:9px 11px"><div class="lbl" style="margin-bottom:2px">' + etiket + '</div>'
+    + '<div style="font-size:16px;font-weight:800;font-variant-numeric:tabular-nums;color:' + renk + '">' + pg(tutar > 0 ? fmt(tutar) : "₺0,00") + '</div><div class="mini">' + alt + '</div></div>';
+  return kutu("Bekleyen bakiye", bek, say("bekliyor") + " fatura — işlenince gelire eklenecek", "var(--amber)")
+    + kutu("Şu an kaydedilebilir", hazirT, hazir.length + " fatura eksiksiz", "var(--green)")
+    + kutu("Bu listeden kaydedilen", kay, say("kaydedildi") + " fatura", "var(--mut)");
+}
+function fkBakiyeGuncelle() { const el = document.getElementById("fk-bakiye"); if (el) el.innerHTML = fkBakiyeHtml(); }
 function rFaturaOnay() {
   if (!faturaKuyruk.length) return "";
   const bekleyen = faturaKuyruk.filter(k => k.durum === "bekliyor");
@@ -2146,6 +2161,7 @@ function rFaturaOnay() {
   let html = '<div class="card" style="border-color:var(--amber)"><div class="mtitle" style="flex-wrap:wrap;row-gap:8px">📄 Fatura Onayı <span class="pill">' + bekleyen.length + ' bekliyor</span><span style="flex:1"></span>'
     + '<button class="chip" style="white-space:nowrap" onclick="faturaSec()">+ Fatura Ekle</button> '
     + '<button class="chip" style="white-space:nowrap" onclick="faturaListeKapat()">Listeyi Kapat</button></div>'
+    + '<div id="fk-bakiye" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">' + fkBakiyeHtml() + '</div>'
     + '<div class="mini" style="margin-bottom:10px">Faturadan okunan bilgiler aşağıda dolduruldu. Faturada kg yazıyorsa <b>adet (bobin)</b>, adet yazıyorsa <b>kg</b> kutusunu sen doldur (kırmızı kutular). Sen onaylamadan hiçbir fatura kaydedilmez.</div>';
   faturaKuyruk.forEach(k => {
     if (k.durum === "kaydedildi") {
