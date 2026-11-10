@@ -263,6 +263,7 @@ tr { transition: background-color .1s ease; }
   <div class="hdr-meta">
     <span id="sync-badge">● Bağlanıyor…</span>
     <span id="tarih-goster" style="color:#A79ECF;font-size:11px"></span>
+    <span id="surum-goster" style="color:#7E76A8;font-size:11px"></span>
     <span style="flex:1"></span>
     <button class="rst" onclick="disaAktar()" style="background:rgba(201,162,39,.15);border-color:#C9A227;color:#F0DFA0">⬇ Excel’e Aktar</button><button class="rst" onclick="aylikRaporSec()" style="background:rgba(158,147,240,.15);border-color:#9E93F0;color:#D6D2F7">📅 Aylık Rapor</button><button class="rst" onclick="cikisYap()">Çıkış</button>
   </div>
@@ -7530,6 +7531,15 @@ function tarihGoster() {
   if (el) {
     const d = new Date();
     el.textContent = d.getDate() + " " + AYLAR[d.getMonth()] + " " + d.getFullYear();
+  }
+  // Sitenin son yayınlanma zamanı — sunucunun bildirdiği dosya tarihinden okunur, her yayında kendiliğinden değişir.
+  // Güncellemenin bu cihaza ulaşıp ulaşmadığı buradan anlaşılır.
+  const sEl = document.getElementById("surum-goster");
+  const g = new Date(document.lastModified);
+  if (sEl && !isNaN(g) && g.getFullYear() > 2020) {
+    const iki = n => String(n).padStart(2, "0");
+    sEl.textContent = "· Güncelleme: " + iki(g.getDate()) + "." + iki(g.getMonth() + 1) + "." + g.getFullYear() + " " + iki(g.getHours()) + ":" + iki(g.getMinutes());
+    sEl.title = "Panelin son güncellendiği zaman";
   }
 }
 
