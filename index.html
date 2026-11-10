@@ -1556,7 +1556,7 @@ function satisKgOneriKullan() {
 // Bir kayıt formunu (+Kayıt ekranındaki "form" ile aynı yapı) işler: stoktan düşer, kaydı ekler, cari bakiyeyi uygular.
 // Kaydetmez/ekranı yenilemez — çağıran save() yapar. Fatura içe aktarma da bunu kullanır.
 // ek: kayda eklenecek ek alanlar (ör. faturaNo). Başarısızsa null döner.
-function kayitOlustur(form, ek) {
+function kayitOlustur(form, ek, secenek) {
   const t = parseTL(form.tutar);
   if (!form.aciklama.trim()) { toast("Açıklama gerekli"); return null; }
   if (isNaN(t) || t <= 0) { toast("Geçerli bir tutar girin"); return null; }
@@ -1569,7 +1569,11 @@ function kayitOlustur(form, ek) {
   let satisKgDeger = null;
   if (stokSecimK) {
     satisKgDeger = parseTL(form.satisKg);
-    if (isNaN(satisKgDeger) || satisKgDeger <= 0) { toast("Satış Kg gerekli — elle girin veya \"Kg'ye Yaz\" ile onaylayın"); return null; }
+    if (isNaN(satisKgDeger) || satisKgDeger <= 0) {
+      // Geçmiş dönem fatura aktarımında (secenek.kgSerbest) kg bilinmeden de kayıt açılabilir
+      if (!(secenek && secenek.kgSerbest)) { toast("Satış Kg gerekli — elle girin veya \"Kg'ye Yaz\" ile onaylayın"); return null; }
+      satisKgDeger = null;
+    }
   }
 
   const gecerliKalemler = stokSecimK ? (form.kalemler||[]).filter(k => k.stokIdx !== "" && parseTL(k.adet) > 0) : [];
@@ -1589,6 +1593,7 @@ function kayitOlustur(form, ek) {
   }
   // Stok yetersizliği uyarısı
   for (const {m, dusulecekAdet} of kalemDusum) {
+    if (secenek && secenek.stokSormadan) break;
     if (m && dusulecekAdet > m.adet) {
       if (!confirm(m.kalite+" "+m.tip+" "+m.genislik+" stoğu "+fmtKg(m.adet)+" bobin — "+fmtKg(dusulecekAdet)+" bobin karşılığı satış girildi. Stok eksiye düşecek, devam edilsin mi?")) return null;
     }
@@ -1919,12 +1924,29 @@ function faturaSec() { const inp = document.getElementById("fatura-dosya"); if (
 function faturaKart(id) { return faturaKuyruk.find(k => k.id === id); }
 function fkSayi(v) { const n = parseTL(v); return !isNaN(n) && n > 0; }
 function fkSatisMi(k) { return k.kategori === "Satış-Fatura" || k.kategori === "Perakende Satış"; }
+// Bu tarihten ÖNCEKİ faturalarda (Ekim 2026 ve öncesi) ürün/adet/kg zorunlu değildir — geçmiş dönemin
+// gelir farkını kapatmak için sadece tutarla kaydedilebilir. Bu tarihten itibaren zorunluluklar geçerlidir.
+const FK_ZORUNLU_BASLANGIC = "2026-11-01";
+function fkSerbestMi(k) { return !!k.tarih && k.tarih < FK_ZORUNLU_BASLANGIC; }
+function fkKalemTamMi(x) { return !x.stokDisi && !!x.mamulId && data.mamul.some(m => m.__id === x.mamulId) && fkSayi(x.adet); }
+// Serbest (Ekim ve öncesi) kartta boş kalan adet/kg, seçili ürünün stok kg/bobin değerinden tahmin edilip
+// yazılır: kg biliniyorsa adet = kg ÷ kg/bobin, adet biliniyorsa kg = adet × kg/bobin. Elle yazılan değere dokunmaz.
+function fkTahminDoldur(k) {
+  if (!fkSerbestMi(k) || !fkSatisMi(k)) return;
+  k.kalemler.forEach(x => {
+    if (x.stokDisi) return;
+    const m = data.mamul.find(mm => mm.__id === x.mamulId);
+    if (!m || !(m.kgBobin > 0)) return;
+    if ((!fkSayi(x.adet) || x.adetTahmini) && fkSayi(x.kg) && !x.kgTahmini) { x.adet = String(Math.max(1, Math.round(parseTL(x.kg) / m.kgBobin))); x.adetTahmini = true; }
+    else if ((!fkSayi(x.kg) || x.kgTahmini) && fkSayi(x.adet) && !x.adetTahmini) { x.kg = sayiStr(parseTL(x.adet) * m.kgBobin); x.kgTahmini = true; }
+  });
+}
 function faturaKartEksikler(k) {
   const e = [];
   if (!k.tarih) e.push("Tarih");
   if (!String(k.musteri || "").trim()) e.push("Müşteri adı");
   if (!fkSayi(k.tutar)) e.push("Tutar");
-  if (fkSatisMi(k)) {
+  if (fkSatisMi(k) && !fkSerbestMi(k)) {
     const urunler = k.kalemler.filter(x => !x.stokDisi);
     if (!urunler.length) e.push("En az bir ürün satırı (hepsi stok dışı işaretli)");
     k.kalemler.forEach((x, i) => {
@@ -1938,7 +1960,8 @@ function faturaKartEksikler(k) {
   }
   return e;
 }
-function fkKalemFormu(x) { return { stokIdx: String(data.mamul.findIndex(m => m.__id === x.mamulId)), adet: x.adet, kg: x.kg, fiyatTuru: x.fiyatTuru, fiyat: x.fiyat }; }
+// Tahmini kg kayda "gerçek tartım" diye yazılmasın diye boş geçilir (kayıt kendi kg/bobin tahminini kullanır)
+function fkKalemFormu(x) { return { stokIdx: String(data.mamul.findIndex(m => m.__id === x.mamulId)), adet: x.adet, kg: x.kgTahmini ? "" : x.kg, fiyatTuru: x.fiyatTuru, fiyat: x.fiyat }; }
 function fkToplamlar(k) {
   let kg = 0, tutar = 0;
   // Fatura satırının kendi birimine göre: kg fiyatlıysa kg × fiyat, adet fiyatlıysa adet × fiyat (KDV %20 eklenir)
@@ -1955,8 +1978,11 @@ function fkToplamlar(k) {
 function fkSet(id, alan, v) { const k = faturaKart(id); if (!k) return; k[alan] = v; faturaKuyrukSakla(); fkOzetGuncelle(id); }
 function fkKalemSet(id, ki, alan, v, el) {
   const k = faturaKart(id); if (!k || !k.kalemler[ki]) return;
-  k.kalemler[ki][alan] = v; faturaKuyrukSakla();
-  if (el) el.classList.toggle("fk-eksik", !fkSayi(v) && !(alan === "fiyat" && k.kaynak === "excel"));
+  k.kalemler[ki][alan] = v;
+  if (alan === "adet") k.kalemler[ki].adetTahmini = false;
+  if (alan === "kg") k.kalemler[ki].kgTahmini = false;
+  faturaKuyrukSakla();
+  if (el) el.classList.toggle("fk-eksik", !fkSayi(v) && !fkSerbestMi(k) && !(alan === "fiyat" && k.kaynak === "excel"));
   fkOzetGuncelle(id);
 }
 function fkUrunSec(id, ki, v) {
@@ -1993,7 +2019,7 @@ function fkAra(id, ki, v) {
   if (el) el.innerHTML = fkAramaSonucHtml(id, ki);
 }
 function fkSeciciAc(id, ki) { const k = faturaKart(id); if (k && k.kalemler[ki]) { k.kalemler[ki].acik = true; renderKorumali(); } }
-function fkSeciciHtml(id, ki, x) {
+function fkSeciciHtml(id, ki, x, serbest) {
   const m = x.stokDisi ? null : data.mamul.find(mm => mm.__id === x.mamulId);
   // Ürün belliyse satır kısa gösterilir; "Değiştir" ile seçici açılır
   if ((m || x.stokDisi) && !x.acik) {
@@ -2003,7 +2029,7 @@ function fkSeciciHtml(id, ki, x) {
   }
   const puan = x.ad ? faturaUrunPuanla({ ad: x.ad }) : [];
   const oneriler = (puan.kaliteVar || puan.genislikVar) ? puan.slice(0, 4).map(o => o.m) : [];
-  let h = '<div style="display:flex;flex-direction:column;gap:6px;padding:8px;border:1.5px solid ' + (m || x.stokDisi ? 'var(--line)' : 'var(--red)') + ';border-radius:10px">';
+  let h = '<div style="display:flex;flex-direction:column;gap:6px;padding:8px;border:1.5px solid ' + (m || x.stokDisi || serbest ? 'var(--line)' : 'var(--red)') + ';border-radius:10px">';
   if (oneriler.length) {
     h += '<div class="mini" style="font-weight:700">Faturadaki ürüne en yakınlar — dokun, seçilsin:</div>'
       + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px">' + oneriler.map(mm => fkUrunDugme(id, ki, mm, m && mm.__id === m.__id)).join("") + '</div>';
@@ -2031,6 +2057,12 @@ function fkOzetHtml(k) {
     + (t.tutar > 0 ? ' · kalemlerden hesaplanan (KDV dahil): <b>' + fmt(t.tutar) + '</b>' : '') + '</div>';
   if (fkSatisMi(k) && !eksik.length && t.tutar > 0 && !isNaN(faturaTutar) && Math.abs(t.tutar - faturaTutar) > 1)
     h += '<div class="mini" style="color:var(--amber)">⚠ Kalemler toplamı fatura tutarından ' + fmt(Math.abs(t.tutar - faturaTutar)) + ' farklı — kayda fatura tutarı (' + fmt(faturaTutar) + ') yazılır.</div>';
+  if (fkSatisMi(k) && fkSerbestMi(k)) {
+    const tam = k.kalemler.filter(fkKalemTamMi).length, diger = k.kalemler.filter(x => !x.stokDisi).length - tam;
+    h += '<div class="mini" style="color:var(--amber)">Ekim ve öncesi: zorunluluk yok — boş kalan adet/kg ürünün stok kilosundan tahmini yazılır. '
+      + (tam ? '<b>' + tam + ' satır stoktan düşecek</b>' : '<b>Stoktan hiçbir şey düşmeyecek</b>')
+      + (diger ? ' · ' + diger + ' satırın ürünü belli değil — o satır stoktan düşmez, sadece tutar kaydedilir' : '') + '.</div>';
+  }
   h += eksik.length
     ? '<div style="color:var(--red);font-size:13px;font-weight:700;margin-top:4px">Eksik: ' + eksik.map(esc).join(" · ") + '</div>'
     : '<div style="color:var(--green);font-size:13px;font-weight:700;margin-top:4px">✓ Hazır — kontrol edip onayla</div>';
@@ -2058,17 +2090,19 @@ function excelSatisKarti(x, kategori) {
 function fkKalemEkle(id) { const k = faturaKart(id); if (!k) return; k.kalemler.push(fkBosKalem()); faturaKuyrukSakla(); renderKorumali(); }
 function fkKalemSil(id, ki) { const k = faturaKart(id); if (!k || k.kalemler.length < 2) return; k.kalemler.splice(ki, 1); faturaKuyrukSakla(); renderKorumali(); }
 
-function faturaOnaylaTek(id) {
+function faturaOnaylaTek(id, toplu) {
   const k = faturaKart(id); if (!k) return false;
+  fkTahminDoldur(k);
   const eksik = faturaKartEksikler(k);
   if (eksik.length) { alert("Bu faturada eksik bilgi var:\n• " + eksik.join("\n• ")); return false; }
   const v = faturaKayitBul(k.no, [k.musteri, k.alici && k.alici.ad], parseTL(k.tutar), k.tarih);
   if (v && !k.yineDeIsle) { k.durum = "atlandi"; k.neden = faturaTekrarNeden(v); k.tekrar = true; toast((k.no || k.musteri) + " zaten kayıtlı görünüyor — atlandı"); return false; }
   const satis = fkSatisMi(k);
-  const urunler = satis ? k.kalemler.filter(x => !x.stokDisi) : [];
+  const serbest = fkSerbestMi(k);
+  const urunler = satis ? k.kalemler.filter(x => serbest ? fkKalemTamMi(x) : !x.stokDisi) : [];
   const formBenzeri = { tur: "GELİR", tarih: k.tarih, aciklama: String(k.musteri), kategori: k.kategori, tutar: k.tutar, not: k.not || "",
     vade: k.vade || "", urunTipi: "", satisKg: sayiStr(fkToplamlar(k).kg), kalemler: urunler.map(fkKalemFormu) };
-  const sonuc = kayitOlustur(formBenzeri, k.no ? { faturaNo: k.no } : null);
+  const sonuc = kayitOlustur(formBenzeri, k.no ? { faturaNo: k.no } : null, { kgSerbest: serbest, stokSormadan: !!toplu });
   if (!sonuc) return false;
   // Öğren: bu fatura satırı / bu vergi numarası bundan sonra otomatik tanınsın
   if (!data.faturaEslemeleri) data.faturaEslemeleri = { urun: {}, musteri: {} };
@@ -2088,9 +2122,9 @@ function faturaOnayla(id) {
 function faturaHazirlariOnayla() {
   const hazir = faturaKuyruk.filter(k => k.durum === "bekliyor" && !faturaKartEksikler(k).length);
   if (!hazir.length) { toast("Eksiksiz bekleyen fatura yok"); return; }
-  if (!confirm(hazir.length + " fatura kaydedilecek:\n• " + hazir.map(k => k.no + " — " + k.musteri + " — " + fmt(parseTL(k.tutar))).join("\n• ") + "\n\nHepsini kontrol ettin mi?")) return;
+  if (!confirm(hazir.length + " fatura kaydedilecek:\n• " + hazir.map(k => k.no + " — " + k.musteri + " — " + fmt(parseTL(k.tutar))).join("\n• ") + "\n\nStoğu yetmeyen ürün olursa tek tek sorulmaz, stok eksiye düşer.\nHepsini kontrol ettin mi?")) return;
   let n = 0;
-  hazir.forEach(k => { if (faturaOnaylaTek(k.id)) n++; });
+  hazir.forEach(k => { if (faturaOnaylaTek(k.id, true)) n++; });
   faturaKuyrukSakla();
   if (n) save();
   render();
@@ -2128,13 +2162,15 @@ function rFaturaOnay() {
     const musRozet = { ogrenilmis: ["var(--green)", "tanındı"], eslesti: ["var(--green)", "kayıtlı müşteri"], yeni: ["var(--amber)", "yeni müşteri — adı kontrol et"] }[k.musteriKaynak] || null;
     html += '<div style="background:#1B1D28;border:1.5px solid var(--line);border-radius:14px;padding:12px;margin-bottom:12px;display:flex;flex-direction:column;gap:10px">';
     const excelMi = k.kaynak === "excel";
+    const serbestKart = fkSerbestMi(k);
+    fkTahminDoldur(k);
     html += '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap"><b style="font-size:15px">' + (excelMi ? '📗 ' : '📄 ') + esc(k.no || "Excel satırı") + '</b><span class="mini">' + (k.faturaTarih ? fmtTarih(k.faturaTarih) : "") + ' · ' + (excelMi ? "Excel tutarı" : "fatura toplamı") + ' <b>' + pg(fmt(k.faturaToplam)) + '</b></span></div>';
     html += excelMi
       ? '<div class="mini">Excel\'deki satır: <b>' + esc(k.alici.ad) + '</b>' + (k.detay ? ' — ' + esc(k.detay) : '') + '</div>'
       : '<div class="mini">Faturadaki alıcı: <b>' + esc(k.alici.ad) + '</b>' + (k.alici.vkn ? ' (' + (k.alici.vkn.length === 11 ? "TCKN" : "VKN") + ' ' + esc(k.alici.vkn) + ')' : '') + '</div>';
     k.uyarilar.forEach(u => { html += '<div class="mini" style="color:var(--amber)">⚠ ' + esc(u) + '</div>'; });
     html += '<div class="row2">'
-      + '<div><div class="mini" style="margin-bottom:5px">Tarih</div><input type="date" id="fk-' + id + '-tarih" value="' + esc(k.tarih) + '" onchange="fkSet(\'' + id + '\',\'tarih\',this.value)"></div>'
+      + '<div><div class="mini" style="margin-bottom:5px">Tarih</div><input type="date" id="fk-' + id + '-tarih" value="' + esc(k.tarih) + '" onchange="fkSet(\'' + id + '\',\'tarih\',this.value);renderKorumali()"></div>'
       + '<div><div class="mini" style="margin-bottom:5px">Kategori</div><select onchange="fkSet(\'' + id + '\',\'kategori\',this.value);renderKorumali()">' + GELIR_KAT.map(c => '<option' + (k.kategori === c ? " selected" : "") + '>' + c + '</option>').join("") + '</select></div>'
       + '</div>';
     html += '<div><div class="mini" style="margin-bottom:5px">Müşteri (açıklama)' + (musRozet ? ' <span style="color:' + musRozet[0] + ';font-weight:700">· ' + musRozet[1] + '</span>' : '') + '</div>'
@@ -2151,19 +2187,19 @@ function rFaturaOnay() {
         const guven = x.stokDisi ? null : ({ ogrenilmis: ["var(--green)", "✓ daha önce eşleştirdiğin ürün"], tahmin: ["var(--amber)", "tahmin — doğru ürün mü kontrol et"], belirsiz: ["var(--amber)", "birden çok benzer ürün var — doğrusunu seç"], yok: ["var(--red)", "ürün tanınamadı — listeden seç"], elle: ["var(--mut)", "sen seçtin"] }[x.guven] || null);
         const tahminKg = m && fkSayi(x.adet) ? parseTL(x.adet) * (m.kgBobin || 0) : 0;
         const tahminAdet = m && fkSayi(x.kg) && m.kgBobin > 0 ? parseTL(x.kg) / m.kgBobin : 0;
-        const kutu = (alan, etiket, faturadan, ph) => '<div style="flex:1;min-width:110px"><div class="mini" style="margin-bottom:3px">' + etiket + (faturadan ? ' <span style="color:var(--green)">· faturadan</span>' : ' <span style="color:var(--red);font-weight:700">· sen gir</span>') + '</div>'
-          + '<input type="text" inputmode="decimal" id="fk-' + id + '-' + ki + '-' + alan + '" class="' + (fkSayi(x[alan]) ? "" : "fk-eksik") + '" placeholder="' + esc(ph) + '" value="' + esc(x[alan]) + '" oninput="fkKalemSet(\'' + id + '\',' + ki + ',\'' + alan + '\',this.value,this)"></div>';
+        const kutu = (alan, etiket, faturadan, ph) => '<div style="flex:1;min-width:110px"><div class="mini" style="margin-bottom:3px">' + etiket + (faturadan ? ' <span style="color:var(--green)">· faturadan</span>' : (serbestKart ? (x[alan + "Tahmini"] ? ' <span style="color:var(--amber)">· tahmini</span>' : ' · isteğe bağlı') : ' <span style="color:var(--red);font-weight:700">· sen gir</span>')) + '</div>'
+          + '<input type="text" inputmode="decimal" id="fk-' + id + '-' + ki + '-' + alan + '" class="' + (fkSayi(x[alan]) || serbestKart ? "" : "fk-eksik") + '" placeholder="' + esc(ph) + '" value="' + esc(x[alan]) + '" oninput="fkKalemSet(\'' + id + '\',' + ki + ',\'' + alan + '\',this.value,this)"></div>';
         html += '<div style="border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--card)">'
           + (x.ad
             ? '<div class="mini">Faturada: <b style="color:var(--ink)">' + esc(x.ad) + '</b> — ' + (x.kgMi ? esc(x.kg) + ' kg × ₺' + esc(x.fiyat) + '/kg' : esc(x.adet) + ' ' + (x.birim && ["NIU", "C62", "ADET", "PCE", "H87"].indexOf(x.birim) < 0 ? esc(x.birim) : "adet") + ' × ₺' + esc(x.fiyat) + '/adet') + '</div>'
             : '<div style="display:flex;justify-content:space-between;align-items:center"><span class="mini" style="font-weight:700">Ürün ' + (ki + 1) + '</span>' + (k.kalemler.length > 1 ? '<button type="button" class="sil-x" onclick="fkKalemSil(\'' + id + '\',' + ki + ')">×</button>' : '') + '</div>')
-          + fkSeciciHtml(id, ki, x)
+          + fkSeciciHtml(id, ki, x, serbestKart)
           + (guven ? '<div class="mini" style="color:' + guven[0] + '">' + guven[1] + '</div>' : '');
         if (!x.stokDisi) {
           html += '<div style="display:flex;gap:8px;flex-wrap:wrap">'
             + kutu("adet", "Adet (bobin)", x.kgMi === false, tahminAdet ? "≈ " + fmtKg(tahminAdet) + " (stok kg'sına göre)" : "ör. 12")
             + kutu("kg", "Net kg", x.kgMi === true, tahminKg ? "≈ " + fmtKg(tahminKg) + " (stok kg'sına göre)" : "ör. 233,5")
-            + '<div style="flex:1;min-width:110px"><div class="mini" style="margin-bottom:3px">Fiyat ₺/' + (x.fiyatTuru === "adet" ? "adet" : "kg") + ' (KDV hariç)' + (excelMi ? ' · isteğe bağlı' : '') + '</div><input type="text" inputmode="decimal" id="fk-' + id + '-' + ki + '-fiyat" class="' + (fkSayi(x.fiyat) || excelMi ? "" : "fk-eksik") + '" value="' + esc(x.fiyat) + '" oninput="fkKalemSet(\'' + id + '\',' + ki + ',\'fiyat\',this.value,this)"></div>'
+            + '<div style="flex:1;min-width:110px"><div class="mini" style="margin-bottom:3px">Fiyat ₺/' + (x.fiyatTuru === "adet" ? "adet" : "kg") + ' (KDV hariç)' + (excelMi ? ' · isteğe bağlı' : '') + '</div><input type="text" inputmode="decimal" id="fk-' + id + '-' + ki + '-fiyat" class="' + (fkSayi(x.fiyat) || excelMi || serbestKart ? "" : "fk-eksik") + '" value="' + esc(x.fiyat) + '" oninput="fkKalemSet(\'' + id + '\',' + ki + ',\'fiyat\',this.value,this)"></div>'
             + '</div>';
         }
         html += '</div>';
