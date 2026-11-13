@@ -2476,6 +2476,10 @@ function tartimYazdir() {
   if (!tartimOzetHesapla().adet) { toast("Önce kg gir ya da barkod okut"); return; }
   const oz = tartimOzetHesapla();
   if (!oz.adet) { toast("Önce tartım girin"); return; }
+  // Sayfa başlığı = PDF olarak kaydederken tarayıcının önerdiği dosya adı: "Tartım Fişi - Firma (13.11.2026)".
+  // Dosya adında kullanılamayan karakterler (/ \ : * ? " < > |) çıkarılır.
+  const fisFirma = String(tartim.firma || "").replace(/[\/\\:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
+  const fisAdi = "Tartım Fişi" + (fisFirma ? " - " + fisFirma : "") + " (" + fmtTarih(tartim.tarih) + ")";
   const SUTUN = 5;
   // Her ürün grubu kendi başlıklı bloğunda, kendi gerçek satır sayısına göre boyutlanan bir tablo alır —
   // farklı ürünler asla aynı tabloda karışmaz, hangi bobinin hangi ürüne ait olduğu her zaman net.
@@ -2501,7 +2505,7 @@ function tartimYazdir() {
       + '<table>' + hucreler + '</table>'
       + '</div>';
   });
-  const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>Tartım Fişi</title><style>'
+  const sayfa = '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>' + esc(fisAdi) + '</title><style>'
     // Not: Safari (özellikle iOS) @page margin ayarını her zaman dikkate almıyor ve URL/tarih
     // üst-altbilgisini kendi yazdırma motorundan (sayfa koduyla ilgisi yok) ekliyor — bu yüzden
     // içeriği son derece kompakt tutup büyük bir güvenlik payı bırakıyoruz, tek sayfaya sığması
