@@ -2476,10 +2476,11 @@ function tartimYazdir() {
   if (!tartimOzetHesapla().adet) { toast("Önce kg gir ya da barkod okut"); return; }
   const oz = tartimOzetHesapla();
   if (!oz.adet) { toast("Önce tartım girin"); return; }
-  // Sayfa başlığı = PDF olarak kaydederken tarayıcının önerdiği dosya adı: "Tartım Fişi - Firma (13.11.2026)".
-  // Dosya adında kullanılamayan karakterler (/ \ : * ? " < > |) çıkarılır.
-  const fisFirma = String(tartim.firma || "").replace(/[\/\\:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
-  const fisAdi = "Tartım Fişi" + (fisFirma ? " - " + fisFirma : "") + " (" + fmtTarih(tartim.tarih) + ")";
+  // Sayfa başlığı = PDF olarak kaydederken tarayıcının önerdiği dosya adı: "Tartım Fişi - Firma (13-11-2026)".
+  // Dosya adında NOKTA bırakılmaz (tarayıcı son noktadan sonrasını uzantı sanıp .pdf'i bozabiliyor);
+  // kullanılamayan diğer karakterler (/ \ : * ? " < > |) de çıkarılır. Fişin üzerindeki yazılar değişmez.
+  const fisFirma = String(tartim.firma || "").replace(/[.\/\\:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
+  const fisAdi = "Tartım Fişi" + (fisFirma ? " - " + fisFirma : "") + " (" + fmtTarih(tartim.tarih).replace(/\./g, "-") + ")";
   const SUTUN = 5;
   // Her ürün grubu kendi başlıklı bloğunda, kendi gerçek satır sayısına göre boyutlanan bir tablo alır —
   // farklı ürünler asla aynı tabloda karışmaz, hangi bobinin hangi ürüne ait olduğu her zaman net.
