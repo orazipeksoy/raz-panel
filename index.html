@@ -4092,7 +4092,7 @@ function uEmriTasi(i, yon) {
   uEmriSakla(); render();
 }
 function uEmriTemizle() {
-  if (!confirm("Üretim listesi temizlensin mi?")) return;
+  if (!confirm(uEmri.duzenleId ? "Düzenleme iptal edilsin mi? Bekleyen liste olduğu gibi kalır." : "Üretim listesi temizlensin mi?")) return;
   uEmri = { tarih: yerelTarihStr(), makine: uEmri.makine, not: "", satirlar: [] };
   uEmriSakla(); render();
 }
@@ -4111,7 +4111,9 @@ function uEmriSecenekler(seciliId) {
 }
 function rUretimEmri() {
   if (!uEmri) uEmriYukle();
-  let h = '<div class="card"><div class="mtitle">📄 Üretim Listesi <span class="pill">üretime verilecek sıralı liste</span></div>';
+  const duz = !!uEmri.duzenleId;
+  let h = '<div class="card" id="uemri-kart"' + (duz ? ' style="border:1.5px solid var(--amber)"' : '') + '><div class="mtitle">📄 Üretim Listesi <span class="pill">' + (duz ? 'bekleyen liste düzenleniyor' : 'üretime verilecek sıralı liste') + '</span></div>';
+  if (duz) h += '<div class="uyari"><span class="uyari-ikon">✏️</span><span>Bekleyen bir listeyi düzenliyorsun. Kaydedince <b>aynı liste</b> güncellenir; stoğa eklediğin adetler korunur.</span><button class="chip" onclick="emirDuzenleVazgec()">Vazgeç</button></div>';
   h += '<div class="formgrid">';
   h += '<div><div class="mini" style="margin-bottom:5px">Tarih</div>' + tarihSeciciHtml("ue-tarih", uEmri.tarih, "uEmriTarihSet") + '</div>';
   h += '</div>';
@@ -4133,38 +4135,68 @@ function rUretimEmri() {
       + '<input type="text" inputmode="numeric" placeholder="adet" value="' + esc(r.adet) + '" oninput="uEmriSatirSet(' + i + ',\'adet\',this.value)" style="width:76px;flex-shrink:0">'
       + '<input type="text" placeholder="not (ör. müşteri, acil)" value="' + esc(r.not) + '" oninput="uEmriSatirSet(' + i + ',\'not\',this.value)" style="flex:1;min-width:0">'
       + '</div>'
-      + (m ? '<div class="mini" style="padding:4px 0 0 30px;line-height:1.35">' + (/^3/.test(m.katSayisi || "") ? '<span class="pill" style="background:#FFD54F;color:#1a1400">3 KATLI</span> ' : '') + '<b style="color:var(--ink)">' + esc(uEmriUrunAdi(m)) + '</b> · stok: <b>' + m.adet + '</b> bobin</div>' : (r.id ? '<div class="mini kirmizi" style="padding:4px 0 0 30px">Bu ürün stoktan silinmiş</div>' : ''))
+      + (m ? '<div class="mini" style="padding:4px 0 0 30px;line-height:1.35">' + (/^3/.test(m.katSayisi || "") ? '<span class="pill" style="background:#FFD54F;color:#1a1400">3 KATLI</span> ' : '') + '<b style="color:var(--ink)">' + esc(uEmriUrunAdi(m)) + '</b> · stok: <b>' + m.adet + '</b> bobin' + (r.eklenen ? ' · <span class="yesil">bu listeden stoğa eklenen: <b>' + r.eklenen + '</b></span>' : '') + '</div>' : (r.id ? '<div class="mini kirmizi" style="padding:4px 0 0 30px">Bu ürün stoktan silinmiş</div>' : ''))
       + '</div>';
   });
   h += '</div>';
   h += '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="uEmriSatirEkle()">+ Ürün Ekle</button>'
-    + (uEmri.satirlar.length ? '<button class="chip" style="color:var(--red);border-color:var(--red)" onclick="uEmriTemizle()">Temizle</button>' : '') + '</div>';
+    + (uEmri.satirlar.length ? '<button class="chip" style="color:var(--red);border-color:var(--red)" onclick="uEmriTemizle()">' + (duz ? 'Düzenlemeyi iptal et' : 'Temizle') + '</button>' : '') + '</div>';
   h += '<div style="margin-top:10px"><div class="mini" style="margin-bottom:5px">Genel not (isteğe bağlı)</div><input type="text" value="' + esc(uEmri.not) + '" oninput="uEmriSet(\'not\',this.value)" placeholder="ör. önce acil siparişler"></div>';
-  h += '<button class="btn" style="background:var(--navy2);margin-top:12px" onclick="uretimEmriYazdir()">🖨 Yazdır ve Bekleyen Üretime Al</button>';
+  h += duz
+    ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn" style="background:var(--green);flex:1;min-width:200px" onclick="uretimEmriKaydet(false)">✓ Değişiklikleri Kaydet</button>'
+      + '<button class="btn" style="background:var(--navy2);flex:1;min-width:200px" onclick="uretimEmriKaydet(true)">🖨 Kaydet ve Yeniden Yazdır</button></div>'
+    : '<button class="btn" style="background:var(--navy2);margin-top:12px" onclick="uretimEmriYazdir()">🖨 Yazdır ve Bekleyen Üretime Al</button>';
   h += '</div>';
   return h;
 }
 // Yazdırınca taslak "bekleyen üretim" olarak buluta kaydedilir ve taslak temizlenir.
 // Bekleyen emre sonradan üretilen adetler girilip stoğa eklenir (Bekleyen Üretimler kartı).
-function uretimEmriYazdir() {
+// Taslağı kaydeder. Yeni listeyse Bekleyen Üretimler'e ekler; bekleyen bir liste düzenleniyorsa (uEmri.duzenleId)
+// AYNI listeyi günceller — stoğa eklenmiş adetler (eklenen) satırla birlikte korunur.
+function uretimEmriKaydet(yazdir) {
   if (!uEmri) uEmriYukle();
   const satirlar = uEmri.satirlar.map(r => ({ r, m: data.mamul.find(x => x.__id === r.id) })).filter(x => x.m);
   if (!satirlar.length) { toast("Önce en az bir ürün seç"); return; }
   const adetsiz = satirlar.filter(x => !(parseInt(x.r.adet, 10) > 0));
-  if (adetsiz.length && !confirm(adetsiz.length + " satırda adet yazılmamış — çıktıda boş kalacak. Yine de yazdırılsın mı?")) return;
+  if (adetsiz.length && !confirm(adetsiz.length + " satırda adet yazılmamış — çıktıda boş kalacak. Yine de devam edilsin mi?")) return;
   if (!data.uretimEmirleri) data.uretimEmirleri = [];
-  const emir = {
-    __id: "e_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-    tarih: uEmri.tarih, not: uEmri.not || "", durum: "bekliyor",
-    satirlar: satirlar.map(x => ({ id: x.m.__id, metraj: x.r.metraj || "", kg: String(x.r.kg || "").trim(), adet: parseInt(x.r.adet, 10) || 0, not: x.r.not || "", eklenen: 0 }))
-  };
-  data.uretimEmirleri.push(emir);
+  const yeniSatirlar = satirlar.map(x => ({ id: x.m.__id, metraj: x.r.metraj || "", kg: String(x.r.kg || "").trim(), adet: parseInt(x.r.adet, 10) || 0, not: x.r.not || "", eklenen: x.r.eklenen || 0 }));
+  let emir = uEmri.duzenleId ? data.uretimEmirleri.find(e => e.__id === uEmri.duzenleId) : null;
+  if (uEmri.duzenleId && !emir) { toast("Düzenlenen liste bulunamadı (silinmiş olabilir) — yeni liste olarak kaydediliyor"); }
+  const guncelleme = !!emir;
+  if (emir) {
+    const kalanEklenen = yeniSatirlar.reduce((t, r) => t + r.eklenen, 0), eskiEklenen = emir.satirlar.reduce((t, r) => t + (r.eklenen || 0), 0);
+    if (kalanEklenen < eskiEklenen && !confirm("Sildiğin satırlarda stoğa eklenmiş " + (eskiEklenen - kalanEklenen) + " bobin vardı. Stok değişmez, ama bu listede artık görünmezler. Devam edilsin mi?")) return;
+    emir.tarih = uEmri.tarih; emir.not = uEmri.not || ""; emir.satirlar = yeniSatirlar;
+    delete __emirGiris[emir.__id];
+  } else {
+    emir = { __id: "e_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), tarih: uEmri.tarih, not: uEmri.not || "", durum: "bekliyor", satirlar: yeniSatirlar };
+    data.uretimEmirleri.push(emir);
+  }
   save();
   uEmri = { tarih: yerelTarihStr(), makine: "", not: "", satirlar: [] };
   uEmriSakla();
   render();
-  emirCiktiAc(emir);
-  toast("✓ Yazdırıldı ve Bekleyen Üretimler'e eklendi");
+  if (yazdir) emirCiktiAc(emir);
+  toast(guncelleme ? "✓ Liste güncellendi" : (yazdir ? "✓ Yazdırıldı ve Bekleyen Üretimler'e eklendi" : "✓ Bekleyen Üretimler'e eklendi"));
+}
+function uretimEmriYazdir() { uretimEmriKaydet(true); }
+// Bekleyen bir listeyi yukarıdaki forma geri yükler; kaydedince aynı liste güncellenir
+function emirDuzenle(eid) {
+  const e = (data.uretimEmirleri || []).find(x => x.__id === eid);
+  if (!e) return;
+  if (!uEmri) uEmriYukle();
+  if (uEmri.satirlar.length && uEmri.duzenleId !== eid && !confirm("Formda kaydedilmemiş bir liste var. Onun yerine bu liste açılsın mı?")) return;
+  uEmri = { tarih: e.tarih, makine: "", not: e.not || "", duzenleId: e.__id,
+    satirlar: e.satirlar.map(r => ({ id: r.id, metraj: r.metraj || "", kg: r.kg || "", adet: r.adet ? String(r.adet) : "", not: r.not || "", eklenen: r.eklenen || 0 })) };
+  uEmriSakla(); render();
+  const el = document.getElementById("uemri-kart");
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  toast("Liste düzenleme için açıldı");
+}
+function emirDuzenleVazgec() {
+  uEmri = { tarih: yerelTarihStr(), makine: "", not: "", satirlar: [] };
+  uEmriSakla(); render();
 }
 
 // Listede elle yazılan bobin kilosu (sayıysa) — yoksa ürünün stoktaki kg/bobin değeri kullanılır
@@ -4336,6 +4368,7 @@ function rBekleyenUretimler() {
     h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">'
       + '<button class="chip" style="color:var(--green);border-color:var(--green)" onclick="emirStogaEkle(\'' + e.__id + '\')">✓ Stoğa Ekle</button>'
       + '<button class="chip" onclick="emirKalaniDoldur(\'' + e.__id + '\')">Kalanı doldur</button>'
+      + '<button class="chip" style="color:var(--amber);border-color:var(--amber)" onclick="emirDuzenle(\'' + e.__id + '\')">✏ Düzenle</button>'
       + '<button class="chip" onclick="emirTekrarYazdir(\'' + e.__id + '\')">🖨 Tekrar yazdır</button>'
       + '<button class="chip" onclick="emirKapat(\'' + e.__id + '\')">Kapat</button>'
       + (eklenen === 0 ? '<button class="chip" style="color:var(--red);border-color:var(--red)" onclick="emirSil(\'' + e.__id + '\')">Sil</button>' : '')
