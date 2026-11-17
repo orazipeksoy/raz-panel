@@ -4083,7 +4083,7 @@ function uEmriSakla() { try { localStorage.setItem("raz-uretim-emri-v1", JSON.st
 function uEmriSet(k, v) { uEmri[k] = v; uEmriSakla(); }
 function uEmriTarihSet(iso) { uEmriSet("tarih", iso); }
 function uEmriSatirSet(i, k, v) { if (uEmri.satirlar[i]) { uEmri.satirlar[i][k] = v; uEmriSakla(); } }
-function uEmriSatirEkle() { uEmri.satirlar.push({ id: "", metraj: "", adet: "", not: "" }); uEmriSakla(); render(); }
+function uEmriSatirEkle() { uEmri.satirlar.push({ id: "", metraj: "", kg: "", adet: "", not: "" }); uEmriSakla(); render(); }
 function uEmriSatirSil(i) { uEmri.satirlar.splice(i, 1); uEmriSakla(); render(); }
 function uEmriTasi(i, yon) {
   const j = i + yon;
@@ -4127,8 +4127,9 @@ function rUretimEmri() {
       + '<button class="chip" style="padding:6px 10px;min-height:auto" ' + (i === uEmri.satirlar.length - 1 ? "disabled" : "") + ' onclick="uEmriTasi(' + i + ',1)">↓</button>'
       + '<button class="sil-x" onclick="uEmriSatirSil(' + i + ')">×</button>'
       + '</div>'
-      + '<div style="display:flex;gap:8px;margin-top:6px;padding-left:30px">'
+      + '<div style="display:flex;gap:8px;margin-top:6px;padding-left:30px;flex-wrap:wrap">'
       + '<input type="text" placeholder="metraj" value="' + esc(r.metraj || "") + '" oninput="uEmriSatirSet(' + i + ',\'metraj\',this.value)" style="width:90px;flex-shrink:0">'
+      + '<input type="text" inputmode="decimal" placeholder="bobin kg' + (m && m.kgBobin ? ' (' + fmtKg(m.kgBobin) + ')' : '') + '" value="' + esc(r.kg || "") + '" oninput="uEmriSatirSet(' + i + ',\'kg\',this.value)" style="width:120px;flex-shrink:0">'
       + '<input type="text" inputmode="numeric" placeholder="adet" value="' + esc(r.adet) + '" oninput="uEmriSatirSet(' + i + ',\'adet\',this.value)" style="width:76px;flex-shrink:0">'
       + '<input type="text" placeholder="not (ör. müşteri, acil)" value="' + esc(r.not) + '" oninput="uEmriSatirSet(' + i + ',\'not\',this.value)" style="flex:1;min-width:0">'
       + '</div>'
@@ -4155,7 +4156,7 @@ function uretimEmriYazdir() {
   const emir = {
     __id: "e_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
     tarih: uEmri.tarih, not: uEmri.not || "", durum: "bekliyor",
-    satirlar: satirlar.map(x => ({ id: x.m.__id, metraj: x.r.metraj || "", adet: parseInt(x.r.adet, 10) || 0, not: x.r.not || "", eklenen: 0 }))
+    satirlar: satirlar.map(x => ({ id: x.m.__id, metraj: x.r.metraj || "", kg: String(x.r.kg || "").trim(), adet: parseInt(x.r.adet, 10) || 0, not: x.r.not || "", eklenen: 0 }))
   };
   data.uretimEmirleri.push(emir);
   save();
@@ -4166,6 +4167,8 @@ function uretimEmriYazdir() {
   toast("✓ Yazdırıldı ve Bekleyen Üretimler'e eklendi");
 }
 
+// Listede elle yazılan bobin kilosu (sayıysa) — yoksa ürünün stoktaki kg/bobin değeri kullanılır
+function emirSatirKg(r) { const v = parseTL(r && r.kg); return !isNaN(v) && v > 0 ? v : 0; }
 // Bir üretim emrinin A4 çıktısı (yeni emir ya da bekleyen emrin tekrar yazdırılması)
 function emirCiktiAc(emir) {
   const satirlar = emir.satirlar.map(r => ({ r, m: data.mamul.find(x => x.__id === r.id) })).filter(x => x.m);
@@ -4175,7 +4178,7 @@ function emirCiktiAc(emir) {
   const tipVar = satirlar.some(x => depoTipGoster(x.m.tip));
   const bos = '<span class="bos">—</span>';
   let govde = "";
-  const sutunSayisi = 1 + 5 + (tipVar ? 1 : 0) + 4;
+  const sutunSayisi = 1 + 5 + (tipVar ? 1 : 0) + 5;
   let oncekiKat = null;
   satirlar.forEach((x, i) => {
     const m = x.m, tip = depoTipGoster(m.tip);
@@ -4193,6 +4196,7 @@ function emirCiktiAc(emir) {
       + '<td class="oz kat">' + (m.katSayisi ? (/^3/.test(m.katSayisi) ? '3 KATLI' : esc(m.katSayisi)) : bos) + '</td>'
       + '<td class="oz' + (m.masurali ? ' b' : '') + '">' + (m.masurali ? "Masuralı" : "Masurasız") + '</td>'
       + '<td class="metraj">' + esc(x.r.metraj || "") + '</td>'
+      + '<td class="metraj b">' + esc(x.r.kg || "") + '</td>'
       + '<td class="adet">' + (parseInt(x.r.adet, 10) > 0 ? parseInt(x.r.adet, 10) : '') + '</td>'
       + '<td class="uretilen"></td><td class="notc">' + esc(x.r.not || "") + '</td></tr>';
   });
@@ -4214,7 +4218,7 @@ function emirCiktiAc(emir) {
     + 'td { border: 1px solid #000; height: 10mm; font-size: 11pt; padding: 0 2mm; vertical-align: middle; }'
     + 'td.no { width: 10mm; text-align: center; font-weight: bold; font-size: 13pt; background: #F2F2F2; }'
     + 'td.adet { width: 17mm; text-align: center; font-weight: bold; font-size: 13pt; }'
-    + 'td.uretilen { width: 20mm; } td.metraj { width: 18mm; text-align: center; }'
+    + 'td.uretilen { width: 20mm; } td.metraj { width: 16mm; text-align: center; } td.metraj.b { font-weight: bold; }'
     + 'td.oz { text-align: center; font-size: 10.5pt; white-space: nowrap; padding: 0 1.5mm; } td.oz.b { font-weight: bold; }'
     + 'td.notc { font-size: 10pt; } .bos { color: #999; }'
     + '* { -webkit-print-color-adjust: exact; print-color-adjust: exact; }'
@@ -4231,8 +4235,8 @@ function emirCiktiAc(emir) {
     + '<button class="yazdir-btn" onclick="window.print()">🖨 Yazdır</button>'
     + '<div class="baslik"><h1>RAZ PLASTİK — ÜRETİM LİSTESİ</h1><span class="alt">Sıra numarasına göre üretilecek</span></div>'
     + '<div class="bilgi"><span>Tarih: <b>' + fmtTarih(emir.tarih) + '</b></span></div>'
-    + '<table><thead><tr><th>Sıra</th><th>Kalite</th><th>En</th>' + (tipVar ? '<th>Tip</th>' : '') + '<th>Gramaj</th><th>Kat</th><th>Masura</th><th>Metraj</th><th>İstenen Adet</th><th>Üretilen</th><th>Not</th></tr></thead><tbody>' + govde + '</tbody>'
-    + '<tfoot><tr><td></td><td colspan="' + ozSutun + '">TOPLAM</td><td></td><td class="adet">' + (toplam || '') + '</td><td></td><td></td></tr></tfoot></table>'
+    + '<table><thead><tr><th>Sıra</th><th>Kalite</th><th>En</th>' + (tipVar ? '<th>Tip</th>' : '') + '<th>Gramaj</th><th>Kat</th><th>Masura</th><th>Metraj</th><th>Bobin Kg</th><th>İstenen Adet</th><th>Üretilen</th><th>Not</th></tr></thead><tbody>' + govde + '</tbody>'
+    + '<tfoot><tr><td></td><td colspan="' + ozSutun + '">TOPLAM</td><td></td><td></td><td class="adet">' + (toplam || '') + '</td><td></td><td></td></tr></tfoot></table>'
     + (emir.not ? '<div class="not"><b>Not:</b> ' + esc(emir.not) + '</div>' : '')
     + '<div class="imza"><div style="flex:0 0 45%">Teslim alan usta</div></div>'
     + '</div></body></html>';
@@ -4272,7 +4276,7 @@ function emirStogaEkle(eid) {
   if (!confirm("Stoğa eklensin mi?\n\n" + ozet + (fazla.length ? "\n\nNot: " + fazla.length + " satırda istenenden fazla üretim giriliyor." : ""))) return;
   eklenecek.forEach(x => { x.m.adet += x.n; e.satirlar[x.i].eklenen = (e.satirlar[x.i].eklenen || 0) + x.n; });
   // Aylık üretim raporlarında görünsün diye üretim kaydı
-  const urunler = eklenecek.map(x => ({ key: x.m.kalite + "|" + x.m.tip + "|" + x.m.genislik + "|" + x.m.gramaj, ad: x.m.kalite + " " + x.m.tip + " " + x.m.genislik, adet: x.n, kg: x.n * (x.m.kgBobin || 0), masurali: !!x.m.masurali }));
+  const urunler = eklenecek.map(x => ({ key: x.m.kalite + "|" + x.m.tip + "|" + x.m.genislik + "|" + x.m.gramaj, ad: x.m.kalite + " " + x.m.tip + " " + x.m.genislik, adet: x.n, kg: x.n * (emirSatirKg(e.satirlar[x.i]) || x.m.kgBobin || 0), masurali: !!x.m.masurali }));
   if (!data.uretimler) data.uretimler = [];
   data.uretimler.push({
     __id: "u_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
@@ -4325,7 +4329,7 @@ function rBekleyenUretimler() {
       h += '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #262837">'
         + '<b style="width:20px;text-align:center;color:var(--gold);flex-shrink:0">' + (i + 1) + '</b>'
         + '<div style="flex:1;min-width:0;font-size:13px;line-height:1.3">' + (k3 ? '<span class="pill" style="background:#FFD54F;color:#1a1400">3 KATLI</span> ' : '') + (m ? esc(uEmriUrunAdi(m)) : '<span class="kirmizi">ürün stokta yok</span>')
-        + '<div class="mini">' + (r.metraj ? esc(r.metraj) + ' · ' : '') + 'istenen <b>' + (r.adet || 0) + '</b> · eklenen <b class="' + (tamam ? 'yesil' : '') + '">' + (r.eklenen || 0) + '</b>' + (r.not ? ' · ' + esc(r.not) : '') + '</div></div>'
+        + '<div class="mini">' + (r.metraj ? esc(r.metraj) + ' · ' : '') + (r.kg ? esc(r.kg) + ' kg/bobin · ' : '') + 'istenen <b>' + (r.adet || 0) + '</b> · eklenen <b class="' + (tamam ? 'yesil' : '') + '">' + (r.eklenen || 0) + '</b>' + (r.not ? ' · ' + esc(r.not) : '') + '</div></div>'
         + '<input type="text" inputmode="numeric" placeholder="' + (tamam ? "✓" : "üretilen") + '" value="' + esc(giris[i] || "") + '" oninput="emirGirisSet(\'' + e.__id + '\',' + i + ',this.value)" style="width:86px;flex-shrink:0;text-align:right;padding:9px 10px">'
         + '</div>';
     });
