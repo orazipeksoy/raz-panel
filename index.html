@@ -2615,10 +2615,28 @@ function tartimFirmaSec(n) {
   if (kutu) kutu.innerHTML = "";
 }
 
+// Ana ekrana eklenmiş (uygulama gibi açılan) sayfa mı — iPhone'da bu modda yeni sekme ve yazdırma çalışmaz
+function uygulamaModu() {
+  return window.navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+}
 function tartimYazdir() {
   if (!tartimOzetHesapla().adet) { toast("Önce kg gir ya da barkod okut"); return; }
+  if (uygulamaModu()) { tartimPdfPaylas(); return; }
+  const { sayfa } = tartimFisSayfa();
+  const blob = new Blob([sayfa], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, "_blank");
+  if (!w) {
+    // Popup engellendi — kullanıcının KENDİ dokunacağı gerçek bir bağlantı göster.
+    // Gerçek bir tıklama her zaman çalışır, popup engelleyiciler script ile açılan pencereleri engeller.
+    yazdirLinkGoster(url, "Fiş Hazır", "Tartım Fişini Aç");
+    return;
+  }
+  toast("Fiş yeni sekmede açıldı — Yazdır butonuna dokun");
+}
+// Fişin tam HTML sayfası ve dosya adı (yazdırma ve PDF aynı sayfadan üretilir)
+function tartimFisSayfa() {
   const oz = tartimOzetHesapla();
-  if (!oz.adet) { toast("Önce tartım girin"); return; }
   // Sayfa başlığı = PDF olarak kaydederken tarayıcının önerdiği dosya adı: "Tartım Fişi - Firma (13-11-2026)".
   // Dosya adında NOKTA bırakılmaz (tarayıcı son noktadan sonrasını uzantı sanıp .pdf'i bozabiliyor);
   // kullanılamayan diğer karakterler (/ \ : * ? " < > |) de çıkarılır. Fişin üzerindeki yazılar değişmez.
@@ -2692,16 +2710,85 @@ function tartimYazdir() {
     + '<div class="toplam"><span>Toplam Bobin: <b>' + oz.adet + '</b></span><span>Toplam Kg: <b>' + fmtKg(oz.brutT) + '</b></span></div>'
     + '</div></div>'
     + '</body></html>';
-  const blob = new Blob([sayfa], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const w = window.open(url, "_blank");
-  if (!w) {
-    // Popup engellendi — kullanıcının KENDİ dokunacağı gerçek bir bağlantı göster.
-    // Gerçek bir tıklama her zaman çalışır, popup engelleyiciler script ile açılan pencereleri engeller.
-    yazdirLinkGoster(url, "Fiş Hazır", "Tartım Fişini Aç");
-    return;
+  return { sayfa, fisAdi };
+}
+
+// ============ TARTIM FİŞİ → PDF DOSYASI ============
+// Fiş görünmeyen bir çerçevede A4 genişliğinde çizilir, resme çevrilip PDF'e konur. Sonra telefonun paylaş
+// menüsü açılır ("Dosyalar'a Kaydet", WhatsApp, Yazdır…). Dosya adı: "Tartım Fişi - Firma (13-11-2026).pdf".
+// Paylaş menüsü ancak doğrudan bir dokunuşla açılabildiği için iki adımlı: önce hazırla, sonra "Kaydet / Paylaş".
+function scriptYukle(url, hedefBelge) {
+  const d = hedefBelge || document;
+  return new Promise((ok, hata) => {
+    const s = d.createElement("script");
+    s.src = url; s.onload = ok; s.onerror = () => hata(new Error("Gerekli dosya yüklenemedi — internet bağlantısını kontrol et"));
+    d.head.appendChild(s);
+  });
+}
+async function tartimPdfPaylas() {
+  if (!tartimOzetHesapla().adet) { toast("Önce kg gir ya da barkod okut"); return; }
+  const { sayfa, fisAdi } = tartimFisSayfa();
+  const eski = document.getElementById("pdf-ov"); if (eski) eski.remove();
+  const ov = document.createElement("div");
+  ov.id = "pdf-ov";
+  ov.style.cssText = "position:fixed;inset:0;background:rgba(6,5,14,.85);z-index:800;display:flex;align-items:center;justify-content:center;padding:16px";
+  ov.innerHTML = '<div style="background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px;width:100%;max-width:420px;text-align:center">'
+    + '<div class="mtitle" style="justify-content:center">📄 Tartım Fişi PDF</div>'
+    + '<div class="mini" style="margin-bottom:12px;word-break:break-word"><b>' + esc(fisAdi) + '.pdf</b></div>'
+    + '<div id="pdf-durum" style="font-size:14px;margin-bottom:12px">Hazırlanıyor…</div>'
+    + '<button id="pdf-paylas" class="btn" style="background:var(--green);display:none">📤 Kaydet / Paylaş</button>'
+    + '<button class="btn" style="background:#2A2C3A;margin-top:8px" onclick="document.getElementById(\'pdf-ov\').remove()">Kapat</button>'
+    + '</div>';
+  document.body.appendChild(ov);
+  const durum = t => { const el = document.getElementById("pdf-durum"); if (el) el.textContent = t; };
+  const cerceve = document.createElement("iframe");
+  cerceve.setAttribute("aria-hidden", "true");
+  cerceve.style.cssText = "position:fixed;left:-10000px;top:0;width:794px;height:1123px;border:0;background:#fff";
+  try {
+    const jspdfYuk = window.jspdf ? Promise.resolve() : scriptYukle("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+    await new Promise(ok => { cerceve.onload = ok; cerceve.srcdoc = sayfa; document.body.appendChild(cerceve); });
+    const cb = cerceve.contentDocument;
+    cb.querySelectorAll(".yazdir-btn, .yazdir-not").forEach(e => e.remove());
+    await Promise.all([jspdfYuk, scriptYukle("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js", cb)]);
+    const kaynak = cb.querySelector(".fis-icerik");
+    const tuval = await cerceve.contentWindow.html2canvas(kaynak, { scale: 2, backgroundColor: "#ffffff", logging: false });
+    const pdf = new window.jspdf.jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
+    // A4: 210 × 297 mm, 10 mm kenar boşluğu. Fiş bir sayfadan uzunsa sayfalara bölünür.
+    const genislik = 190, sayfaYukseklik = 277;
+    const mmBasinaPx = tuval.width / genislik, dilimPx = Math.floor(sayfaYukseklik * mmBasinaPx);
+    for (let y = 0, i = 0; y < tuval.height; y += dilimPx, i++) {
+      const h = Math.min(dilimPx, tuval.height - y);
+      const dilim = document.createElement("canvas");
+      dilim.width = tuval.width; dilim.height = h;
+      dilim.getContext("2d").drawImage(tuval, 0, y, tuval.width, h, 0, 0, tuval.width, h);
+      if (i > 0) pdf.addPage();
+      pdf.addImage(dilim.toDataURL("image/jpeg", 0.92), "JPEG", 10, 10, genislik, h / mmBasinaPx);
+    }
+    const dosya = new File([pdf.output("blob")], fisAdi + ".pdf", { type: "application/pdf" });
+    window.__sonFisPdf = dosya;
+    const paylasilabilir = navigator.canShare && navigator.share && navigator.canShare({ files: [dosya] });
+    durum(paylasilabilir ? "PDF hazır. Açılan menüden \"Dosyalar'a Kaydet\", WhatsApp ya da Yazdır'ı seçebilirsin." : "PDF hazır.");
+    const btn = document.getElementById("pdf-paylas");
+    if (btn) {
+      btn.style.display = "block";
+      if (!paylasilabilir) btn.textContent = "⬇ PDF'i İndir";
+      btn.onclick = () => {
+        if (paylasilabilir) {
+          navigator.share({ files: [dosya], title: fisAdi }).then(() => { const o = document.getElementById("pdf-ov"); if (o) o.remove(); toast("✓ Fiş paylaşıldı"); })
+            .catch(e => { if (!e || e.name !== "AbortError") toast("Paylaşılamadı: " + (e && e.message ? e.message : e)); });
+        } else {
+          const url = URL.createObjectURL(dosya), a = document.createElement("a");
+          a.href = url; a.download = dosya.name; document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+          toast("✓ PDF indirildi");
+        }
+      };
+    }
+  } catch (e) {
+    durum("PDF hazırlanamadı: " + (e && e.message ? e.message : e));
+  } finally {
+    cerceve.remove();
   }
-  toast("Fiş yeni sekmede açıldı — Yazdır butonuna dokun");
 }
 
 // window.open engellendiğinde (bazı mobil tarayıcılarda script ile açılan pencereler engellenebiliyor)
@@ -2805,7 +2892,7 @@ function rTartim() {
   html += '<div class="card"><button class="chip" onclick="tartimGrupEkle()">+ Farklı Ürün Ekle</button>'
     + '<div class="mini" style="margin-top:6px">Aynı tartım partisinde birden fazla ürün/genişlik varsa buradan ekle — her biri satışa ayrı kalem olarak aktarılır, masura hesabı hiçbirini karıştırmaz.</div></div>';
 
-    html += '<div class="card"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="tartimSatisaAktar()">→ Satış Kaydına Aktar</button><button class="chip" style="color:var(--blue);border-color:var(--blue)" onclick="tartimStogaEkle()">➕ Stoğa Ekle (Üretim) — <span id="t-aksiyon-ozet">'+oz.adet+' bobin · '+fmtKg(oz.brutT)+' kg</span></button><button class="chip" onclick="tartimYazdir()">🖨 A4 Yazdır / PDF</button><button class="chip" style="color:var(--red);border-color:var(--red)" onclick="tartimTemizle()">Temizle</button></div></div>';
+    html += '<div class="card"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="chip" style="color:var(--green);border-color:var(--green)" onclick="tartimSatisaAktar()">→ Satış Kaydına Aktar</button><button class="chip" style="color:var(--blue);border-color:var(--blue)" onclick="tartimStogaEkle()">➕ Stoğa Ekle (Üretim) — <span id="t-aksiyon-ozet">'+oz.adet+' bobin · '+fmtKg(oz.brutT)+' kg</span></button><button class="chip" onclick="tartimYazdir()">🖨 A4 Yazdır / PDF</button><button class="chip" onclick="tartimPdfPaylas()">📤 PDF Kaydet / Paylaş</button><button class="chip" style="color:var(--red);border-color:var(--red)" onclick="tartimTemizle()">Temizle</button></div></div>';
     html += '<div class="mini" style="margin-top:-6px;margin-bottom:12px;padding:0 4px"><b>Stoğa Ekle</b> = üretimden gelen bobinler stok adedine eklenir · <b>Satışa Aktar</b> = satış kaydına geçer, kaydedince stoktan düşer · iki durumda da liste durur, A4/PDF çıktısını alabilirsin</div>';
   return html;
 }
