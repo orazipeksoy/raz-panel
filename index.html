@@ -923,6 +923,7 @@ async function load() {
       // Okuma HATASI — asla üstüne yazma, sadece uyar
       showSyncBadge("off");
       toast("Buluta erişilemedi: " + (sonuc.error || "bilinmeyen hata"));
+      if (/permission-denied|insufficient permissions/i.test(sonuc.error || "")) erisimYokUyarisi();
       return;
     }
     const ilkKurulum = !sonuc.veri;
@@ -949,6 +950,24 @@ async function load() {
   }
 }
 
+// Giriş yapılan kullanıcının veritabanına erişim izni yoksa (Firestore kurallarındaki listede değilse)
+// ekrandaki rakamlar GERÇEK DEĞİLDİR (bu cihazdaki eski/başlangıç verisi) — bunu açıkça göster.
+function erisimYokUyarisi() {
+  if (document.getElementById("erisim-yok")) return;
+  let ad = "";
+  try { ad = window.__raz2KullaniciAdi ? window.__raz2KullaniciAdi() : ""; } catch (e) {}
+  const d = document.createElement("div");
+  d.id = "erisim-yok";
+  d.style.cssText = "position:fixed;inset:0;z-index:970;background:rgba(6,5,14,.92);display:flex;align-items:center;justify-content:center;padding:16px";
+  d.innerHTML = '<div style="background:var(--card);border:2px solid var(--red);border-radius:16px;padding:20px;max-width:440px;width:100%">'
+    + '<div class="mtitle" style="color:var(--red)">⛔ Bu kullanıcının verilere erişim izni yok</div>'
+    + '<div style="font-size:14px;line-height:1.5;margin-bottom:12px">Giriş yapılan kullanıcı: <b>' + esc(ad || "bilinmiyor") + '</b><br>'
+    + 'Veritabanı bu kullanıcıya kapalı, bu yüzden gerçek veriler yüklenemedi. Ekranda görünecek rakamlar <b>gerçek değil</b>; buraya kayıt girme.</div>'
+    + '<div class="mini" style="margin-bottom:14px;line-height:1.5">Çözüm: Çıkış yapıp yetkili kullanıcıyla gir. Bu kullanıcının da kullanması gerekiyorsa Firebase\'de <b>Firestore Database → Rules</b> içindeki listeye <b>' + esc(ad ? ad + "@razpanel.local" : "kullanıcı adı") + '</b> eklenip Publish yapılmalı.</div>'
+    + '<button class="btn" style="background:var(--red)" onclick="cikisYap()">Çıkış Yap</button>'
+    + '</div>';
+  document.body.appendChild(d);
+}
 function showSyncBadge(state) {
   const el = document.getElementById("sync-badge");
   if (!el) return;
