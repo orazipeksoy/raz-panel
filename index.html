@@ -2619,9 +2619,14 @@ function tartimFirmaSec(n) {
 function uygulamaModu() {
   return window.navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
 }
+// iPhone/iPad: fiş yeni pencerede açılınca (özellikle ana ekran uygulamasında) yazdırma düğmesi çalışmıyor —
+// bu cihazlarda fiş her zaman doğrudan PDF dosyası olarak hazırlanıp paylaş menüsüyle verilir.
+function iosMu() {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
 function tartimYazdir() {
   if (!tartimOzetHesapla().adet) { toast("Önce kg gir ya da barkod okut"); return; }
-  if (uygulamaModu()) { tartimPdfPaylas(); return; }
+  if (uygulamaModu() || iosMu()) { tartimPdfPaylas(); return; }
   const { sayfa } = tartimFisSayfa();
   const blob = new Blob([sayfa], { type: "text/html" });
   const url = URL.createObjectURL(blob);
@@ -7813,6 +7818,29 @@ window.__onAuthDegisti = function(kullanici) {
 setTimeout(function() {
   if (!__authBilindi) kilitMesaj("Sunucuya bağlanılamadı — internet bağlantını kontrol edip sayfayı yenile. " + (window.__fbDurum || ""), true);
 }, 10000);
+
+// ============ YENİ SÜRÜM UYARISI ============
+// Ana ekran uygulaması ve tarayıcı sayfayı önbellekten açabildiği için yeni sürüm hemen gelmeyebiliyor.
+// Sunucudaki dosyanın tarihi (Last-Modified) bu sayfanınkinden yeniyse üstte "Yenile" uyarısı çıkar.
+// Sayfa öne geldiğinde ve 5 dakikada bir bakılır; sadece başlık bilgisi istenir (dosya indirilmez).
+let __surumUyarisiGosterildi = false;
+async function yeniSurumDenetle() {
+  if (__surumUyarisiGosterildi || !/^https?:/.test(location.protocol)) return;
+  try {
+    const r = await fetch(location.href.split("#")[0], { method: "HEAD", cache: "no-store" });
+    const sunucu = new Date(r.headers.get("last-modified") || ""), bu = new Date(document.lastModified);
+    if (isNaN(sunucu) || isNaN(bu) || sunucu - bu < 5000) return;
+    __surumUyarisiGosterildi = true;
+    const d = document.createElement("div");
+    d.id = "surum-uyari";
+    d.style.cssText = "position:fixed;left:12px;right:12px;bottom:max(12px, env(safe-area-inset-bottom));z-index:960;background:#4A3670;color:#fff;border-radius:12px;padding:12px 14px;display:flex;gap:10px;align-items:center;box-shadow:0 6px 20px rgba(0,0,0,.4);font-size:14px";
+    d.innerHTML = '<span style="flex:1">🔄 Panelin yeni sürümü var.</span><button class="chip" style="background:var(--green);color:#fff;border-color:var(--green)" onclick="location.reload()">Yenile</button>';
+    document.body.appendChild(d);
+  } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") yeniSurumDenetle(); });
+setInterval(yeniSurumDenetle, 5 * 60 * 1000);
+setTimeout(yeniSurumDenetle, 4000);
 
 function tarihGoster() {
   const el = document.getElementById("tarih-goster");
