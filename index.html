@@ -2414,6 +2414,9 @@ async function kameraOkuyucuAc(gi) {
       + '<div id="kamera-durum" style="font-size:13px;color:#A79ECF;margin-bottom:4px">Kamera açılıyor…</div>'
       + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px"><span style="font-size:13px">Bu oturumda okunan: <b id="kamera-sayac" style="font-size:18px">0</b> bobin</span>'
       + '<span id="kamera-son" style="font-size:22px;font-weight:800;color:#4ADE80"></span></div>'
+      + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-top:6px;padding-top:6px;border-top:1px solid #2A2C3A">'
+      + '<span style="font-size:13px">Ürün ' + (gi + 1) + ' toplam: <b id="kamera-grup-adet">' + tartimGrupOzetHesapla(g).adet + '</b> bobin</span>'
+      + '<span style="font-size:20px;font-weight:800">Toplam: <span id="kamera-grup-kg">' + fmtKg(tartimGrupOzetHesapla(g).brutT) + '</span> kg</span></div>'
       + '<div style="display:flex;gap:8px;margin-top:10px">'
       + '<button id="kamera-isik" class="btn" style="display:none;flex:0 0 auto;width:auto;padding:0 20px;background:#2A2C3A" onclick="kameraIsik()">🔦 Işık</button>'
       + '<button class="btn" style="flex:1;background:var(--green)" onclick="kameraKapat()">✓ Bitti</button></div>'
@@ -2494,6 +2497,9 @@ function kameraKodGeldi(kod) {
     k.sayac++;
     const g = tartim.gruplar[k.gi], son = g.satirlar[g.satirlar.length - 1];
     const s = document.getElementById("kamera-sayac"); if (s) s.textContent = k.sayac;
+    const goz = tartimGrupOzetHesapla(g);
+    const ga = document.getElementById("kamera-grup-adet"); if (ga) ga.textContent = goz.adet;
+    const gk = document.getElementById("kamera-grup-kg"); if (gk) gk.textContent = fmtKg(goz.brutT);
     const e = document.getElementById("kamera-son"); if (e) e.textContent = "✓ " + fmtKg(son.brut) + " kg";
     const f = document.getElementById("kamera-flash"); if (f) { f.style.opacity = ".35"; setTimeout(() => { f.style.opacity = "0"; }, 180); }
     try { if (navigator.vibrate) navigator.vibrate(60); } catch (e2) {}
