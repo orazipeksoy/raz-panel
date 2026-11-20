@@ -141,7 +141,7 @@ input:focus, select:focus { outline: 3px solid rgba(33,121,196,.15); border-colo
 .bar-track { flex: 1; height: 13px; background: #262837; border-radius: 7px; overflow: hidden; }
 .bar-fill { height: 100%; background: linear-gradient(90deg, var(--navy2), var(--blue)); border-radius: 7px; min-width: 2px; }
 .bar-val { width: 105px; text-align: right; font-weight: 700; font-size: 12px; }
-.toast { position: fixed; top: max(14px, env(safe-area-inset-top)); right: 14px; background: var(--green); color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 700; z-index: 50; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+.toast { position: fixed; top: max(14px, env(safe-area-inset-top)); right: 14px; background: var(--green); color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 700; z-index: 950; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
 .notrow { font-size: 11px; color: var(--mut); }
 .formgrid { display: grid; gap: 12px; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -2355,11 +2355,154 @@ function okutmaSesiDegistir() {
   if (okutmaSesi) bipCal("ok");
 }
 
+// ============ KAMERAYLA BARKOD OKUTMA ============
+// Telefonun arka kamerası barkod okuyucu gibi kullanılır: ekran açık kaldıkça etiketleri art arda okur,
+// her okuma tartimGir() ile normal okuyucudan gelmiş gibi işlenir (aynı kontrol, aynı bip).
+// Okuma motoru: tarayıcının kendi BarcodeDetector'ı (Android Chrome) varsa o, yoksa (iPhone vb.) ZXing.
+// Aynı etiket kameranın önünde dururken saniyede onlarca kez okunur — bu yüzden aynı kod ancak
+// kameranın görüşünden ÇIKIP (1,2 sn hiç görülmeyip) tekrar gelirse yeni bobin sayılır. Aynı kilolu iki
+// ayrı rulo bu sayede ikisi de sayılır, tek etiket ise bir kez.
+const KAMERA_AYNI_KOD_ARA = 1200;
+let __kamera = null;
+function zxingYukle() {
+  if (window.ZXing) return Promise.resolve();
+  return new Promise((ok, hata) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js";
+    s.onload = ok; s.onerror = () => hata(new Error("Barkod okuyucu yüklenemedi — internet bağlantısını kontrol et"));
+    document.head.appendChild(s);
+  });
+}
+async function kameraOkuyucuAc(gi) {
+  if (__kamera) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast("Bu tarayıcı kameraya erişemiyor"); return; }
+  sesHazirla();
+  const k = __kamera = { gi, sayac: 0, sonKod: null, sonGorulme: 0, calisiyor: true, motor: null, akis: null, zamanlayici: null };
+  const ov = document.createElement("div");
+  ov.id = "kamera-ov";
+  ov.style.cssText = "position:fixed;inset:0;background:#000;z-index:900;display:flex;flex-direction:column";
+  const g = tartim.gruplar[gi], m = g && data.mamul[parseInt(g.stokIdx)];
+  ov.innerHTML = '<div style="padding:10px 14px;background:#14151F;color:#fff;display:flex;align-items:center;gap:10px">'
+      + '<div style="flex:1;min-width:0"><div style="font-weight:800;font-size:15px">📷 Kamerayla okut — Ürün ' + (gi + 1) + '</div>'
+      + '<div style="font-size:12px;color:#A79ECF;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (m ? esc(mamulEtiket(m)) : "ürün seçilmedi") + '</div></div>'
+      + '</div>'
+    + '<div style="position:relative;flex:1;overflow:hidden;display:flex;align-items:center;justify-content:center">'
+      + '<video id="kamera-video" playsinline muted autoplay style="width:100%;height:100%;object-fit:cover"></video>'
+      + '<div style="position:absolute;left:8%;right:8%;top:38%;height:24%;border:3px solid rgba(74,222,128,.9);border-radius:12px;box-shadow:0 0 0 9999px rgba(0,0,0,.35)"></div>'
+      + '<div id="kamera-flash" style="position:absolute;inset:0;background:#4ADE80;opacity:0;transition:opacity .25s;pointer-events:none"></div>'
+    + '</div>'
+    + '<div style="padding:10px 14px 16px;background:#14151F;color:#fff">'
+      + '<div id="kamera-durum" style="font-size:13px;color:#A79ECF;margin-bottom:4px">Kamera açılıyor…</div>'
+      + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px"><span style="font-size:13px">Bu oturumda okunan: <b id="kamera-sayac" style="font-size:18px">0</b> bobin</span>'
+      + '<span id="kamera-son" style="font-size:22px;font-weight:800;color:#4ADE80"></span></div>'
+      + '<div style="display:flex;gap:8px;margin-top:10px">'
+      + '<button id="kamera-isik" class="btn" style="display:none;flex:0 0 auto;width:auto;padding:0 20px;background:#2A2C3A" onclick="kameraIsik()">🔦 Işık</button>'
+      + '<button class="btn" style="flex:1;background:var(--green)" onclick="kameraKapat()">✓ Bitti</button></div>'
+    + '</div>';
+  document.body.appendChild(ov);
+  const durum = t => { const el = document.getElementById("kamera-durum"); if (el) el.textContent = t; };
+  try {
+    k.akis = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+  } catch (e) {
+    kameraKapat();
+    alert(e && e.name === "NotAllowedError"
+      ? "Kamera izni verilmedi. Tarayıcının adres çubuğundaki kilit/kamera simgesinden bu siteye kamera izni ver, sonra tekrar dene."
+      : "Kamera açılamadı: " + (e && e.message ? e.message : e));
+    return;
+  }
+  if (!k.calisiyor) { k.akis.getTracks().forEach(t => t.stop()); return; }
+  const video = document.getElementById("kamera-video");
+  video.srcObject = k.akis;
+  try { await video.play(); } catch (e) {}
+  const iz = k.akis.getVideoTracks()[0];
+  try {
+    const yet = iz.getCapabilities ? iz.getCapabilities() : {};
+    if (yet.focusMode && yet.focusMode.indexOf("continuous") >= 0) iz.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
+    if (yet.torch) { const b = document.getElementById("kamera-isik"); if (b) b.style.display = "block"; }
+  } catch (e) {}
+  // Okuma motoru
+  try {
+    if ("BarcodeDetector" in window) {
+      const turler = await window.BarcodeDetector.getSupportedFormats();
+      if (turler.indexOf("ean_13") >= 0) { const d = new window.BarcodeDetector({ formats: ["ean_13"] }); k.motor = c => d.detect(c).then(r => r.length ? r[0].rawValue : null); }
+    }
+    if (!k.motor) {
+      durum("Barkod okuyucu yükleniyor…");
+      await zxingYukle();
+      const Z = window.ZXing, okuyucu = new Z.MultiFormatReader(), ipucu = new Map();
+      ipucu.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13]);
+      ipucu.set(Z.DecodeHintType.TRY_HARDER, true);
+      okuyucu.setHints(ipucu);
+      k.motor = c => {
+        try { return Promise.resolve(okuyucu.decodeWithState(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(c)))).getText()); }
+        catch (e) { return Promise.resolve(null); }
+      };
+    }
+  } catch (e) { kameraKapat(); alert("Barkod okuyucu başlatılamadı: " + (e && e.message ? e.message : e)); return; }
+  if (!k.calisiyor) return;
+  durum("Etiketteki barkodu yeşil çerçevenin içine getir — art arda okutabilirsin");
+  const tuval = document.createElement("canvas"), cx = tuval.getContext("2d", { willReadFrequently: true });
+  const dongu = async () => {
+    if (!k.calisiyor) return;
+    try {
+      const vw = video.videoWidth, vh = video.videoHeight;
+      if (vw && vh) {
+        // Ekrandaki çerçeveye denk gelen orta bant okunur (daha hızlı, yandaki etiketleri karıştırmaz)
+        const bx = Math.round(vw * 0.04), by = Math.round(vh * 0.3), bw = vw - 2 * bx, bh = Math.round(vh * 0.4);
+        const olcek = Math.min(1, 1280 / bw);
+        tuval.width = Math.round(bw * olcek); tuval.height = Math.round(bh * olcek);
+        cx.drawImage(video, bx, by, bw, bh, 0, 0, tuval.width, tuval.height);
+        const kod = await k.motor(tuval);
+        if (kod && k.calisiyor) kameraKodGeldi(String(kod));
+      }
+    } catch (e) {}
+    if (k.calisiyor) k.zamanlayici = setTimeout(dongu, 120);
+  };
+  dongu();
+}
+function kameraKodGeldi(kod) {
+  const k = __kamera; if (!k) return;
+  const simdi = Date.now();
+  const ayni = kod === k.sonKod && (simdi - k.sonGorulme) < KAMERA_AYNI_KOD_ARA;
+  k.sonGorulme = simdi;
+  if (ayni) return; // aynı etiket hâlâ kameranın önünde
+  k.sonKod = kod;
+  const once = tartimOzetHesapla().adet;
+  __tartimSonOkut = null; // okuyucunun çift tetik koruması kamera için geçerli değil
+  tartimGir(k.gi, kod);
+  const eklendi = tartimOzetHesapla().adet > once;
+  if (eklendi) {
+    k.sayac++;
+    const g = tartim.gruplar[k.gi], son = g.satirlar[g.satirlar.length - 1];
+    const s = document.getElementById("kamera-sayac"); if (s) s.textContent = k.sayac;
+    const e = document.getElementById("kamera-son"); if (e) e.textContent = "✓ " + fmtKg(son.brut) + " kg";
+    const f = document.getElementById("kamera-flash"); if (f) { f.style.opacity = ".35"; setTimeout(() => { f.style.opacity = "0"; }, 180); }
+    try { if (navigator.vibrate) navigator.vibrate(60); } catch (e2) {}
+  } else {
+    const e = document.getElementById("kamera-son"); if (e) e.textContent = "";
+    try { if (navigator.vibrate) navigator.vibrate([60, 60, 60]); } catch (e2) {}
+  }
+}
+function kameraIsik() {
+  const k = __kamera; if (!k || !k.akis) return;
+  const iz = k.akis.getVideoTracks()[0];
+  k.isik = !k.isik;
+  iz.applyConstraints({ advanced: [{ torch: k.isik }] }).catch(() => {});
+}
+function kameraKapat() {
+  const k = __kamera; __kamera = null;
+  if (k) { k.calisiyor = false; clearTimeout(k.zamanlayici); if (k.akis) k.akis.getTracks().forEach(t => t.stop()); }
+  const ov = document.getElementById("kamera-ov"); if (ov) ov.remove();
+  if (tab === "tartim") render();
+  if (k && k.sayac) toast("✓ Kamerayla " + k.sayac + " bobin okundu");
+}
+
 function tartimGir(gi, deger) {
   const ham = String(deger).trim();
+  // Kamerayla okuturken kutuya odaklanılmaz (telefonda klavye açılmasın)
   const temizleOdakla = () => setTimeout(() => {
     const inp = document.getElementById("t-brut-"+gi);
-    if (inp) { inp.value = ""; inp.focus(); }
+    if (inp) { inp.value = ""; if (!__kamera) inp.focus(); }
   }, 30);
   let v;
   if (/^\d{13}$/.test(ham)) {
@@ -2648,7 +2791,7 @@ function rTartim() {
     html += '<div><div class="mini" style="margin-bottom:5px">Stok Ürünü <span style="color:var(--red)">*</span> — stok düşümü ve masura raporu için zorunlu</div><select onchange="tartimGrupStokSec('+gi+',this.value)"><option value="">— ürün seç —</option>'
       + data.mamul.map((m,mi) => '<option value="'+mi+'"'+(String(g.stokIdx)===String(mi)?" selected":"")+'>'+esc(mamulEtiket(m))+' (stok: '+m.adet+')</option>').join("")
       + '</select></div>';
-    html += '<div><div class="mini" style="margin-bottom:5px">Kg yaz ya da barkod okut → Enter <span style="opacity:.7">(imleç kutudayken okuyucunun tetiğine bas)</span></div><div style="display:flex;gap:8px"><input type="text" id="t-brut-'+gi+'" inputmode="decimal" placeholder="ör. 12,4 ya da ▎ barkod" onfocus="__tartimAktifGrup='+gi+'" onkeydown="if(event.key===\'Enter\')tartimGir('+gi+',this.value)"><button class="chip" style="flex-shrink:0" onclick="tartimGir('+gi+',document.getElementById(\'t-brut-'+gi+'\').value)">Ekle</button></div></div>';
+    html += '<div><div class="mini" style="margin-bottom:5px">Kg yaz ya da barkod okut → Enter <span style="opacity:.7">(imleç kutudayken okuyucunun tetiğine bas)</span></div><div style="display:flex;gap:8px"><input type="text" id="t-brut-'+gi+'" inputmode="decimal" placeholder="ör. 12,4 ya da ▎ barkod" onfocus="__tartimAktifGrup='+gi+'" onkeydown="if(event.key===\'Enter\')tartimGir('+gi+',this.value)"><button class="chip" style="flex-shrink:0" onclick="tartimGir('+gi+',document.getElementById(\'t-brut-'+gi+'\').value)">Ekle</button><button class="chip" style="flex-shrink:0;color:var(--green);border-color:var(--green)" title="Telefon kamerasıyla barkod okut" onclick="kameraOkuyucuAc('+gi+')">📷 Kamera</button></div></div>';
     html += '</div>';
     // Tablo boşken de çizilir: ilk okutma dahil hiçbir okutma tam render gerektirmesin diye (imleç kutudan çıkmaz)
     html += '<div class="scroll" style="margin-top:10px"><table><tbody id="t-tbl-'+gi+'"><tr><th>#</th><th class="num">Kg</th><th></th></tr>';
